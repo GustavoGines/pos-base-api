@@ -26,7 +26,7 @@ class SalesController extends Controller
         ])->latest();
 
         if ($period === 'today') {
-            $query->whereDate('created_at', DB::raw('CURRENT_DATE'));
+            $query->whereDate('created_at', now()->toDateString());
         } elseif ($period === 'month') {
             $query->whereMonth('created_at', date('m'))
                   ->whereYear('created_at', date('Y'));
