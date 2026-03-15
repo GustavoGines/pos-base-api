@@ -14,10 +14,15 @@ use App\Http\Controllers\Api\CashRegisterController;
 
 Route::get('/settings', [SettingController::class, 'index']);
 
+use App\Http\Controllers\Api\SalesController;
+
 Route::prefix('pos')->group(function () {
     Route::get('/products/search', [PosController::class, 'searchProducts']);
     Route::post('/sales', [PosController::class, 'processSale']);
 });
+
+Route::get('/sales', [SalesController::class, 'index']);
+Route::post('/sales/{sale}/void', [SalesController::class, 'void']);
 
 use App\Http\Controllers\Api\StockController;
 

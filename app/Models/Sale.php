@@ -11,11 +11,16 @@ class Sale extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['total', 'payment_method', 'cash_register_shift_id'];
+    protected $fillable = ['total', 'payment_method', 'status', 'cash_register_shift_id'];
 
     protected $casts = [
-        'total' => 'decimal:2',
+        'total'  => 'decimal:2',
     ];
+
+    public function isVoided(): bool
+    {
+        return $this->status === 'voided';
+    }
 
     public function cashRegisterShift(): BelongsTo
     {
