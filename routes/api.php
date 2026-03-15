@@ -19,9 +19,12 @@ Route::prefix('pos')->group(function () {
     Route::post('/sales', [PosController::class, 'processSale']);
 });
 
+use App\Http\Controllers\Api\StockController;
+
 Route::prefix('catalog')->group(function () {
     Route::put('/products/bulk-price-update', [CatalogController::class, 'bulkPriceUpdate']);
-    
+    Route::post('/products/{product}/adjust-stock', [StockController::class, 'adjust']);
+
     Route::apiResource('products', ProductController::class);
     Route::apiResource('categories', CategoryController::class);
     Route::apiResource('brands', BrandController::class);
