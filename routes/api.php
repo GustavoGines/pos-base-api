@@ -44,6 +44,7 @@ Route::prefix('catalog')->group(function () {
 });
 
 Route::prefix('cash-register')->group(function () {
+    Route::get('/shifts', [CashRegisterController::class, 'index']);
     Route::get('/current', [CashRegisterController::class, 'current']);
     Route::post('/open', [CashRegisterController::class, 'open']);
     Route::post('/close', [CashRegisterController::class, 'close']);

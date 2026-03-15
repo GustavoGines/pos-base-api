@@ -10,6 +10,15 @@ use Carbon\Carbon;
 class CashRegisterController extends Controller
 {
     /**
+     * Get all shifts (audit history).
+     */
+    public function index()
+    {
+        $shifts = CashRegisterShift::with('user')->orderBy('id', 'desc')->paginate(50);
+        return response()->json($shifts);
+    }
+
+    /**
      * Get the currently active (open) cash register shift.
      * Returns null/empty if the register is closed.
      */
@@ -31,6 +40,7 @@ class CashRegisterController extends Controller
     {
         $validated = $request->validate([
             'opening_balance' => 'required|numeric|min:0',
+            'user_id' => 'required|exists:users,id',
         ]);
 
         // Check if there's already an open shift
@@ -42,6 +52,7 @@ class CashRegisterController extends Controller
         $shift = CashRegisterShift::create([
             'opened_at' => Carbon::now(),
             'opening_balance' => $validated['opening_balance'],
+            'user_id' => $validated['user_id'],
             'status' => 'open'
         ]);
 

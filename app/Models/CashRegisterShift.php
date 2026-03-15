@@ -5,12 +5,13 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class CashRegisterShift extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['opened_at', 'closed_at', 'opening_balance', 'closing_balance', 'total_sales', 'difference', 'status'];
+    protected $fillable = ['opened_at', 'closed_at', 'opening_balance', 'closing_balance', 'total_sales', 'difference', 'status', 'user_id'];
 
     protected $casts = [
         'opened_at' => 'datetime',
@@ -24,5 +25,10 @@ class CashRegisterShift extends Model
     public function sales(): HasMany
     {
         return $this->hasMany(Sale::class);
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
     }
 }
