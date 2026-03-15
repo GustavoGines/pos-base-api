@@ -42,6 +42,12 @@ class CategoryController extends Controller
 
     public function destroy(Category $category)
     {
+        if ($category->products()->exists()) {
+            return response()->json([
+                'message' => 'No se puede eliminar la categoría "' . $category->name . '" porque tiene ' . $category->products()->count() . ' producto(s) asociado(s). Reasigne los productos antes de eliminar.',
+            ], 422);
+        }
+
         $category->delete();
         return response()->json(null, 204);
     }

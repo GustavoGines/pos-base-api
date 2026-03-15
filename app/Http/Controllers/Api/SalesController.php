@@ -22,6 +22,7 @@ class SalesController extends Controller
 
         $query = Sale::with([
             'items.product:id,name,is_sold_by_weight',
+            'user:id,name',
         ])->latest();
 
         if ($period === 'today') {
@@ -54,13 +55,15 @@ class SalesController extends Controller
      * POST /api/sales/{sale}/void
      * Anula una venta: devuelve stock a cada producto y registra movimiento de reversión.
      */
-    public function void(Sale $sale)
+    public function void(Request $request, Sale $sale)
     {
         if ($sale->status === 'voided') {
             return response()->json(['message' => 'Esta venta ya está anulada.'], 422);
         }
 
-        DB::transaction(function () use ($sale) {
+        $userId = $request->input('user_id');
+
+        DB::transaction(function () use ($sale, $userId) {
             // Devolver stock de cada ítem al producto
             foreach ($sale->items as $item) {
                 if ($item->product) {
@@ -68,6 +71,7 @@ class SalesController extends Controller
 
                     StockMovement::create([
                         'product_id' => $item->product_id,
+                        'user_id'    => $userId ?? null,
                         'type'       => 'in',
                         'quantity'   => $item->quantity,
                         'notes'      => "Reversión por anulación de Venta #{$sale->id}",
@@ -81,7 +85,7 @@ class SalesController extends Controller
 
         return response()->json([
             'message' => "Venta #{$sale->id} anulada correctamente. El stock fue restaurado.",
-            'sale'    => $sale->fresh()->load('items.product'),
+            'sale'    => $sale->fresh()->load('items.product', 'user:id,name'),
         ]);
     }
 }

@@ -22,6 +22,7 @@ class StockController extends Controller
             'type'     => 'required|in:in,out',
             'quantity' => 'required|numeric|min:0.001',
             'notes'    => 'nullable|string|max:500',
+            'user_id'  => 'nullable|exists:users,id',
         ]);
 
         DB::transaction(function () use ($validated, $product) {
@@ -39,6 +40,7 @@ class StockController extends Controller
             // Registrar el movimiento en el historial
             StockMovement::create([
                 'product_id' => $product->id,
+                'user_id'    => $validated['user_id'] ?? null,
                 'type'       => $validated['type'],
                 'quantity'   => $validated['quantity'],
                 'notes'      => $validated['notes'] ?? null,

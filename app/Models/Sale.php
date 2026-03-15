@@ -11,7 +11,7 @@ class Sale extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['total', 'payment_method', 'status', 'cash_register_shift_id'];
+    protected $fillable = ['total', 'payment_method', 'status', 'cash_register_shift_id', 'tendered_amount', 'change_amount', 'user_id'];
 
     protected $casts = [
         'total'  => 'decimal:2',
@@ -30,5 +30,10 @@ class Sale extends Model
     public function items(): HasMany
     {
         return $this->hasMany(SaleItem::class);
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
     }
 }

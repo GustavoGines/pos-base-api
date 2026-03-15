@@ -32,21 +32,27 @@ class PosController extends Controller
     public function processSale(Request $request)
     {
         $validated = $request->validate([
-            'total' => 'required|numeric',
-            'payment_method' => 'required|string',
+            'total'                  => 'required|numeric',
+            'payment_method'         => 'required|string',
+            'tendered_amount'        => 'nullable|numeric',
+            'change_amount'          => 'nullable|numeric',
             'cash_register_shift_id' => 'required|exists:cash_register_shifts,id',
-            'items' => 'required|array',
-            'items.*.product_id' => 'required|exists:products,id',
-            'items.*.quantity' => 'required|numeric|min:0.001',
-            'items.*.unit_price' => 'required|numeric',
-            'items.*.subtotal' => 'required|numeric',
+            'user_id'                => 'nullable|exists:users,id',
+            'items'                  => 'required|array',
+            'items.*.product_id'     => 'required|exists:products,id',
+            'items.*.quantity'       => 'required|numeric|min:0.001',
+            'items.*.unit_price'     => 'required|numeric',
+            'items.*.subtotal'       => 'required|numeric',
         ]);
 
         return DB::transaction(function () use ($validated) {
             $sale = Sale::create([
-                'total' => $validated['total'],
-                'payment_method' => $validated['payment_method'],
-                'cash_register_shift_id' => $validated['cash_register_shift_id']
+                'total'                  => $validated['total'],
+                'payment_method'         => $validated['payment_method'],
+                'tendered_amount'        => $validated['tendered_amount'] ?? null,
+                'change_amount'          => $validated['change_amount'] ?? null,
+                'cash_register_shift_id' => $validated['cash_register_shift_id'],
+                'user_id'                => $validated['user_id'] ?? null,
             ]);
 
             foreach ($validated['items'] as $itemData) {
@@ -66,9 +72,10 @@ class PosController extends Controller
 
                 StockMovement::create([
                     'product_id' => $product->id,
-                    'type' => 'sale',
-                    'quantity' => -$itemData['quantity'],
-                    'notes' => "Sale #{$sale->id}"
+                    'user_id'    => $validated['user_id'] ?? null,
+                    'type'       => 'sale',
+                    'quantity'   => -$itemData['quantity'],
+                    'notes'      => "Sale #{$sale->id}"
                 ]);
             }
 

@@ -10,9 +10,17 @@ use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\BrandController;
 use App\Http\Controllers\Api\CashRegisterController;
 
-// Auth Routes could go here..
+use App\Http\Controllers\Api\AuthController;
+
+Route::prefix('auth')->group(function () {
+    Route::post('/verify-pin', [AuthController::class, 'verifyPin']);
+});
+
+Route::apiResource('users', \App\Http\Controllers\Api\UserController::class);
+
 
 Route::get('/settings', [SettingController::class, 'index']);
+Route::put('/settings', [SettingController::class, 'update']);
 
 use App\Http\Controllers\Api\SalesController;
 

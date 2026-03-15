@@ -17,4 +17,25 @@ class SettingController extends Controller
         
         return response()->json($settings);
     }
+
+    /**
+     * Actualiza o crea múltiples configuraciones
+     * Recibe un JSON tipo: {"company_name": "MyR", "printer_type": "usb", ...}
+     */
+    public function update(Request $request)
+    {
+        $data = $request->all();
+
+        foreach ($data as $key => $value) {
+            BusinessSetting::updateOrCreate(
+                ['key' => $key],
+                ['value' => $value]
+            );
+        }
+
+        return response()->json([
+            'message' => 'Configuración actualizada correctamente.',
+            'settings' => BusinessSetting::all()->pluck('value', 'key')
+        ]);
+    }
 }
