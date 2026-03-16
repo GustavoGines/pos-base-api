@@ -19,6 +19,7 @@ class SalesController extends Controller
     {
         $shiftId = $request->query('shift_id');
         $period = $request->query('period', 'shift');
+        $userId = $request->query('user_id');
 
         $query = Sale::with([
             'items.product:id,name,is_sold_by_weight',
@@ -46,6 +47,10 @@ class SalesController extends Controller
                     return response()->json([]);
                 }
             }
+        }
+
+        if ($userId) {
+            $query->where('user_id', $userId);
         }
 
         return response()->json($query->get());

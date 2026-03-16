@@ -43,6 +43,18 @@ class UserController extends Controller
             $email = $baseEmail . '.' . $i++;
         }
 
+        // Verificar que el PIN no exista en ningún otro usuario
+        $pinExists = User::whereNotNull('pin')->get()->first(function ($u) use ($validated) {
+            return Hash::check($validated['pin'], $u->pin);
+        });
+
+        if ($pinExists) {
+            return response()->json([
+                'message' => 'El PIN ya está en uso por otro empleado. Por favor elegí uno diferente.',
+                'errors'  => ['pin' => ['El PIN ya está en uso.']],
+            ], 422);
+        }
+
         $user = User::create([
             'name'        => $validated['name'],
             'email'       => $email,
@@ -80,8 +92,19 @@ class UserController extends Controller
             'permissions' => $validated['permissions'] ?? [],
         ];
 
-        // Solo actualizar PIN si viene en el request
+        // Si viene nuevo PIN, verificar que no lo use ya otro usuario distinto
         if (!empty($validated['pin'])) {
+            $pinExists = User::where('id', '!=', $user->id)->whereNotNull('pin')->get()->first(function ($u) use ($validated) {
+                return Hash::check($validated['pin'], $u->pin);
+            });
+
+            if ($pinExists) {
+                return response()->json([
+                    'message' => 'El PIN ya está en uso por otro empleado. Por favor elegí uno diferente.',
+                    'errors'  => ['pin' => ['El PIN ya está en uso.']],
+                ], 422);
+            }
+
             $data['pin'] = Hash::make($validated['pin']);
         }
 
