@@ -27,12 +27,11 @@ class SalesController extends Controller
         ])->latest();
 
         if ($period === 'today') {
-            $query->whereDate('created_at', now()->toDateString());
+            $query->whereBetween('created_at', [now()->startOfDay(), now()->endOfDay()]);
         } elseif ($period === 'month') {
-            $query->whereMonth('created_at', date('m'))
-                  ->whereYear('created_at', date('Y'));
+            $query->whereBetween('created_at', [now()->startOfMonth(), now()->endOfMonth()]);
         } elseif ($period === 'year') {
-            $query->whereYear('created_at', date('Y'));
+            $query->whereBetween('created_at', [now()->startOfYear(), now()->endOfYear()]);
         } elseif ($period === 'all') {
             // Sin filtro de fecha
         } else {
