@@ -1,6 +1,6 @@
-# 🚀 Sistema POS Base - Backend API (Laravel)
+# 🚀 Sistema POS - Backend API (Laravel)
 
-Este repositorio contiene el **Backend API** del Sistema POS Base, desarrollado con **Laravel (PHP)** y una arquitectura de base de datos relacional para soportar operaciones de Punto de Venta distribuidas en red local (Cliente-Servidor).
+Este repositorio contiene el **Backend API** del Sistema POS, desarrollado con **Laravel (PHP)** y una arquitectura de base de datos relacional para soportar operaciones de Punto de Venta distribuidas en red local (Cliente-Servidor).
 
 ## ✨ Características Principales (Arquitectura Core)
 
