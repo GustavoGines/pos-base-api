@@ -73,8 +73,10 @@ class CashRegisterController extends Controller
             return response()->json(['message' => 'No active cash register shift found.'], 400);
         }
 
-        // Calculate total sales for this shift (using correct FK name)
-        $totalSales = \App\Models\Sale::where('cash_register_shift_id', $activeShift->id)->sum('total');
+        // Calculate total sales for this shift (only 'completed' — excludes pending and voided)
+        $totalSales = \App\Models\Sale::where('cash_register_shift_id', $activeShift->id)
+            ->where('status', 'completed')
+            ->sum('total');
 
         // Calculate expected cash in drawer
         $expectedCash = $activeShift->opening_balance + $totalSales;

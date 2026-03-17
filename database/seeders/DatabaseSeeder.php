@@ -25,7 +25,8 @@ class DatabaseSeeder extends Seeder
         $this->call([
             UserSeeder::class,
             BusinessSettingSeeder::class,
-            DemoCatalogSeeder::class,
+            BigCatalogSeeder::class,   // 100 productos en 8 categorías
+            // DemoCatalogSeeder::class, // Demo original (3 productos) - desactivado
         ]);
     }
 }

@@ -30,7 +30,9 @@ Route::prefix('pos')->group(function () {
 });
 
 Route::get('/sales', [SalesController::class, 'index']);
+Route::get('/sales/pending', [SalesController::class, 'pending']);
 Route::post('/sales/{sale}/void', [SalesController::class, 'void']);
+Route::put('/sales/{sale}/pay', [SalesController::class, 'pay']);
 
 use App\Http\Controllers\Api\StockController;
 

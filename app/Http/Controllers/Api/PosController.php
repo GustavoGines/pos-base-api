@@ -38,6 +38,7 @@ class PosController extends Controller
             'change_amount'          => 'nullable|numeric',
             'cash_register_shift_id' => 'required|integer|exists:cash_register_shifts,id',
             'user_id'                => 'nullable|integer|exists:users,id',
+            'status'                 => 'nullable|string|in:pending,completed',
             'items'                  => 'required|array|min:1',
             'items.*.product_id'     => 'required|integer|exists:products,id',
             'items.*.quantity'       => 'required|numeric|min:0.001',
@@ -53,6 +54,7 @@ class PosController extends Controller
                 'change_amount'          => $validated['change_amount'] ?? null,
                 'cash_register_shift_id' => $validated['cash_register_shift_id'],
                 'user_id'                => $validated['user_id'] ?? null,
+                'status'                 => $validated['status'] ?? 'completed',
             ]);
 
             foreach ($validated['items'] as $itemData) {
