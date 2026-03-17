@@ -59,9 +59,6 @@ class CashRegisterController extends Controller
         return response()->json($shift, 201);
     }
 
-    /**
-     * Close the currently active cash register shift
-     */
     public function close(Request $request)
     {
         $validated = $request->validate([
@@ -73,22 +70,40 @@ class CashRegisterController extends Controller
             return response()->json(['message' => 'No active cash register shift found.'], 400);
         }
 
-        // Calculate total sales for this shift (only 'completed' — excludes pending and voided)
+        // 1. Calculate general total sales (for stats/reports)
         $totalSales = \App\Models\Sale::where('cash_register_shift_id', $activeShift->id)
             ->where('status', 'completed')
             ->sum('total');
 
-        // Calculate expected cash in drawer
-        $expectedCash = $activeShift->opening_balance + $totalSales;
+        // 2. Aggregate sales by payment method
+        $totalCashSales = \App\Models\Sale::where('cash_register_shift_id', $activeShift->id)
+            ->where('status', 'completed')
+            ->where('payment_method', 'cash')
+            ->sum('total');
 
-        // Calculate the difference (faltante o sobrante)
+        $totalTransfers = \App\Models\Sale::where('cash_register_shift_id', $activeShift->id)
+            ->where('status', 'completed')
+            ->where('payment_method', 'transfer')
+            ->sum('total');
+
+        $totalCards = \App\Models\Sale::where('cash_register_shift_id', $activeShift->id)
+            ->where('status', 'completed')
+            ->where('payment_method', 'card')
+            ->sum('total');
+
+        // 3. Expected cash in PHYSICAL drawer = opening + ONLY physical cash received
+        $expectedCash = $activeShift->opening_balance + $totalCashSales;
+
+        // 4. Calculate the difference (Faltante / Sobrante)
         $difference = $validated['counted_cash'] - $expectedCash;
 
         $activeShift->update([
             'closed_at' => Carbon::now(),
             'closing_balance' => $validated['counted_cash'],
-            'total_sales' => $totalSales,     // Ensure these columns exist in migration
-            'difference' => $difference,       // Ensure these columns exist in migration
+            'total_sales' => $totalSales,     
+            'total_transfers' => $totalTransfers,
+            'total_cards' => $totalCards,
+            'difference' => $difference,       
             'status' => 'closed'
         ]);
 

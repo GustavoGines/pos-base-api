@@ -9,9 +9,29 @@ use Illuminate\Support\Str;
 
 class ProductController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        return response()->json(Product::with(['category', 'brand', 'supplier'])->get());
+        $query = Product::with(['category', 'brand', 'supplier']);
+
+        if ($search = $request->query('search')) {
+            $like = '%' . $search . '%';
+            $query->where(function ($q) use ($like, $search) {
+                $q->where('name', 'like', $like)
+                  ->orWhere('barcode', 'like', $like)
+                  ->orWhere('internal_code', 'like', $like);
+            });
+        }
+
+        $allowedSorts = [
+            'name', 'selling_price', 'cost_price', 'stock',
+            'barcode', 'internal_code', 'category_id', 'is_sold_by_weight', 'active'
+        ];
+        $sortBy = in_array($request->query('sort_by'), $allowedSorts)
+            ? $request->query('sort_by')
+            : 'name';
+        $sortDir = $request->query('sort_direction') === 'desc' ? 'desc' : 'asc';
+
+        return response()->json($query->orderBy($sortBy, $sortDir)->paginate(50));
     }
 
     public function store(Request $request)
