@@ -1,59 +1,58 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# 🚀 Sistema POS Base - Backend API (Laravel)
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Este repositorio contiene el **Backend API** del Sistema POS Base, desarrollado con **Laravel (PHP)** y una arquitectura de base de datos relacional para soportar operaciones de Punto de Venta distribuidas en red local (Cliente-Servidor).
 
-## About Laravel
+## ✨ Características Principales (Arquitectura Core)
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+### 🛡️ Transacciones Atómicas (ACID)
+La emisión de una venta normal, una anulación de ticket o el cobro de una Preventa (Order Recall) operan íntegramente bajo `DB::transaction`. Esto asegura que de fallar el cálculo o alteración de inventario, ningún ticket "fantasma" sin stock trazado será guardado.
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+### 🔄 Order Recall y Sistema Múltiple
+- Endpoints diseñados para recibir tickets `status='pending'` (Previo Armado).
+- Cuando el POS solicita el cobro de una de éstas, la API (`PUT /sales/{id}/pay`) hace un `Merge / Diff` iterando el carrito original del pedido vs el ticket final pagado. 
+- Restituye stock atómicamente en cascada a perchas a través de `StockMovements` con firma si mermaron ítems entre espera y pago.
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+### 🧮 Cierres Transaccionales (Turnos)
+Ventas, retiros y aperturas interconectadas a un `cash_register_shift_id`. Las queries maestras de "Cierre Z" sumarizan automáticamente solo totales en estatus `completed` de la jornada actual y se las envían al cliente cerrando con timestamps la sesión del empleado sin fisuras lógicas (`ON DELETE SET NULL` para cajeros desactivados).
 
-## Learning Laravel
+### 📦 Inventario Integral
+- Gestión de `products`, `categories`, `brands`.
+- Auditoría viva de toda la cadena de mercadería usando el modelo `StockMovement`.
+- Permiso granular de Anulaciones de tickets (`/void`), restituyendo de forma transparente mercadería restada en transacciones fallidas de usuarios.
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+## 🛠 Instalación y Configuración Local
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+### Requisitos previos
+- PHP 8.1+
+- Composer
+- Motor de base de datos (MySQL / PostgreSQL / SQLite)
 
-## Laravel Sponsors
+### Pasos
+1. Clonar el repositorio.
+2. Instalar dependencias backend:
+   ```bash
+   composer install
+   ```
+3. Copiar archivo de entorno:
+   ```bash
+   cp .env.example .env
+   ```
+4. Generar la llave de la aplicación:
+   ```bash
+   php artisan key:generate
+   ```
+5. Configurar conexión en `.env`:
+   Asigna tus credenciales `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`. Ten precaución de definir `APP_TIMEZONE` a tu región local (ejemplo `America/Argentina/Buenos_Aires`) para compatibilizar la aritmética de facturación.
+6. Correr las migraciones y seeders iniciales:
+   *(Este backend incluye Seeders masivos con usuarios pre-configurados [PIN 1234/5678] y Catálogos robustos listos)*
+   ```bash
+   php artisan migrate --seed
+   ```
+7. Lanzar el servidor local:
+   ```bash
+   php artisan serve
+   ```
+   *El backend despachará las peticiones HTTP seguras en `http://127.0.0.1:8000/api`.*
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
-
-### Premium Partners
-
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
-
-## Contributing
-
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
-
-## Code of Conduct
-
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
-
-## Security Vulnerabilities
-
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
-
-## License
-
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+---
+*Diseñado proveyendo APIs JSON RESTful seguras, optimizadas e imperativas para el Frontend Dart POS.*
