@@ -89,18 +89,16 @@ class ProductController extends Controller
     private function generateUniqueInternalCode(): string
     {
         do {
-            // EAN-13 structure: 12 digits + 1 checksum digit. Let's use 200 prefix for internal use.
-            $code = '200' . Str::random(9); // For simplicity here, generating a random 12-digit string
-            // Replace letters with numbers
-            $code = '200' . substr(str_shuffle("01234567890123456789"), 0, 9);
-            
-            // Basic Checksum calculation for EAN-13 format
+            // Prefijo '100' (evitar colisión con EAN-13 balanza que usa prefijo '20').
+            $code = '100' . substr(str_shuffle("01234567890123456789"), 0, 9);
+
+            // Cálculo de dígito verificador EAN-13
             $sum = 0;
             for ($i = 0; $i < 12; $i++) {
                 $sum += (int)$code[$i] * ($i % 2 === 0 ? 1 : 3);
             }
             $checksum = (10 - ($sum % 10)) % 10;
-            
+
             $internalCode = $code . $checksum;
 
         } while (Product::where('internal_code', $internalCode)->exists());

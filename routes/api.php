@@ -13,7 +13,7 @@ use App\Http\Controllers\Api\CashRegisterController;
 use App\Http\Controllers\Api\AuthController;
 
 Route::prefix('auth')->group(function () {
-    Route::post('/verify-pin', [AuthController::class, 'verifyPin']);
+    Route::post('/verify-pin', [AuthController::class, 'verifyPin'])->middleware('throttle:5,1');
 });
 
 Route::apiResource('users', \App\Http\Controllers\Api\UserController::class);

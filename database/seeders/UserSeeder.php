@@ -16,7 +16,7 @@ class UserSeeder extends Seeder
         User::updateOrCreate(
             ['email' => 'admin@pos.com'],
             [
-                'name' => 'Administrador',
+                'name' => 'Leo',
                 'role' => 'admin',
                 'pin' => Hash::make('1234'),
                 'password' => Hash::make('secret123') // Por si acaso algún día implementan web login
@@ -26,7 +26,7 @@ class UserSeeder extends Seeder
         User::updateOrCreate(
             ['email' => 'cajero@pos.com'],
             [
-                'name' => 'Cajero Turno 1',
+                'name' => 'Sobrino 1',
                 'role' => 'cashier',
                 'pin' => Hash::make('5678'),
                 'password' => Hash::make('secret123')
