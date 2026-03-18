@@ -17,6 +17,8 @@ Ventas, retiros y aperturas interconectadas a un `cash_register_shift_id`. Las q
 
 ### 📦 Inventario Integral
 - Gestión de `products`, `categories`, `brands`.
+- **Server-Side Pagination & Search:** Optimizada la API de Catálogo (`GET /api/products`) con `paginate(50)` y filtrado condicional (`?search=`), liberando al cliente de sobrecargas de memoria en inventarios masivos.
+- **Dynamic Sorting Seguro:** Listas blancas de columnas permitidas (`$allowedSorts`) para ordenamiento de productos (`?sort_by=X&sort_direction=Y`), previniendo inyecciones SQL y devolviendo la carga ordenada al vuelo.
 - Auditoría viva de toda la cadena de mercadería usando el modelo `StockMovement`.
 - Permiso granular de Anulaciones de tickets (`/void`), restituyendo de forma transparente mercadería restada en transacciones fallidas de usuarios.
 

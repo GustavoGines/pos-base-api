@@ -15,18 +15,10 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // User::factory(10)->create();
-
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
-        ]);
-
         $this->call([
             UserSeeder::class,
             BusinessSettingSeeder::class,
             BigCatalogSeeder::class,   // 100 productos en 8 categorías
-            // DemoCatalogSeeder::class, // Demo original (3 productos) - desactivado
         ]);
     }
 }
