@@ -52,6 +52,11 @@ class ProductController extends Controller
         // Flujo Dual de Código de Barras
         $validated['internal_code'] = $this->generateUniqueInternalCode();
 
+        // Si el código de barras está vacío, se auto-genera copiando el código interno
+        if (empty($validated['barcode'])) {
+            $validated['barcode'] = $validated['internal_code'];
+        }
+
         $product = Product::create($validated);
         return response()->json($product->load(['category', 'brand', 'supplier']), 201);
     }
