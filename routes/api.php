@@ -37,6 +37,8 @@ Route::put('/sales/{sale}/pay', [SalesController::class, 'pay']);
 use App\Http\Controllers\Api\StockController;
 
 Route::prefix('catalog')->group(function () {
+    Route::post('/products/bulk-delete', [CatalogController::class, 'bulkDelete']);
+    Route::put('/products/bulk-update', [CatalogController::class, 'bulkUpdate']);
     Route::put('/products/bulk-price-update', [CatalogController::class, 'bulkPriceUpdate']);
     Route::post('/products/{product}/adjust-stock', [StockController::class, 'adjust']);
 
