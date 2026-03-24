@@ -35,4 +35,9 @@ return [
         ],
     ],
 
+    // Servidor central de licencias del POS
+    'license_server' => [
+        'url' => env('LICENSE_SERVER_URL', 'https://pos-license-server.onrender.com'),
+    ],
+
 ];
