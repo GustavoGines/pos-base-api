@@ -13,8 +13,10 @@ class CustomerTransaction extends Model
     protected $fillable = [
         'customer_id',
         'user_id',
+        'cash_register_shift_id',
         'sale_id',
         'type',
+        'payment_method',
         'amount',
         'balance_after',
         'description',

@@ -91,8 +91,28 @@ class CashRegisterController extends Controller
             ->where('payment_method', 'card')
             ->sum('total');
 
-        // 3. Expected cash in PHYSICAL drawer = opening + ONLY physical cash received
-        $expectedCash = $activeShift->opening_balance + $totalCashSales;
+        // Sum payments collected (Account Receivables / Abonos)
+        $totalCashPayments = \App\Models\CustomerTransaction::where('cash_register_shift_id', $activeShift->id)
+            ->where('type', 'payment')
+            ->where('payment_method', 'cash')
+            ->sum('amount');
+            
+        $totalTransferPayments = \App\Models\CustomerTransaction::where('cash_register_shift_id', $activeShift->id)
+            ->where('type', 'payment')
+            ->where('payment_method', 'transfer')
+            ->sum('amount');
+            
+        $totalCardPayments = \App\Models\CustomerTransaction::where('cash_register_shift_id', $activeShift->id)
+            ->where('type', 'payment')
+            ->where('payment_method', 'card')
+            ->sum('amount');
+
+        // Account for these payments in the total summaries
+        $totalTransfers += $totalTransferPayments;
+        $totalCards += $totalCardPayments;
+
+        // 3. Expected cash in PHYSICAL drawer = opening + ONLY physical cash received (sales + payments)
+        $expectedCash = $activeShift->opening_balance + $totalCashSales + $totalCashPayments;
 
         // 4. Calculate the difference (Faltante / Sobrante)
         $difference = $validated['counted_cash'] - $expectedCash;

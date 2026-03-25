@@ -124,16 +124,18 @@ class CustomerController extends Controller
     public function registerPayment(Request $request, Customer $customer)
     {
         $request->validate([
-            'amount'      => 'required|numeric|gt:0',
-            'description' => 'nullable|string|max:255',
-            'sale_id'     => 'nullable|integer|exists:sales,id',
+            'amount'         => 'required|numeric|gt:0',
+            'payment_method' => 'required|string|in:cash,card,transfer',
+            'description'    => 'nullable|string|max:255',
+            'sale_ids'       => 'nullable|array',
+            'sale_ids.*'     => 'integer|exists:sales,id',
         ]);
 
         $amount = (float) $request->amount;
+        $paymentMethod = $request->payment_method;
 
         try {
-            $transaction = DB::transaction(function () use ($customer, $amount, $request) {
-                // Bloqueamos la fila del cliente para prevenir race conditions
+            $transaction = DB::transaction(function () use ($customer, $amount, $paymentMethod, $request) {
                 $lockedCustomer = Customer::where('id', $customer->id)->lockForUpdate()->first();
 
                 if ($amount > $lockedCustomer->balance) {
@@ -142,36 +144,37 @@ class CustomerController extends Controller
                     ]);
                 }
 
-                $saleId = null;
+                $activeShift = \App\Models\CashRegisterShift::where('status', 'open')->first();
+
                 $description = $request->filled('description') ? $request->description : 'Abono en caja';
+                $remainingAmount = $amount;
+                $processedSales = [];
 
-                // ── Si es un pago de ticket específico ──────────────────────
-                if ($request->filled('sale_id')) {
-                    $sale = Sale::lockForUpdate()->find($request->sale_id);
+                // ── Si es un pago de múltiples tickets específicos ──────────────────────
+                if ($request->filled('sale_ids')) {
+                    $sales = Sale::whereIn('id', $request->sale_ids)
+                                 ->where('customer_id', $lockedCustomer->id)
+                                 ->lockForUpdate()
+                                 ->get();
 
-                    // Validar que el ticket pertenezca a este cliente
-                    if ($sale->customer_id !== $lockedCustomer->id) {
-                        throw \Illuminate\Validation\ValidationException::withMessages([
-                            'sale_id' => ['Este ticket no pertenece al cliente seleccionado.']
-                        ]);
+                    foreach ($sales as $sale) {
+                        if ($remainingAmount <= 0) break;
+
+                        $payForThisSale = min((float)$sale->amount_due, $remainingAmount);
+                        
+                        if ($payForThisSale > 0) {
+                            $sale->amount_due -= $payForThisSale;
+                            $sale->payment_status = $sale->amount_due <= 0 ? 'paid' : 'partial';
+                            $sale->save();
+                            
+                            $remainingAmount -= $payForThisSale;
+                            $processedSales[] = $sale->id;
+                        }
                     }
 
-                    // Validar que el monto no supere lo que debe este ticket
-                    if ($amount > (float) $sale->amount_due) {
-                        throw \Illuminate\Validation\ValidationException::withMessages([
-                            'amount' => ["El monto (\${$amount}) supera el saldo de este ticket (\${$sale->amount_due})."]
-                        ]);
+                    if (!empty($processedSales) && !$request->filled('description')) {
+                        $description = "Pago de Tickets: #" . implode(', #', $processedSales);
                     }
-
-                    // Reducir el saldo del ticket
-                    $sale->amount_due -= $amount;
-                    $sale->payment_status = $sale->amount_due <= 0 ? 'paid' : 'partial';
-                    $sale->save();
-
-                    $saleId = $sale->id;
-                    $description = $request->filled('description')
-                        ? $request->description
-                        : "Pago de Ticket #{$sale->id}";
                 }
 
                 // ── Siempre reducir el balance global del cliente ────────────
@@ -180,13 +183,15 @@ class CustomerController extends Controller
 
                 // ── Crear registro inmutable en el Ledger ────────────────────
                 $trx = CustomerTransaction::create([
-                    'customer_id'   => $lockedCustomer->id,
-                    'user_id'       => auth()->id() ?? 1,
-                    'sale_id'       => $saleId,
-                    'type'          => 'payment',
-                    'amount'        => $amount,
-                    'balance_after' => $lockedCustomer->balance,
-                    'description'   => $description,
+                    'customer_id'            => $lockedCustomer->id,
+                    'user_id'                => auth()->id() ?? 1,
+                    'cash_register_shift_id' => $activeShift ? $activeShift->id : null,
+                    'sale_id'                => count($processedSales) === 1 ? $processedSales[0] : null,
+                    'type'                   => 'payment',
+                    'payment_method'         => $paymentMethod,
+                    'amount'                 => $amount,
+                    'balance_after'          => $lockedCustomer->balance,
+                    'description'            => $description,
                 ]);
 
                 return $trx;

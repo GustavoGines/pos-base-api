@@ -25,6 +25,7 @@ Route::post('/customers/{customer}/payments', [CustomerController::class, 'regis
 Route::get('/customers/{customer}/pending-sales', [CustomerController::class, 'getPendingSales']);
 Route::get('/settings', [SettingController::class, 'index']);
 Route::put('/settings', [SettingController::class, 'update']);
+Route::post('/settings/license', [SettingController::class, 'updateLicense']);
 
 use App\Http\Controllers\Api\SalesController;
 
