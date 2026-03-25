@@ -18,7 +18,11 @@ Route::prefix('auth')->group(function () {
 
 Route::apiResource('users', \App\Http\Controllers\Api\UserController::class);
 
+use App\Http\Controllers\Api\CustomerController;
 
+Route::apiResource('customers', CustomerController::class);
+Route::post('/customers/{customer}/payments', [CustomerController::class, 'registerPayment']);
+Route::get('/customers/{customer}/pending-sales', [CustomerController::class, 'getPendingSales']);
 Route::get('/settings', [SettingController::class, 'index']);
 Route::put('/settings', [SettingController::class, 'update']);
 
