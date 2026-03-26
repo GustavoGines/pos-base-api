@@ -18,9 +18,15 @@ Route::prefix('auth')->group(function () {
 
 Route::apiResource('users', \App\Http\Controllers\Api\UserController::class);
 
+use App\Http\Controllers\Api\CustomerController;
 
+Route::apiResource('customers', CustomerController::class);
+Route::post('/customers/{customer}/payments', [CustomerController::class, 'registerPayment']);
+Route::get('/customers/{customer}/pending-sales', [CustomerController::class, 'getPendingSales']);
 Route::get('/settings', [SettingController::class, 'index']);
 Route::put('/settings', [SettingController::class, 'update']);
+Route::post('/settings/license', [SettingController::class, 'updateLicense']);
+Route::post('/settings/license/sync', [SettingController::class, 'syncLicense']);
 
 use App\Http\Controllers\Api\SalesController;
 
@@ -52,4 +58,12 @@ Route::prefix('cash-register')->group(function () {
     Route::get('/current', [CashRegisterController::class, 'current']);
     Route::post('/open', [CashRegisterController::class, 'open']);
     Route::post('/close', [CashRegisterController::class, 'close']);
+});
+
+use App\Http\Controllers\Api\TrashController;
+
+Route::prefix('trash')->group(function () {
+    Route::get('/{model}', [TrashController::class, 'index']);
+    Route::post('/{model}/{id}/restore', [TrashController::class, 'restore']);
+    Route::delete('/{model}/{id}/force', [TrashController::class, 'forceDelete']);
 });
