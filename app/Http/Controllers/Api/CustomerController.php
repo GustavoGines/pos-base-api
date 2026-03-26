@@ -8,6 +8,7 @@ use App\Models\CustomerTransaction;
 use App\Models\Sale;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 class CustomerController extends Controller
 {
@@ -37,7 +38,12 @@ class CustomerController extends Controller
         $validated = $request->validate([
             'name'            => 'required|string|max:255',
             'phone'           => 'nullable|string|max:20',
-            'document_number' => 'required|string|max:50|unique:customers,document_number',
+            'document_number' => [
+                'required',
+                'string',
+                'max:50',
+                Rule::unique('customers')->whereNull('deleted_at')
+            ],
             'credit_limit'    => 'nullable|numeric|min:0',
             'balance'         => 'nullable|numeric',
         ], [
@@ -75,7 +81,13 @@ class CustomerController extends Controller
         $validated = $request->validate([
             'name'            => 'sometimes|required|string|max:255',
             'phone'           => 'nullable|string|max:20',
-            'document_number' => 'sometimes|required|string|max:50|unique:customers,document_number,' . $customer->id,
+            'document_number' => [
+                'sometimes',
+                'required',
+                'string',
+                'max:50',
+                Rule::unique('customers')->ignore($customer->id)->whereNull('deleted_at')
+            ],
             'credit_limit'    => 'nullable|numeric|min:0',
             'is_active'       => 'sometimes|boolean',
         ], [
@@ -150,30 +162,42 @@ class CustomerController extends Controller
                 $remainingAmount = $amount;
                 $processedSales = [];
 
-                // ── Si es un pago de múltiples tickets específicos ──────────────────────
+                // ── Distribuir a tickets específicos o a los más antiguos pendientes ──────────────────────
                 if ($request->filled('sale_ids')) {
                     $sales = Sale::whereIn('id', $request->sale_ids)
                                  ->where('customer_id', $lockedCustomer->id)
                                  ->lockForUpdate()
+                                 ->orderBy('created_at', 'asc')
                                  ->get();
+                } else {
+                    $sales = Sale::where('customer_id', $lockedCustomer->id)
+                                 ->where('payment_method', 'cuenta_corriente')
+                                 ->whereIn('payment_status', ['pending', 'partial'])
+                                 ->lockForUpdate()
+                                 ->orderBy('created_at', 'asc')
+                                 ->get();
+                }
 
-                    foreach ($sales as $sale) {
-                        if ($remainingAmount <= 0) break;
+                foreach ($sales as $sale) {
+                    if ($remainingAmount <= 0) break;
 
-                        $payForThisSale = min((float)$sale->amount_due, $remainingAmount);
+                    $payForThisSale = min((float)$sale->amount_due, $remainingAmount);
+                    
+                    if ($payForThisSale > 0) {
+                        $sale->amount_due -= $payForThisSale;
+                        $sale->payment_status = $sale->amount_due <= 0 ? 'paid' : 'partial';
+                        $sale->save();
                         
-                        if ($payForThisSale > 0) {
-                            $sale->amount_due -= $payForThisSale;
-                            $sale->payment_status = $sale->amount_due <= 0 ? 'paid' : 'partial';
-                            $sale->save();
-                            
-                            $remainingAmount -= $payForThisSale;
-                            $processedSales[] = $sale->id;
-                        }
+                        $remainingAmount -= $payForThisSale;
+                        $processedSales[] = $sale->id;
                     }
+                }
 
-                    if (!empty($processedSales) && !$request->filled('description')) {
+                if (!empty($processedSales) && !$request->filled('description')) {
+                    if ($request->filled('sale_ids')) {
                         $description = "Pago de Tickets: #" . implode(', #', $processedSales);
+                    } else {
+                        $description = "Abono Global aplicado a Tickets: #" . implode(', #', $processedSales);
                     }
                 }
 

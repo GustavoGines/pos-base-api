@@ -60,4 +60,22 @@ class SettingController extends Controller
             ], 400); // 400 Bad Request if invalid or no connection
         }
     }
+
+    /**
+     * Sincronización manual forzada desde la interfaz
+     */
+    public function syncLicense(\App\Services\LicenseSyncService $licenseService)
+    {
+        try {
+            $licenseService->syncManualForce();
+            return response()->json([
+                'message' => "Permisos de licencia sincronizados correctamente.",
+                'settings' => BusinessSetting::all()->pluck('value', 'key')
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => $e->getMessage()
+            ], 400); // 400 Bad Request
+        }
+    }
 }

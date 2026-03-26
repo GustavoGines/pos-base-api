@@ -49,6 +49,9 @@ class PosController extends Controller
             'items.*.subtotal'       => 'required|numeric',
         ], [
             'customer_id.exists' => 'El cliente seleccionado no existe en el sistema.',
+            'user_id.exists' => 'El cajero actual no está registrado en el sistema. Inicie sesión nuevamente.',
+            'cash_register_shift_id.exists' => 'El turno de caja no es válido o ya fue cerrado.',
+            'items.*.product_id.exists' => 'Uno de los productos en el carrito ya no está disponible en la base de datos.',
         ]);
 
         $isCuentaCorriente = ($validated['payment_method'] === 'cuenta_corriente');

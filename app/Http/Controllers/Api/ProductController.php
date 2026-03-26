@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Product;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class ProductController extends Controller
 {
@@ -38,7 +39,11 @@ class ProductController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'barcode' => 'nullable|string|unique:products,barcode',
+            'barcode' => [
+                'nullable',
+                'string',
+                Rule::unique('products')->whereNull('deleted_at')
+            ],
             'cost_price' => 'numeric|min:0',
             'selling_price' => 'numeric|min:0',
             'stock' => 'numeric|min:0',
@@ -70,7 +75,11 @@ class ProductController extends Controller
     {
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
-            'barcode' => 'nullable|string|unique:products,barcode,' . $product->id,
+            'barcode' => [
+                'nullable',
+                'string',
+                Rule::unique('products')->ignore($product->id)->whereNull('deleted_at')
+            ],
             'cost_price' => 'numeric|min:0',
             'selling_price' => 'numeric|min:0',
             'stock' => 'numeric|min:0',

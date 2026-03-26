@@ -37,7 +37,7 @@ class LicenseSyncService
     private function getServerUrl(): string
     {
         // Fallback para pruebas locales si no está en el .env
-        return rtrim(env('CENTRAL_LICENSE_SERVER_URL', 'https://tu-servidor-render.onrender.com'), '/');
+        return rtrim(env('LICENSE_SERVER_URL', 'https://pos-license-server-2jma.onrender.com'), '/');
     }
 
     /**
@@ -52,21 +52,27 @@ class LicenseSyncService
         }
 
         $installationId = $this->getInstallationId();
-        $url = $this->getServerUrl() . '/api/validate-license';
+        $url = $this->getServerUrl() . '/api/validate';
 
         try {
-            // Timeout corto para no colgar el POS si no hay internet
-            $response = Http::timeout(5)->post($url, [
+            // Timeout 120s para permitir Cold Starts del server remoto
+            $response = Http::timeout(120)->post($url, [
                 'license_key' => $licenseKey,
                 'mac_address' => $installationId,
+                'installation_id' => $installationId,
             ]);
 
             if ($response->successful()) {
                 // 200 OK: Licencia válida
                 $data = $response->json();
-                $this->setSetting('app_plan', $data['plan'] ?? 'basic');
+                $this->setSetting('app_plan', $data['plan'] ?? $data['plan_type'] ?? 'basic');
+                
+                // Mapear addons (si el usuario compra solo módulos específicos)
+                $addons = $data['allowed_addons'] ?? $data['addons'] ?? [];
+                $this->setSetting('license_allowed_addons', is_array($addons) ? json_encode($addons) : $addons);
+                
                 $this->setSetting('last_license_check', now()->toIso8601String());
-                Log::info('License Sync: OK', ['plan' => $data['plan']]);
+                Log::info('License Sync: OK', ['plan' => $data['plan'], 'addons' => $addons]);
             } else if ($response->status() === 401 || $response->status() === 403) {
                 // 401/403: Licencia suspendida, revocada o inválida
                 $this->setSetting('app_plan', 'blocked');
@@ -108,26 +114,73 @@ class LicenseSyncService
     }
 
     /**
+     * Sincronización Manual (Forzada). Arroja excepción si falla.
+     */
+    public function syncManualForce(): void
+    {
+        $licenseKey = $this->getSetting('license_key');
+        if (!$licenseKey) {
+            throw new \Exception('No hay ninguna clave de licencia activa configurada para sincronizar.');
+        }
+
+        $installationId = $this->getInstallationId();
+        $url = $this->getServerUrl() . '/api/validate';
+
+        try {
+            $response = Http::timeout(120)->post($url, [
+                'license_key' => $licenseKey,
+                'mac_address' => $installationId,
+                'installation_id' => $installationId,
+            ]);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                $this->setSetting('app_plan', $data['plan'] ?? $data['plan_type'] ?? 'basic');
+                
+                $addons = $data['allowed_addons'] ?? $data['addons'] ?? [];
+                $this->setSetting('license_allowed_addons', is_array($addons) ? json_encode($addons) : $addons);
+                
+                $this->setSetting('last_license_check', now()->toIso8601String());
+            } else if ($response->status() === 401 || $response->status() === 403) {
+                // Si está revocada, actualizamos a blocked y tiramos error
+                $this->setSetting('app_plan', 'blocked');
+                throw new \Exception('La licencia ha sido suspendida, revocada o es inválida.');
+            } else {
+                throw new \Exception('El servidor remoto de licencias no respondió correctamente (HTTP ' . $response->status() . ').');
+            }
+        } catch (\Illuminate\Http\Client\ConnectionException $e) {
+            throw new \Exception('Error de red: No se pudo contactar al servidor de licencias. Verifique su conexión y vuelva a intentar.');
+        }
+    }
+
+
+    /**
      * Activación manual forzada desde el Frontend de Flutter.
      * Retorna el nuevo plan o arroja una excepción si es inválida.
      */
     public function activateManual(string $licenseKey): string
     {
         $installationId = $this->getInstallationId();
-        $url = $this->getServerUrl() . '/api/validate-license';
+        $url = $this->getServerUrl() . '/api/validate';
 
         try {
-            $response = Http::timeout(10)->post($url, [
+            $response = Http::timeout(120)->post($url, [
                 'license_key' => $licenseKey,
                 'mac_address' => $installationId,
+                'installation_id' => $installationId,
             ]);
 
             if ($response->successful()) {
                 $data = $response->json();
-                $plan = $data['plan'] ?? 'basic';
+                $plan = $data['plan'] ?? $data['plan_type'] ?? 'basic';
+                
+                // Addons support
+                $addons = $data['allowed_addons'] ?? $data['addons'] ?? [];
+                $addonsEncoded = is_array($addons) ? json_encode($addons) : $addons;
 
                 $this->setSetting('license_key', $licenseKey);
                 $this->setSetting('app_plan', $plan);
+                $this->setSetting('license_allowed_addons', $addonsEncoded);
                 $this->setSetting('last_license_check', now()->toIso8601String());
                 
                 return $plan;
