@@ -51,6 +51,7 @@ Route::prefix('catalog')->group(function () {
     Route::put('/products/bulk-price-update', [CatalogController::class, 'bulkPriceUpdate']);
     Route::post('/products/{product}/adjust-stock', [StockController::class, 'adjust']);
 
+    Route::get('/products/alerts/critical', [ProductController::class, 'criticalAlerts']);
     Route::apiResource('products', ProductController::class);
     Route::apiResource('categories', CategoryController::class);
     Route::apiResource('brands', BrandController::class);
