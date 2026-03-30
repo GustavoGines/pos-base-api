@@ -35,7 +35,7 @@ class SyncLicenseStatus extends Command
         $serverUrl = rtrim(config('services.license_server.url', ''), '/');
 
         try {
-            $response = Http::timeout(10)->post("{$serverUrl}/api/check-license", [
+            $response = Http::timeout(30)->post("{$serverUrl}/api/check-license", [
                 'api_key' => $apiKey
             ]);
 
