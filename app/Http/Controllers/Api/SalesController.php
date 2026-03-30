@@ -83,15 +83,20 @@ class SalesController extends Controller
         }
 
         $validated = $request->validate([
-            'payment_method'  => 'required|string|in:cash,card,transfer',
-            'tendered_amount' => 'nullable|numeric|min:0',
-            'change_amount'   => 'nullable|numeric',
-            'items'           => 'nullable|array',
-            'items.*.product_id' => 'required_with:items|integer|exists:products,id',
-            'items.*.quantity'   => 'required_with:items|numeric|min:0.001',
-            'items.*.unit_price' => 'required_with:items|numeric',
-            'items.*.subtotal'   => 'required_with:items|numeric',
-            'user_id'         => 'nullable|integer|exists:users,id',
+            'payments'               => 'required|array|min:1',
+            'payments.*.payment_method_id' => 'required|integer|exists:payment_methods,id',
+            'payments.*.base_amount'      => 'required|numeric|min:0',
+            'payments.*.surcharge_amount' => 'required|numeric|min:0',
+            'payments.*.total_amount'     => 'required|numeric|min:0',
+            'total_surcharge'        => 'required|numeric|min:0',
+            'tendered_amount'        => 'nullable|numeric|min:0',
+            'change_amount'          => 'nullable|numeric',
+            'items'                  => 'nullable|array',
+            'items.*.product_id'     => 'required_with:items|integer|exists:products,id',
+            'items.*.quantity'       => 'required_with:items|numeric|min:0.001',
+            'items.*.unit_price'     => 'required_with:items|numeric',
+            'items.*.subtotal'       => 'required_with:items|numeric',
+            'user_id'                => 'nullable|integer|exists:users,id',
         ]);
 
         DB::transaction(function () use ($validated, $sale, $request) {
@@ -105,7 +110,7 @@ class SalesController extends Controller
                 }
 
                 $newQuantities = [];
-                $newTotal = 0;
+                $newTotal = 0.0;
                 foreach ($validated['items'] as $newItem) {
                     $newQuantities[$newItem['product_id']] = ($newQuantities[$newItem['product_id']] ?? 0) + $newItem['quantity'];
                     $newTotal += $newItem['subtotal'];
@@ -153,14 +158,26 @@ class SalesController extends Controller
                     }
                 }
 
-                $sale->total = $newTotal;
+                $sale->setAttribute('total', $newTotal);
             }
+
+            foreach ($validated['payments'] as $payment) {
+                $sale->payments()->create([
+                    'payment_method_id' => $payment['payment_method_id'],
+                    'base_amount'       => $payment['base_amount'],
+                    'surcharge_amount'  => $payment['surcharge_amount'],
+                    'total_amount'      => $payment['total_amount'],
+                ]);
+            }
+
+            $currentDue = $sale->amount_due > 0 ? $sale->amount_due : 0; // for cuenta corriente, logic could be more complex, but we assume paid in full for pending recall for now.
 
             $sale->update([
                 'status'          => 'completed',
-                'payment_method'  => $validated['payment_method'],
                 'tendered_amount' => $validated['tendered_amount'] ?? $sale->total,
                 'change_amount'   => $validated['change_amount'] ?? 0,
+                'total_surcharge' => $validated['total_surcharge'] ?? 0,
+                'payment_status'  => current($validated['payments'])['payment_method_id'] === 5 ? 'pending' : 'paid', // simplistic cc fallback (5=cc)
             ]);
         });
 

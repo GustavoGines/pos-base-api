@@ -11,11 +11,16 @@ class Sale extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['total', 'payment_method', 'payment_status', 'amount_due', 'status', 'cash_shift_id', 'tendered_amount', 'change_amount', 'user_id', 'customer_id'];
+    protected $fillable = [
+        'total', 'total_surcharge', 'payment_status', 'amount_due',
+        'status', 'cash_shift_id', 'tendered_amount', 'change_amount',
+        'user_id', 'customer_id',
+    ];
 
     protected $casts = [
-        'total'       => 'decimal:2',
-        'amount_due'  => 'decimal:2',
+        'total'           => 'decimal:2',
+        'total_surcharge' => 'decimal:2',
+        'amount_due'      => 'decimal:2',
     ];
 
     public function isVoided(): bool
@@ -31,6 +36,11 @@ class Sale extends Model
     public function items(): HasMany
     {
         return $this->hasMany(SaleItem::class);
+    }
+
+    public function payments(): HasMany
+    {
+        return $this->hasMany(SalePayment::class);
     }
 
     public function user(): BelongsTo

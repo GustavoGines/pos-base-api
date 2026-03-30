@@ -35,7 +35,12 @@ class PosController extends Controller
     {
         $validated = $request->validate([
             'total'                  => 'required|numeric',
-            'payment_method'         => 'required|string',
+            'total_surcharge'        => 'required|numeric|min:0',
+            'payments'               => 'exclude_if:status,pending|required|array|min:1',
+            'payments.*.payment_method_id' => 'required|integer|exists:payment_methods,id',
+            'payments.*.base_amount'      => 'required|numeric|min:0',
+            'payments.*.surcharge_amount' => 'required|numeric|min:0',
+            'payments.*.total_amount'     => 'required|numeric|min:0',
             'tendered_amount'        => 'nullable|numeric',
             'change_amount'          => 'nullable|numeric',
             'cash_shift_id'          => 'required|integer|exists:cash_shifts,id',
@@ -54,7 +59,19 @@ class PosController extends Controller
             'items.*.product_id.exists' => 'Uno de los productos en el carrito ya no está disponible en la base de datos.',
         ]);
 
-        $isCuentaCorriente = ($validated['payment_method'] === 'cuenta_corriente');
+        $isPendingSale = ($validated['status'] ?? 'completed') === 'pending';
+
+        $ccPaymentTotal = 0;
+        $isCuentaCorriente = false;
+        
+        if (!$isPendingSale) {
+            $ccPaymentTotal = collect($validated['payments'])->filter(function ($p) {
+                $method = \App\Models\PaymentMethod::find($p['payment_method_id']);
+                return $method && $method->code === 'cuenta_corriente';
+            })->sum('total_amount');
+
+            $isCuentaCorriente = $ccPaymentTotal > 0;
+        }
 
         if ($isCuentaCorriente && empty($validated['customer_id'])) {
             return response()->json([
@@ -63,14 +80,15 @@ class PosController extends Controller
             ], 422);
         }
 
-        return DB::transaction(function () use ($validated, $isCuentaCorriente) {
+        return DB::transaction(function () use ($validated, $isCuentaCorriente, $isPendingSale, $ccPaymentTotal) {
             $total = (float) $validated['total'];
+            $totalSurcharge = (float) $validated['total_surcharge'];
 
             $sale = Sale::create([
                 'total'                  => $total,
-                'payment_method'         => $validated['payment_method'],
-                'payment_status'         => $isCuentaCorriente ? 'pending' : 'paid',
-                'amount_due'             => $isCuentaCorriente ? $total : 0,
+                'total_surcharge'        => $totalSurcharge,
+                'payment_status'         => $isPendingSale ? 'pending' : ($isCuentaCorriente && $ccPaymentTotal >= ($total + $totalSurcharge) ? 'pending' : 'paid'),
+                'amount_due'             => $isCuentaCorriente ? $ccPaymentTotal : ($isPendingSale ? $total : 0),
                 'tendered_amount'        => $validated['tendered_amount'] ?? null,
                 'change_amount'          => $validated['change_amount'] ?? null,
                 'cash_shift_id'          => $validated['cash_shift_id'],
@@ -78,6 +96,17 @@ class PosController extends Controller
                 'customer_id'            => $validated['customer_id'] ?? null,
                 'status'                 => $validated['status'] ?? 'completed',
             ]);
+
+            if (!$isPendingSale) {
+                foreach ($validated['payments'] as $payment) {
+                    $sale->payments()->create([
+                        'payment_method_id' => $payment['payment_method_id'],
+                        'base_amount'       => $payment['base_amount'],
+                        'surcharge_amount'  => $payment['surcharge_amount'],
+                        'total_amount'      => $payment['total_amount'],
+                    ]);
+                }
+            }
 
             foreach ($validated['items'] as $itemData) {
                 $product = Product::findOrFail($itemData['product_id']);
@@ -111,7 +140,7 @@ class PosController extends Controller
             // Si es cuenta corriente, registrar la deuda en Customer + Ledger
             if ($isCuentaCorriente && !empty($validated['customer_id'])) {
                 $customer = Customer::lockForUpdate()->find($validated['customer_id']);
-                $customer->balance += $total;
+                $customer->balance += $ccPaymentTotal;
                 $customer->save();
 
                 CustomerTransaction::create([
@@ -119,7 +148,7 @@ class PosController extends Controller
                     'user_id'       => $validated['user_id'] ?? 1,
                     'sale_id'       => $sale->id,
                     'type'          => 'charge',
-                    'amount'        => $total,
+                    'amount'        => $ccPaymentTotal,
                     'balance_after' => $customer->balance,
                     'description'   => "Venta en Cta. Cte. — Ticket #{$sale->id}",
                 ]);
@@ -127,7 +156,7 @@ class PosController extends Controller
 
             return response()->json([
                 'message' => 'Sale processed successfully',
-                'sale'    => $sale->load('items'),
+                'sale'    => $sale->load('items', 'payments.paymentMethod'),
             ], 201);
         });
     }
