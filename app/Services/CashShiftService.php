@@ -145,15 +145,21 @@ class CashShiftService
                 throw new Exception("El turno no existe o ya está cerrado.", 404);
             }
 
-            // Sumatoria Financiera: Solo ventas COMPLETADAS (no en espera, no anuladas)
-            // 'cuenta_corriente' se contabiliza aparte porque ese dinero NO está en la gaveta.
-            $cashSales     = $shift->sales()->where('payment_method', 'cash')->where('status', 'completed')->sum('total');
-            $cardSales     = $shift->sales()->where('payment_method', 'card')->where('status', 'completed')->sum('total');
-            $transferSales = $shift->sales()->where('payment_method', 'transfer')->where('status', 'completed')->sum('total');
-            $cuentaCorrienteSales = $shift->sales()->where('payment_method', 'cuenta_corriente')->where('status', 'completed')->sum('total');
+            // Sumatoria Financiera: Solo ventas COMPLETADAS
+            // Recorremos los pagos cruzados con métodos de pago para saber qué es efectivo
+            $cashSales = \App\Models\SalePayment::whereHas('sale', fn($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+                ->whereHas('paymentMethod', fn($q) => $q->where('is_cash', true))
+                ->sum('total_amount');
 
-            // El efectivo físico esperado en la gaveta = Fondo Inicial + SOLO ventas en efectivo
-            // (Tarjeta y Transf. no aterrizan en la caja física; Cta. Cte. tampoco)
+            $cardSales = \App\Models\SalePayment::whereHas('sale', fn($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+                ->whereHas('paymentMethod', fn($q) => $q->where('code', 'like', 'card_%'))
+                ->sum('total_amount');
+
+            $transferSales = \App\Models\SalePayment::whereHas('sale', fn($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+                ->whereHas('paymentMethod', fn($q) => $q->where('code', 'transfer'))
+                ->sum('total_amount');
+
+            // El efectivo físico esperado en la gaveta = Fondo Inicial + SOLO pagos en métodos is_cash
             $expectedBalance = $shift->opening_balance + $cashSales;
             
             // Desfase (Sobrante/Faltante) comparado contra lo físico contado

@@ -23,6 +23,9 @@ use App\Http\Controllers\Api\CustomerController;
 Route::apiResource('customers', CustomerController::class);
 Route::post('/customers/{customer}/payments', [CustomerController::class, 'registerPayment']);
 Route::get('/customers/{customer}/pending-sales', [CustomerController::class, 'getPendingSales']);
+
+Route::apiResource('payment-methods', \App\Http\Controllers\Api\PaymentMethodController::class);
+
 Route::get('/settings', [SettingController::class, 'index']);
 Route::put('/settings', [SettingController::class, 'update']);
 Route::post('/settings/license', [SettingController::class, 'updateLicense']);
