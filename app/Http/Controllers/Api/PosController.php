@@ -119,11 +119,7 @@ class PosController extends Controller
                     'subtotal'     => $itemData['subtotal'],
                 ]);
 
-                if (!$product->is_sold_by_weight && $product->stock < $itemData['quantity']) {
-                    throw new \Exception(
-                        "Stock insuficiente para '{$product->name}'. Disponible: {$product->stock}, Solicitado: {$itemData['quantity']}"
-                    );
-                }
+
 
                 $product->stock -= $itemData['quantity'];
                 $product->save();
