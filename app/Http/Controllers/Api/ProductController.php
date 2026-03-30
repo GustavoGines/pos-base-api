@@ -47,6 +47,7 @@ class ProductController extends Controller
             'cost_price' => 'numeric|min:0',
             'selling_price' => 'numeric|min:0|gte:cost_price',
             'stock' => 'numeric|min:0',
+            'min_stock' => 'nullable|numeric|min:0',
             'active' => 'boolean',
             'is_sold_by_weight' => 'boolean',
             'vencimiento_dias' => 'nullable|integer|min:1|max:3650',
@@ -80,6 +81,43 @@ class ProductController extends Controller
         return response()->json($product->load(['category', 'brand', 'supplier']));
     }
 
+    public function adjustStock(Request $request, Product $product)
+    {
+        $validated = $request->validate([
+            'type' => 'required|in:increment,decrement',
+            'quantity' => 'required|numeric|min:0.001',
+            'notes' => 'nullable|string|max:255',
+            'min_stock' => 'nullable|numeric|min:0',
+        ]);
+
+        if ($validated['type'] === 'increment') {
+            $product->increment('stock', $validated['quantity']);
+        } else {
+            $product->decrement('stock', $validated['quantity']);
+        }
+
+        // Si se envió un nuevo stock mínimo, lo actualizamos también (UX Quick Win)
+        if (array_key_exists('min_stock', $validated)) {
+            $product->update(['min_stock' => $validated['min_stock']]);
+        }
+
+        // Registrar movimiento si existe una tabla de movimientos (opcional según arquitectura)
+        if (method_exists($product, 'stockMovements')) {
+            $product->stockMovements()->create([
+                'type' => $validated['type'],
+                'quantity' => $validated['quantity'],
+                'notes' => $validated['notes'] ?? 'Ajuste manual desde catálogo',
+                'user_id' => auth()->id(), // Asumiendo que hay un usuario autenticado
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Stock actualizado con éxito',
+            'new_stock' => $product->fresh()->stock,
+            'product' => $product->fresh()->load(['category', 'brand', 'supplier']),
+        ]);
+    }
+
     public function update(Request $request, Product $product)
     {
         $validated = $request->validate([
@@ -92,6 +130,7 @@ class ProductController extends Controller
             'cost_price' => 'numeric|min:0',
             'selling_price' => 'numeric|min:0|gte:cost_price',
             'stock' => 'numeric|min:0',
+            'min_stock' => 'nullable|numeric|min:0',
             'active' => 'boolean',
             'is_sold_by_weight' => 'boolean',
             'vencimiento_dias' => 'nullable|integer|min:1|max:3650',
@@ -119,6 +158,21 @@ class ProductController extends Controller
     {
         $product->delete();
         return response()->json(null, 204);
+    }
+
+    /**
+     * Retorna productos con stock por debajo del mínimo configurado.
+     */
+    public function criticalAlerts()
+    {
+        $products = Product::where('active', true)
+            ->whereNotNull('min_stock')
+            ->whereColumn('stock', '<=', 'min_stock')
+            ->orderBy('stock', 'asc')
+            ->limit(100)
+            ->get();
+
+        return response()->json($products);
     }
 
     /**
