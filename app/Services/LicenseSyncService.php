@@ -135,6 +135,10 @@ class LicenseSyncService
                 $data = $response->json();
                 $this->setSetting('app_plan', $data['plan'] ?? $data['plan_type'] ?? 'basic');
                 
+                // ✅ FIX: Sincronizar plan_mode para que los cambios SaaS↔Lifetime
+                // propaguen correctamente en cada heartbeat del cliente Flutter.
+                $this->setSetting('license_plan_mode', $data['plan_mode'] ?? 'saas');
+                
                 $addons = $data['allowed_addons'] ?? $data['addons'] ?? [];
                 $this->setSetting('license_allowed_addons', is_array($addons) ? json_encode($addons) : $addons);
                 
