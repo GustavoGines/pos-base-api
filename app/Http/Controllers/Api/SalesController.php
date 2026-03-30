@@ -22,7 +22,7 @@ class SalesController extends Controller
         $userId = $request->query('user_id');
 
         $query = Sale::with([
-            'items.product:id,name,is_sold_by_weight',
+            'items.product:id,name,internal_code,stock,is_sold_by_weight',
             'user:id,name',
             'payments.paymentMethod:id,name,code,is_cash',
         ])->latest();
@@ -63,7 +63,7 @@ class SalesController extends Controller
     public function pending()
     {
         $sales = Sale::with([
-            'items.product:id,name,is_sold_by_weight',
+            'items.product:id,name,internal_code,stock,is_sold_by_weight',
             'user:id,name',
             'payments.paymentMethod:id,name,code,is_cash',
         ])

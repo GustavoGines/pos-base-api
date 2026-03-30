@@ -67,10 +67,16 @@ class LicenseSyncService
                 $this->setSetting('app_plan', $data['plan'] ?? $data['plan_type'] ?? 'basic');
                 
                 // Determinar si es SaaS o Lifetime (DRM Heartbeat)
-                $planMode = $data['plan_mode'] ?? 'saas'; // Default to saas if not specified
+                $planMode = $data['plan_mode'] ?? 'saas';
                 $this->setSetting('license_plan_mode', $planMode);
+                $this->setSetting('license_is_lifetime', $planMode === 'lifetime' ? '1' : '0');
                 
-                // Mapear addons (si el usuario compra solo módulos específicos)
+                // Metadatos de suscripción extendidos
+                $this->setSetting('license_expires_at', $data['expires_at'] ?? null);
+                $this->setSetting('license_next_payment_at', $data['next_payment_at'] ?? null);
+                $this->setSetting('license_manage_url', $data['manage_url'] ?? null);
+                
+                // Mapear addons
                 $addons = $data['allowed_addons'] ?? $data['addons'] ?? [];
                 $this->setSetting('license_allowed_addons', is_array($addons) ? json_encode($addons) : $addons);
                 
@@ -136,8 +142,14 @@ class LicenseSyncService
                 $this->setSetting('app_plan', $data['plan'] ?? $data['plan_type'] ?? 'basic');
                 
                 // ✅ FIX: Sincronizar plan_mode para que los cambios SaaS↔Lifetime
-                // propaguen correctamente en cada heartbeat del cliente Flutter.
-                $this->setSetting('license_plan_mode', $data['plan_mode'] ?? 'saas');
+                $planMode = $data['plan_mode'] ?? 'saas';
+                $this->setSetting('license_plan_mode', $planMode);
+                $this->setSetting('license_is_lifetime', $planMode === 'lifetime' ? '1' : '0');
+
+                // Metadatos extendidos
+                $this->setSetting('license_expires_at', $data['expires_at'] ?? null);
+                $this->setSetting('license_next_payment_at', $data['next_payment_at'] ?? null);
+                $this->setSetting('license_manage_url', $data['manage_url'] ?? null);
                 
                 $addons = $data['allowed_addons'] ?? $data['addons'] ?? [];
                 $this->setSetting('license_allowed_addons', is_array($addons) ? json_encode($addons) : $addons);
@@ -182,7 +194,16 @@ class LicenseSyncService
 
                 $this->setSetting('license_key', $licenseKey);
                 $this->setSetting('app_plan', $plan);
-                $this->setSetting('license_plan_mode', $data['plan_mode'] ?? 'saas'); 
+                
+                $planMode = $data['plan_mode'] ?? 'saas';
+                $this->setSetting('license_plan_mode', $planMode); 
+                $this->setSetting('license_is_lifetime', $planMode === 'lifetime' ? '1' : '0');
+
+                // Metadatos extendidos
+                $this->setSetting('license_expires_at', $data['expires_at'] ?? null);
+                $this->setSetting('license_next_payment_at', $data['next_payment_at'] ?? null);
+                $this->setSetting('license_manage_url', $data['manage_url'] ?? null);
+
                 $this->setSetting('license_allowed_addons', $addonsEncoded);
                 $this->setSetting('last_license_check', now()->toIso8601String());
                 
