@@ -55,7 +55,7 @@ class LicenseSyncService
 
         try {
             // Timeout 120s para permitir Cold Starts del server remoto
-            $response = Http::timeout(120)->post($url, [
+            $response = Http::timeout(240)->post($url, [
                 'license_key' => $licenseKey,
                 'mac_address' => $installationId,
                 'installation_id' => $installationId,
@@ -125,7 +125,7 @@ class LicenseSyncService
         $url = $this->getServerUrl() . '/api/validate';
 
         try {
-            $response = Http::timeout(120)->post($url, [
+            $response = Http::timeout(240)->post($url, [
                 'license_key' => $licenseKey,
                 'mac_address' => $installationId,
                 'installation_id' => $installationId,
@@ -162,7 +162,7 @@ class LicenseSyncService
         $url = $this->getServerUrl() . '/api/validate';
 
         try {
-            $response = Http::timeout(120)->post($url, [
+            $response = Http::timeout(240)->post($url, [
                 'license_key' => $licenseKey,
                 'mac_address' => $installationId,
                 'installation_id' => $installationId,
