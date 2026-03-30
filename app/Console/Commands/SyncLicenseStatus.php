@@ -5,7 +5,6 @@ namespace App\Console\Commands;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 
 class SyncLicenseStatus extends Command
 {
@@ -58,17 +57,14 @@ class SyncLicenseStatus extends Command
 
             } else {
                 // Otro error del servidor — no alterar el estado local
-                Log::warning("license:sync - Respuesta inesperada del servidor: HTTP {$response->status()}");
                 $this->warn("Respuesta inesperada del servidor ({$response->status()}). Estado local sin modificar.");
             }
 
         } catch (\Illuminate\Http\Client\ConnectionException $e) {
             // Sin internet — modo offline, el estado local se mantiene intacto
-            Log::info('license:sync - Sin conexión al servidor de licencias. Modo offline activo.');
             $this->info('Sin conexión al servidor. El sistema continúa en modo offline.');
 
         } catch (\Exception $e) {
-            Log::error("license:sync - Error inesperado: {$e->getMessage()}");
             $this->error("Error inesperado: {$e->getMessage()}");
         }
 

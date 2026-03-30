@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Models\BusinessSetting;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
 
@@ -76,18 +75,15 @@ class LicenseSyncService
                 $this->setSetting('license_allowed_addons', is_array($addons) ? json_encode($addons) : $addons);
                 
                 $this->setSetting('last_license_check', now()->toIso8601String());
-                Log::info('License Sync: OK', ['plan' => $data['plan'], 'addons' => $addons]);
             } else if ($response->status() === 401 || $response->status() === 403) {
                 // 401/403: Licencia suspendida, revocada o inválida
                 $this->setSetting('app_plan', 'blocked');
-                Log::warning('License Sync: Revocada o Inválida', ['status' => $response->status()]);
             } else {
                 // 500 u otros errores del servidor: Tratar como "Falla de Internet"
                 $this->handleOfflineGracePeriod();
             }
         } catch (\Exception $e) {
-            // Timeout / Falla de red: Manejar Grace Period
-            Log::error('License Sync: Error de red', ['error' => $e->getMessage()]);
+            // Timeout / Falla de red: Manejar Grace Period silenciosamente
             $this->handleOfflineGracePeriod();
         }
     }
@@ -110,10 +106,8 @@ class LicenseSyncService
         if ($hoursSinceLastCheck > 72) {
             // Grace period vencido
             $this->setSetting('app_plan', 'blocked');
-            Log::alert('License Sync: Grace period (72h) excedido. Plan bloqueado.');
         } else {
             // Todavía en Grace Period. Mantiene el plan actual silenciosamente.
-            Log::info("License Sync: Offline. En periodo de gracia. Horas sin conexión: {$hoursSinceLastCheck}");
         }
     }
 
