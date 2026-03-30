@@ -62,10 +62,13 @@ class ProductController extends Controller
             $validated['internal_code'] = str_pad($request->internal_code, 5, '0', STR_PAD_LEFT);
         }
 
-        // Si el código de barras está vacío, lo dejamos nulo para que coincida con 
-        // el comportamiento de los productos a granel de los seeders y no duplique el PLU.
+        // Si el código de barras está vacío:
+        // - Si es producto de balanza (granel), lo dejamos NULO para no interferir con códigos EAN13 de balanza.
+        // - Si es por unidad, le generamos un código de barras EAN-13 Interno basado en su PLU.
         if (empty($validated['barcode'])) {
-            $validated['barcode'] = null;
+            $validated['barcode'] = empty($request->is_sold_by_weight) 
+                ? $this->generateInternalEan13($validated['internal_code']) 
+                : null;
         }
 
         $product = Product::create($validated);
@@ -96,6 +99,17 @@ class ProductController extends Controller
             'brand_id' => 'nullable|exists:brands,id',
             'supplier_id' => 'nullable|exists:suppliers,id',
         ]);
+        // Flujo de Código Interno (PLU) en actualización
+        if (empty($request->internal_code)) {
+            $validated['internal_code'] = $product->internal_code;
+        } else {
+            $validated['internal_code'] = str_pad($request->internal_code, 5, '0', STR_PAD_LEFT);
+        }
+
+        if (array_key_exists('barcode', $validated) && empty($validated['barcode'])) {
+            $isWeight = $request->has('is_sold_by_weight') ? $request->is_sold_by_weight : $product->is_sold_by_weight;
+            $validated['barcode'] = empty($isWeight) ? $this->generateInternalEan13($validated['internal_code']) : null;
+        }
 
         $product->update($validated);
         return response()->json($product->load(['category', 'brand', 'supplier']));
@@ -126,5 +140,24 @@ class ProductController extends Controller
         }
 
         return str_pad($nextNumber, 5, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * Genera un EAN-13 de uso interno estandarizado.
+     * Formato: Prefijo (20) + Relleno (00000) + PLU (5 dígitos) + Checksum (1 dígito)
+     */
+    private function generateInternalEan13(string $plu): string
+    {
+        $base = '2000000' . str_pad($plu, 5, '0', STR_PAD_LEFT);
+        
+        $sum = 0;
+        for ($i = 0; $i < 12; $i++) {
+            $digit = (int) $base[$i];
+            // Peso 1 para posiciones impares (idx par), Peso 3 para posiciones pares (idx impar)
+            $sum += ($i % 2 === 0) ? $digit : $digit * 3;
+        }
+        $checksum = (10 - ($sum % 10)) % 10;
+        
+        return $base . $checksum;
     }
 }

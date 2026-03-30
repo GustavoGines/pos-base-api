@@ -24,6 +24,7 @@ class SalesController extends Controller
         $query = Sale::with([
             'items.product:id,name,is_sold_by_weight',
             'user:id,name',
+            'payments.paymentMethod:id,name,code,is_cash',
         ])->latest();
 
         if ($period === 'today') {
@@ -64,6 +65,7 @@ class SalesController extends Controller
         $sales = Sale::with([
             'items.product:id,name,is_sold_by_weight',
             'user:id,name',
+            'payments.paymentMethod:id,name,code,is_cash',
         ])
             ->where('status', 'pending')
             ->latest()
@@ -221,7 +223,7 @@ class SalesController extends Controller
 
         return response()->json([
             'message' => "Venta #{$sale->id} anulada correctamente. El stock fue restaurado.",
-            'sale'    => $sale->fresh()->load('items.product', 'user:id,name'),
+            'sale'    => $sale->fresh()->load('items.product', 'user:id,name', 'payments.paymentMethod:id,name,code,is_cash'),
         ]);
     }
 }
