@@ -13,7 +13,11 @@ class SettingController extends Controller
      */
     public function index()
     {
-        $settings = BusinessSetting::all()->pluck('value', 'key');
+        $settings = BusinessSetting::all()->pluck('value', 'key')->toArray();
+        
+        // Agregar metadata dinámica para el DRM Heartbeat
+        $settings['server_time'] = now()->toIso8601String();
+        $settings['grace_period_hours'] = 72;
         
         return response()->json($settings);
     }

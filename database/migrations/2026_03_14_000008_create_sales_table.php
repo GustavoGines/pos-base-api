@@ -15,7 +15,7 @@ return new class extends Migration
             $table->id();
             $table->decimal('total', 12, 2);
             $table->string('payment_method');
-            $table->foreignId('cash_register_shift_id')->nullable()->constrained()->nullOnDelete();
+            $table->foreignId('cash_shift_id')->nullable()->constrained('cash_shifts')->nullOnDelete();
             $table->timestamps();
         });
     }

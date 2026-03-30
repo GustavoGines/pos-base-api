@@ -14,7 +14,8 @@ class Product extends Model
 
     protected $fillable = [
         'name', 'barcode', 'internal_code', 'cost_price', 'selling_price',
-        'stock', 'active', 'is_sold_by_weight', 'category_id', 'brand_id', 'supplier_id'
+        'stock', 'active', 'is_sold_by_weight', 'vencimiento_dias',
+        'category_id', 'brand_id', 'supplier_id'
     ];
 
     protected $casts = [
@@ -23,6 +24,7 @@ class Product extends Model
         'cost_price' => 'decimal:2',
         'selling_price' => 'decimal:2',
         'stock' => 'decimal:3',
+        'vencimiento_dias' => 'integer',
     ];
 
     public function category(): BelongsTo

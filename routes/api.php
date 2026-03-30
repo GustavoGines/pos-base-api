@@ -8,7 +8,7 @@ use App\Http\Controllers\Api\SettingController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\BrandController;
-use App\Http\Controllers\Api\CashRegisterController;
+use App\Http\Controllers\Api\CashShiftController;
 
 use App\Http\Controllers\Api\AuthController;
 
@@ -53,11 +53,25 @@ Route::prefix('catalog')->group(function () {
     Route::apiResource('brands', BrandController::class);
 });
 
-Route::prefix('cash-register')->group(function () {
-    Route::get('/shifts', [CashRegisterController::class, 'index']);
-    Route::get('/current', [CashRegisterController::class, 'current']);
-    Route::post('/open', [CashRegisterController::class, 'open']);
-    Route::post('/close', [CashRegisterController::class, 'close']);
+use App\Http\Controllers\Api\CashRegisterController;
+
+Route::prefix('shifts')->group(function () {
+    Route::get('/', [CashShiftController::class, 'index']);
+    Route::get('/current', [CashShiftController::class, 'current']);
+    Route::post('/open', [CashShiftController::class, 'open']);
+    Route::post('/{id}/close', [CashShiftController::class, 'close']);
+});
+
+Route::prefix('registers')->group(function () {
+    // Lectura pública para inicializar la caja (Index maneja el leakage internamente)
+    Route::get('/', [CashRegisterController::class, 'index']);
+
+    // Admin/Premium routes
+    Route::middleware(['addon:multi_caja'])->group(function () {
+        Route::post('/', [CashRegisterController::class, 'store']);
+        Route::put('/{id}', [CashRegisterController::class, 'update']);
+        Route::delete('/{id}', [CashRegisterController::class, 'destroy']);
+    });
 });
 
 use App\Http\Controllers\Api\TrashController;

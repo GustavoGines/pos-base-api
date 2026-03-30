@@ -3,130 +3,86 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\CashRegisterShift;
+use App\Models\CashRegister;
+use App\Services\CashShiftService;
 use Illuminate\Http\Request;
-use Carbon\Carbon;
 
 class CashRegisterController extends Controller
 {
-    /**
-     * Get all shifts (audit history).
-     */
-    public function index()
+    protected CashShiftService $cashShiftService;
+
+    public function __construct(CashShiftService $cashShiftService)
     {
-        $shifts = CashRegisterShift::with('user')->orderBy('id', 'desc')->paginate(50);
-        return response()->json($shifts);
+        $this->cashShiftService = $cashShiftService;
     }
 
-    /**
-     * Get the currently active (open) cash register shift.
-     * Returns null/empty if the register is closed.
-     */
-    public function current()
+    public function index(Request $request)
     {
-        $shift = CashRegisterShift::where('status', 'open')->first();
-        
-        if ($shift) {
-            return response()->json($shift);
+        $isPro = $this->cashShiftService->hasMultiCajaPermission();
+
+        if (!$isPro) {
+            // Seguridad: Leakage Prevention. Plan Básico siempre retorna Caja 1 ignorando BD.
+            $primaryRegister = CashRegister::firstOrCreate(
+                ['id' => 1],
+                ['name' => 'Caja Principal', 'is_active' => true]
+            );
+            // Retorna un Array con 1 solo objeto simulando respuesta múltiple limpia
+            return response()->json([$primaryRegister]);
         }
 
-        return response()->json(null);
+        // Plan Pro o Multi Caja: Retorno transparente de la BD real
+        $registers = CashRegister::where('is_active', true)->get();
+        return response()->json($registers);
     }
 
-    /**
-     * Open a new cash register shift
-     */
-    public function open(Request $request)
+    public function store(Request $request)
     {
         $validated = $request->validate([
-            'opening_balance' => 'required|numeric|min:0',
-            'user_id' => 'required|exists:users,id',
+            'name' => 'required|string|max:255|unique:cash_registers,name',
         ]);
 
-        // Check if there's already an open shift
-        $activeShift = CashRegisterShift::where('status', 'open')->first();
-        if ($activeShift) {
-            return response()->json(['message' => 'Cash register is already open.', 'shift' => $activeShift], 400);
-        }
-
-        $shift = CashRegisterShift::create([
-            'opened_at' => Carbon::now(),
-            'opening_balance' => $validated['opening_balance'],
-            'user_id' => $validated['user_id'],
-            'status' => 'open'
+        $register = CashRegister::create([
+            'name' => $validated['name'],
+            'is_active' => true,
         ]);
 
-        return response()->json($shift, 201);
+        return response()->json($register, 201);
     }
 
-    public function close(Request $request)
+    public function update(Request $request, $id)
     {
-        $validated = $request->validate([
-            'counted_cash' => 'required|numeric|min:0',
-        ]);
+        $register = CashRegister::findOrFail($id);
 
-        $activeShift = CashRegisterShift::where('status', 'open')->first();
-        if (!$activeShift) {
-            return response()->json(['message' => 'No active cash register shift found.'], 400);
+        if ($register->id === 1) {
+            return response()->json(['message' => 'La Caja Principal no puede ser modificada ni desactivada.'], 403);
         }
 
-        // 1. Calculate general total sales (for stats/reports)
-        $totalSales = \App\Models\Sale::where('cash_register_shift_id', $activeShift->id)
-            ->where('status', 'completed')
-            ->sum('total');
-
-        // 2. Aggregate sales by payment method
-        $totalCashSales = \App\Models\Sale::where('cash_register_shift_id', $activeShift->id)
-            ->where('status', 'completed')
-            ->where('payment_method', 'cash')
-            ->sum('total');
-
-        $totalTransfers = \App\Models\Sale::where('cash_register_shift_id', $activeShift->id)
-            ->where('status', 'completed')
-            ->where('payment_method', 'transfer')
-            ->sum('total');
-
-        $totalCards = \App\Models\Sale::where('cash_register_shift_id', $activeShift->id)
-            ->where('status', 'completed')
-            ->where('payment_method', 'card')
-            ->sum('total');
-
-        // Sum payments collected (Account Receivables / Abonos)
-        $totalCashPayments = \App\Models\CustomerTransaction::where('cash_register_shift_id', $activeShift->id)
-            ->where('type', 'payment')
-            ->where('payment_method', 'cash')
-            ->sum('amount');
-            
-        $totalTransferPayments = \App\Models\CustomerTransaction::where('cash_register_shift_id', $activeShift->id)
-            ->where('type', 'payment')
-            ->where('payment_method', 'transfer')
-            ->sum('amount');
-            
-        $totalCardPayments = \App\Models\CustomerTransaction::where('cash_register_shift_id', $activeShift->id)
-            ->where('type', 'payment')
-            ->where('payment_method', 'card')
-            ->sum('amount');
-
-        // Account for these payments in the total summaries
-        $totalTransfers += $totalTransferPayments;
-        $totalCards += $totalCardPayments;
-
-        // 3. Expected cash in PHYSICAL drawer = opening + ONLY physical cash received (sales + payments)
-        $expectedCash = $activeShift->opening_balance + $totalCashSales + $totalCashPayments;
-
-        // 4. Calculate the difference (Faltante / Sobrante)
-        $difference = $validated['counted_cash'] - $expectedCash;
-
-        $activeShift->update([
-            'closed_at' => Carbon::now(),
-            'closing_balance' => $validated['counted_cash'],
-            'total_sales' => $totalSales,     
-            'total_transfers' => $totalTransfers,
-            'total_cards' => $totalCards,
-            'difference' => $difference,       
-            'status' => 'closed'
+        $validated = $request->validate([
+            'name' => 'sometimes|string|max:255|unique:cash_registers,name,' . $id,
+            'is_active' => 'sometimes|boolean',
         ]);
 
-        return response()->json($activeShift);
+        $register->update($validated);
+
+        return response()->json($register);
+    }
+
+    public function destroy($id)
+    {
+        $register = CashRegister::findOrFail($id);
+
+        if ($register->id === 1) {
+            return response()->json(['message' => 'La Caja Principal es obligatoria y no puede eliminarse.'], 403);
+        }
+
+        // En lugar de borrar físicamente, podríamos forzar soft delete si hubiera, 
+        // pero preferible desactivar si hay turnos vinculados.
+        if ($register->shifts()->count() > 0) {
+            $register->delete(); // Soft delete because of the trait
+            return response()->json(['message' => 'Caja desactivada correctamente (Soft delete aplicado).']);
+        }
+
+        $register->forceDelete();
+        return response()->json(['message' => 'Caja eliminada con éxito.']);
     }
 }

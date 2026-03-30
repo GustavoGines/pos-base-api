@@ -67,6 +67,10 @@ class LicenseSyncService
                 $data = $response->json();
                 $this->setSetting('app_plan', $data['plan'] ?? $data['plan_type'] ?? 'basic');
                 
+                // Determinar si es SaaS o Lifetime (DRM Heartbeat)
+                $planMode = $data['plan_mode'] ?? 'saas'; // Default to saas if not specified
+                $this->setSetting('license_plan_mode', $planMode);
+                
                 // Mapear addons (si el usuario compra solo módulos específicos)
                 $addons = $data['allowed_addons'] ?? $data['addons'] ?? [];
                 $this->setSetting('license_allowed_addons', is_array($addons) ? json_encode($addons) : $addons);
@@ -180,6 +184,7 @@ class LicenseSyncService
 
                 $this->setSetting('license_key', $licenseKey);
                 $this->setSetting('app_plan', $plan);
+                $this->setSetting('license_plan_mode', $data['plan_mode'] ?? 'saas'); 
                 $this->setSetting('license_allowed_addons', $addonsEncoded);
                 $this->setSetting('last_license_check', now()->toIso8601String());
                 

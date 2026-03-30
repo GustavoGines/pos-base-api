@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\CashRegisterShift;
+use App\Models\CashShift;
 use App\Models\Sale;
 use App\Models\StockMovement;
 use Illuminate\Http\Request;
@@ -37,11 +37,11 @@ class SalesController extends Controller
         } else {
             // Comportamiento por defecto ('shift')
             if ($shiftId) {
-                $query->where('cash_register_shift_id', $shiftId);
+                $query->where('cash_shift_id', $shiftId);
             } else {
-                $openShift = CashRegisterShift::whereNull('closed_at')->latest()->first();
+                $openShift = CashShift::whereNull('closed_at')->latest()->first();
                 if ($openShift) {
-                    $query->where('cash_register_shift_id', $openShift->id);
+                    $query->where('cash_shift_id', $openShift->id);
                 } else {
                     return response()->json([]);
                 }

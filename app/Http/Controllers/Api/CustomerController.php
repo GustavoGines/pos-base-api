@@ -156,7 +156,7 @@ class CustomerController extends Controller
                     ]);
                 }
 
-                $activeShift = \App\Models\CashRegisterShift::where('status', 'open')->first();
+                $activeShift = \App\Models\CashShift::where('status', 'open')->first();
 
                 $description = $request->filled('description') ? $request->description : 'Abono en caja';
                 $remainingAmount = $amount;
@@ -209,7 +209,7 @@ class CustomerController extends Controller
                 $trx = CustomerTransaction::create([
                     'customer_id'            => $lockedCustomer->id,
                     'user_id'                => auth()->id() ?? 1,
-                    'cash_register_shift_id' => $activeShift ? $activeShift->id : null,
+                    'cash_shift_id'          => $activeShift ? $activeShift->id : null,
                     'sale_id'                => count($processedSales) === 1 ? $processedSales[0] : null,
                     'type'                   => 'payment',
                     'payment_method'         => $paymentMethod,
