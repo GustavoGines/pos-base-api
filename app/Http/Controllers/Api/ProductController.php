@@ -45,21 +45,27 @@ class ProductController extends Controller
                 Rule::unique('products')->whereNull('deleted_at')
             ],
             'cost_price' => 'numeric|min:0',
-            'selling_price' => 'numeric|min:0',
+            'selling_price' => 'numeric|min:0|gte:cost_price',
             'stock' => 'numeric|min:0',
             'active' => 'boolean',
             'is_sold_by_weight' => 'boolean',
+            'vencimiento_dias' => 'nullable|integer|min:1|max:3650',
             'category_id' => 'nullable|exists:categories,id',
             'brand_id' => 'nullable|exists:brands,id',
             'supplier_id' => 'nullable|exists:suppliers,id',
         ]);
 
-        // Flujo Dual de Código de Barras
-        $validated['internal_code'] = $this->generateUniqueInternalCode();
+        // Flujo de Código Interno (PLU)
+        if (empty($request->internal_code)) {
+            $validated['internal_code'] = $this->generateUniqueInternalCode();
+        } else {
+            $validated['internal_code'] = str_pad($request->internal_code, 5, '0', STR_PAD_LEFT);
+        }
 
-        // Si el código de barras está vacío, se auto-genera copiando el código interno
+        // Si el código de barras está vacío, lo dejamos nulo para que coincida con 
+        // el comportamiento de los productos a granel de los seeders y no duplique el PLU.
         if (empty($validated['barcode'])) {
-            $validated['barcode'] = $validated['internal_code'];
+            $validated['barcode'] = null;
         }
 
         $product = Product::create($validated);
@@ -81,10 +87,11 @@ class ProductController extends Controller
                 Rule::unique('products')->ignore($product->id)->whereNull('deleted_at')
             ],
             'cost_price' => 'numeric|min:0',
-            'selling_price' => 'numeric|min:0',
+            'selling_price' => 'numeric|min:0|gte:cost_price',
             'stock' => 'numeric|min:0',
             'active' => 'boolean',
             'is_sold_by_weight' => 'boolean',
+            'vencimiento_dias' => 'nullable|integer|min:1|max:3650',
             'category_id' => 'nullable|exists:categories,id',
             'brand_id' => 'nullable|exists:brands,id',
             'supplier_id' => 'nullable|exists:suppliers,id',
@@ -100,23 +107,24 @@ class ProductController extends Controller
         return response()->json(null, 204);
     }
 
+    /**
+     * Genera un PLU numérico de 5 dígitos secuencial.
+     */
     private function generateUniqueInternalCode(): string
     {
-        do {
-            // Prefijo '100' (evitar colisión con EAN-13 balanza que usa prefijo '20').
-            $code = '100' . substr(str_shuffle("01234567890123456789"), 0, 9);
+        // Obtener el último código interno numérico (incluso si fue borrado)
+        $lastCode = Product::withTrashed()
+            ->whereRaw('internal_code REGEXP "^[0-9]+$"')
+            ->orderByRaw('CAST(internal_code AS UNSIGNED) DESC')
+            ->first();
 
-            // Cálculo de dígito verificador EAN-13
-            $sum = 0;
-            for ($i = 0; $i < 12; $i++) {
-                $sum += (int)$code[$i] * ($i % 2 === 0 ? 1 : 3);
-            }
-            $checksum = (10 - ($sum % 10)) % 10;
+        $nextNumber = $lastCode ? (int)$lastCode->internal_code + 1 : 1;
+        
+        // Si por alguna razón el número ya existe, buscamos el siguiente disponible
+        while (Product::withTrashed()->where('internal_code', str_pad($nextNumber, 5, '0', STR_PAD_LEFT))->exists()) {
+            $nextNumber++;
+        }
 
-            $internalCode = $code . $checksum;
-
-        } while (Product::where('internal_code', $internalCode)->exists());
-
-        return $internalCode;
+        return str_pad($nextNumber, 5, '0', STR_PAD_LEFT);
     }
 }

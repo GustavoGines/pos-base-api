@@ -38,7 +38,7 @@ class PosController extends Controller
             'payment_method'         => 'required|string',
             'tendered_amount'        => 'nullable|numeric',
             'change_amount'          => 'nullable|numeric',
-            'cash_register_shift_id' => 'required|integer|exists:cash_register_shifts,id',
+            'cash_shift_id'          => 'required|integer|exists:cash_shifts,id',
             'user_id'                => 'nullable|integer|exists:users,id',
             'customer_id'            => 'nullable|integer|exists:customers,id',
             'status'                 => 'nullable|string|in:pending,completed',
@@ -50,7 +50,7 @@ class PosController extends Controller
         ], [
             'customer_id.exists' => 'El cliente seleccionado no existe en el sistema.',
             'user_id.exists' => 'El cajero actual no está registrado en el sistema. Inicie sesión nuevamente.',
-            'cash_register_shift_id.exists' => 'El turno de caja no es válido o ya fue cerrado.',
+            'cash_shift_id.exists'         => 'El turno de caja no es válido o ya fue cerrado.',
             'items.*.product_id.exists' => 'Uno de los productos en el carrito ya no está disponible en la base de datos.',
         ]);
 
@@ -73,7 +73,7 @@ class PosController extends Controller
                 'amount_due'             => $isCuentaCorriente ? $total : 0,
                 'tendered_amount'        => $validated['tendered_amount'] ?? null,
                 'change_amount'          => $validated['change_amount'] ?? null,
-                'cash_register_shift_id' => $validated['cash_register_shift_id'],
+                'cash_shift_id'          => $validated['cash_shift_id'],
                 'user_id'                => $validated['user_id'] ?? null,
                 'customer_id'            => $validated['customer_id'] ?? null,
                 'status'                 => $validated['status'] ?? 'completed',

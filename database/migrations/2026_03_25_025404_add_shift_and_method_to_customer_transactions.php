@@ -12,7 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('customer_transactions', function (Blueprint $table) {
-            $table->foreignId('cash_register_shift_id')->nullable()->constrained('cash_register_shifts')->onDelete('set null');
+            $table->foreignId('cash_shift_id')->nullable()->constrained('cash_shifts')->onDelete('set null');
             $table->string('payment_method')->default('cash');
         });
     }
@@ -23,8 +23,8 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('customer_transactions', function (Blueprint $table) {
-            $table->dropForeign(['cash_register_shift_id']);
-            $table->dropColumn(['cash_register_shift_id', 'payment_method']);
+            $table->dropForeign(['cash_shift_id']);
+            $table->dropColumn(['cash_shift_id', 'payment_method']);
         });
     }
 };

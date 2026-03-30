@@ -60,4 +60,12 @@ class User extends Authenticatable
     {
         return $this->hasMany(CustomerTransaction::class);
     }
+
+    /**
+     * @return HasMany
+     */
+    public function cashShifts(): HasMany
+    {
+        return $this->hasMany(CashShift::class);
+    }
 }

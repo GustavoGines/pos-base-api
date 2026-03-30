@@ -38,11 +38,11 @@ class BigCatalogSeeder extends Seeder
         }
 
         // ─────────────────────────────────────────────────────────────
-        // 2. Helper: código interno auto-incremental
+        // 2. Helper: código interno auto-incremental (PLU 5 dígitos)
         // ─────────────────────────────────────────────────────────────
-        $seq = 1000;
+        $seq = 1;
         $next = function () use (&$seq): string {
-            return (string) $seq++;
+            return str_pad((string) $seq++, 5, '0', STR_PAD_LEFT);
         };
 
         // ─────────────────────────────────────────────────────────────
