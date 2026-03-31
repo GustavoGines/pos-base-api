@@ -178,6 +178,14 @@ class SalesController extends Controller
 
             $currentDue = $sale->amount_due > 0 ? $sale->amount_due : 0; // for cuenta corriente, logic could be more complex, but we assume paid in full for pending recall for now.
 
+            $itemsToCount = isset($validated['items']) ? $sale->items : $sale->items;
+            // Actually, if recall happened, the items are already in $sale->items after delete/re-insert above.
+            foreach ($sale->items as $item) {
+                if ($item->product) {
+                    $item->product->increment('sales_count', (int) $item->quantity);
+                }
+            }
+
             $sale->update([
                 'status'          => 'completed',
                 'tendered_amount' => $validated['tendered_amount'] ?? $sale->total,

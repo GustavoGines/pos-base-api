@@ -25,14 +25,18 @@ class ProductController extends Controller
 
         $allowedSorts = [
             'name', 'selling_price', 'cost_price', 'stock',
-            'barcode', 'internal_code', 'category_id', 'is_sold_by_weight', 'active'
+            'barcode', 'internal_code', 'category_id', 'is_sold_by_weight', 'active', 'sales_count'
         ];
         $sortBy = in_array($request->query('sort_by'), $allowedSorts)
             ? $request->query('sort_by')
             : 'name';
         $sortDir = $request->query('sort_direction') === 'desc' ? 'desc' : 'asc';
 
-        return response()->json($query->orderBy($sortBy, $sortDir)->paginate(50));
+        return response()->json($query
+            ->orderBy('sales_count', 'desc')
+            ->orderBy('is_sold_by_weight', 'desc')
+            ->orderBy($sortBy, $sortDir)
+            ->paginate(100));
     }
 
     public function store(Request $request)

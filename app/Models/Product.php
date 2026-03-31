@@ -14,7 +14,7 @@ class Product extends Model
 
     protected $fillable = [
         'name', 'barcode', 'internal_code', 'cost_price', 'selling_price',
-        'stock', 'min_stock', 'active', 'is_sold_by_weight', 'vencimiento_dias',
+        'stock', 'min_stock', 'active', 'is_sold_by_weight', 'sales_count', 'vencimiento_dias',
         'category_id', 'brand_id', 'supplier_id'
     ];
 
@@ -25,6 +25,7 @@ class Product extends Model
         'selling_price' => 'decimal:2',
         'stock' => 'decimal:3',
         'min_stock' => 'double',
+        'sales_count' => 'integer',
         'vencimiento_dias' => 'integer',
     ];
 
