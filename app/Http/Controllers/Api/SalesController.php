@@ -25,7 +25,9 @@ class SalesController extends Controller
             'items.product:id,name,internal_code,stock,is_sold_by_weight',
             'user:id,name',
             'payments.paymentMethod:id,name,code,is_cash',
-        ])->latest();
+        ])
+        ->where('status', '!=', 'pending')
+        ->latest();
 
         if ($period === 'today') {
             $query->whereBetween('created_at', [now()->startOfDay(), now()->endOfDay()]);

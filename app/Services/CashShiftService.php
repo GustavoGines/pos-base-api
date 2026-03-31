@@ -159,6 +159,10 @@ class CashShiftService
                 ->whereHas('paymentMethod', fn($q) => $q->where('code', 'transfer'))
                 ->sum('total_amount');
 
+            $totalSurcharge = \App\Models\Sale::where('cash_shift_id', $shiftId)
+                ->where('status', 'completed')
+                ->sum('total_surcharge');
+
             // El efectivo físico esperado en la gaveta = Fondo Inicial + SOLO pagos en métodos is_cash
             $expectedBalance = $shift->opening_balance + $cashSales;
             
@@ -173,6 +177,7 @@ class CashShiftService
                 'cash_sales'        => $cashSales,
                 'card_sales'        => $cardSales,
                 'transfer_sales'    => $transferSales,
+                'total_surcharge'   => $totalSurcharge,
                 'status'            => 'closed',
                 'closed_by_user_id' => $closerUserId,
             ]);
