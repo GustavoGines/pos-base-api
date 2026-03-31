@@ -24,6 +24,7 @@ class SalesController extends Controller
         $query = Sale::with([
             'items.product:id,name,internal_code,stock,is_sold_by_weight',
             'user:id,name',
+            'cashier:id,name',
             'payments.paymentMethod:id,name,code,is_cash',
         ])
         ->where('status', '!=', 'pending')
@@ -67,6 +68,7 @@ class SalesController extends Controller
         $sales = Sale::with([
             'items.product:id,name,internal_code,stock,is_sold_by_weight',
             'user:id,name',
+            'cashier:id,name',
             'payments.paymentMethod:id,name,code,is_cash',
         ])
             ->where('status', 'pending')
@@ -181,13 +183,14 @@ class SalesController extends Controller
                 'tendered_amount' => $validated['tendered_amount'] ?? $sale->total,
                 'change_amount'   => $validated['change_amount'] ?? 0,
                 'total_surcharge' => $validated['total_surcharge'] ?? 0,
-                'payment_status'  => current($validated['payments'])['payment_method_id'] === 5 ? 'pending' : 'paid', // simplistic cc fallback (5=cc)
+                'cashier_id'      => $userId,
+                'payment_status'  => (isset($validated['payments']) && current($validated['payments'])['payment_method_id'] === 5) ? 'pending' : 'paid', // 5 = cuenta corriente
             ]);
         });
 
         return response()->json([
             'message' => "Venta #{$sale->id} cobrada correctamente.",
-            'sale'    => $sale->fresh()->load('items.product', 'user:id,name'),
+            'sale'    => $sale->fresh()->load('items.product', 'user:id,name', 'cashier:id,name'),
         ]);
     }
 
