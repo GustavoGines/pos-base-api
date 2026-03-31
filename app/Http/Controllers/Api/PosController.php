@@ -122,6 +122,7 @@ class PosController extends Controller
 
 
                 $product->stock -= $itemData['quantity'];
+                $product->sales_count += (int) $itemData['quantity'];
                 $product->save();
 
                 StockMovement::create([
