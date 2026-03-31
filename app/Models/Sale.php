@@ -14,7 +14,7 @@ class Sale extends Model
     protected $fillable = [
         'total', 'total_surcharge', 'payment_status', 'amount_due',
         'status', 'cash_shift_id', 'tendered_amount', 'change_amount',
-        'user_id', 'customer_id',
+        'user_id', 'cashier_id', 'customer_id',
     ];
 
     protected $casts = [
@@ -46,6 +46,11 @@ class Sale extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+    
+    public function cashier(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'cashier_id');
     }
 
     public function customer(): BelongsTo
