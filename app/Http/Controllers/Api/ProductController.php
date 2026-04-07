@@ -24,19 +24,22 @@ class ProductController extends Controller
         }
 
         $allowedSorts = [
-            'name', 'selling_price', 'cost_price', 'stock',
-            'barcode', 'internal_code', 'category_id', 'is_sold_by_weight', 'active', 'sales_count'
+            'id', 'name', 'selling_price', 'cost_price', 'stock',
+            'barcode', 'internal_code', 'category_id', 'is_sold_by_weight', 'active', 'sales_count', 'vencimiento_dias'
         ];
-        $sortBy = in_array($request->query('sort_by'), $allowedSorts)
-            ? $request->query('sort_by')
-            : 'name';
+        $sortBy = $request->query('sort_by');
         $sortDir = $request->query('sort_direction') === 'desc' ? 'desc' : 'asc';
 
-        return response()->json($query
-            ->orderBy('sales_count', 'desc')
-            ->orderBy('is_sold_by_weight', 'desc')
-            ->orderBy($sortBy, $sortDir)
-            ->paginate(100));
+        if ($sortBy && in_array($sortBy, $allowedSorts)) {
+            $query->orderBy($sortBy, $sortDir);
+        } else {
+            // Default sorting when no specific sort is requested
+            $query->orderBy('sales_count', 'desc')
+                  ->orderBy('is_sold_by_weight', 'desc')
+                  ->orderBy('name', 'asc');
+        }
+
+        return response()->json($query->paginate(100));
     }
 
     public function store(Request $request)
@@ -54,6 +57,7 @@ class ProductController extends Controller
             'min_stock' => 'nullable|numeric|min:0',
             'active' => 'boolean',
             'is_sold_by_weight' => 'boolean',
+            'unit_type' => 'sometimes|in:un,kg,lt,g',
             'vencimiento_dias' => 'nullable|integer|min:1|max:3650',
             'category_id' => 'nullable|exists:categories,id',
             'brand_id' => 'nullable|exists:brands,id',
@@ -137,6 +141,7 @@ class ProductController extends Controller
             'min_stock' => 'nullable|numeric|min:0',
             'active' => 'boolean',
             'is_sold_by_weight' => 'boolean',
+            'unit_type' => 'sometimes|in:un,kg,lt,g',
             'vencimiento_dias' => 'nullable|integer|min:1|max:3650',
             'category_id' => 'nullable|exists:categories,id',
             'brand_id' => 'nullable|exists:brands,id',

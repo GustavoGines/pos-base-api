@@ -20,11 +20,18 @@ class PosController extends Controller
             return response()->json([]);
         }
 
+        $plu = is_numeric($query) ? str_pad($query, 5, '0', STR_PAD_LEFT) : $query;
+
         $products = Product::where('active', true)
-            ->where(function($q) use ($query) {
+            ->where(function($q) use ($query, $plu) {
                 $q->where('barcode', $query)
                   ->orWhere('internal_code', $query)
+                  ->orWhere('internal_code', $plu)
                   ->orWhere('name', 'like', "%{$query}%");
+                
+                if (is_numeric($query)) {
+                    $q->orWhere('id', $query);
+                }
             })
             ->get();
 
