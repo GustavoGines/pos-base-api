@@ -15,7 +15,7 @@ class Product extends Model
     protected $fillable = [
         'name', 'barcode', 'internal_code', 'cost_price', 'selling_price',
         'stock', 'min_stock', 'active', 'is_sold_by_weight', 'sales_count', 'vencimiento_dias',
-        'category_id', 'brand_id', 'supplier_id'
+        'unit_type', 'category_id', 'brand_id', 'supplier_id'
     ];
 
     protected $casts = [
