@@ -24,7 +24,7 @@ class ProductController extends Controller
         }
 
         $allowedSorts = [
-            'name', 'selling_price', 'cost_price', 'stock',
+            'id', 'name', 'selling_price', 'cost_price', 'stock',
             'barcode', 'internal_code', 'category_id', 'is_sold_by_weight', 'active', 'sales_count'
         ];
         $sortBy = $request->query('sort_by');
