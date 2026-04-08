@@ -85,3 +85,13 @@ Route::prefix('trash')->group(function () {
     Route::post('/{model}/{id}/restore', [TrashController::class, 'restore']);
     Route::delete('/{model}/{id}/force', [TrashController::class, 'forceDelete']);
 });
+
+// ── Módulo Ferretería: Presupuestos ──────────────────────────────────────────
+use App\Http\Controllers\Api\QuoteController;
+
+Route::prefix('quotes')->group(function () {
+    Route::get('/',        [QuoteController::class, 'index']);
+    Route::post('/',       [QuoteController::class, 'store']);
+    Route::get('/{quote}', [QuoteController::class, 'show']);
+    Route::patch('/{quote}/status', [QuoteController::class, 'updateStatus']);
+});
