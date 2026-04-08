@@ -71,6 +71,9 @@ class LicenseSyncService
                 $this->setSetting('license_plan_mode', $planMode);
                 $this->setSetting('license_is_lifetime', $planMode === 'lifetime' ? '1' : '0');
                 
+                // [feature-flag] Tipo de negocio — persiste en BD local para que el Flutter lo lea offline
+                $this->setSetting('license_business_type', $data['business_type'] ?? 'retail');
+                
                 // Metadatos de suscripción extendidos
                 $this->setSetting('license_expires_at', $data['expires_at'] ?? null);
                 $this->setSetting('license_next_payment_at', $data['next_payment_at'] ?? null);
@@ -146,6 +149,9 @@ class LicenseSyncService
                 $this->setSetting('license_plan_mode', $planMode);
                 $this->setSetting('license_is_lifetime', $planMode === 'lifetime' ? '1' : '0');
 
+                // [feature-flag] Tipo de negocio
+                $this->setSetting('license_business_type', $data['business_type'] ?? 'retail');
+
                 // Metadatos extendidos
                 $this->setSetting('license_expires_at', $data['expires_at'] ?? null);
                 $this->setSetting('license_next_payment_at', $data['next_payment_at'] ?? null);
@@ -198,6 +204,9 @@ class LicenseSyncService
                 $planMode = $data['plan_mode'] ?? 'saas';
                 $this->setSetting('license_plan_mode', $planMode); 
                 $this->setSetting('license_is_lifetime', $planMode === 'lifetime' ? '1' : '0');
+
+                // [feature-flag] Tipo de negocio — se persiste en la BD local para modo offline
+                $this->setSetting('license_business_type', $data['business_type'] ?? 'retail');
 
                 // Metadatos extendidos
                 $this->setSetting('license_expires_at', $data['expires_at'] ?? null);
