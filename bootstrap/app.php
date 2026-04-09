@@ -13,7 +13,8 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
-            'addon' => \App\Http\Middleware\CheckAddonPermission::class,
+            'addon'    => \App\Http\Middleware\CheckAddonPermission::class,
+            'feature'  => \App\Http\Middleware\CheckFeatureAccess::class, // [feature-flags] Seguridad modular
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

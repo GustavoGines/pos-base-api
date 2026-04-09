@@ -46,23 +46,43 @@ class QuoteController extends Controller
     }
 
     /**
+     * Recupera un presupuesto por su número, e hidrata los productos
+     */
+    public function showByNumber($number)
+    {
+        $quote = Quote::where('quote_number', $number)
+            ->with(['items.product'])
+            ->firstOrFail();
+
+        return response()->json($quote);
+    }
+
+    /**
      * Crea un nuevo presupuesto.
      * ⚠️  NO descuenta stock bajo ningún concepto.
      */
     public function store(Request $request)
     {
-        $validated = $request->validate([
-            'customer_name'  => 'nullable|string|max:255',
-            'customer_phone' => 'nullable|string|max:50',
-            'notes'          => 'nullable|string|max:1000',
-            'valid_until'    => 'nullable|date|after_or_equal:today',
-            'user_id'        => 'nullable|exists:users,id',
-            'items'          => 'required|array|min:1',
-            'items.*.product_id'   => 'nullable|integer',
-            'items.*.product_name' => 'required|string|max:255',
-            'items.*.unit_price'   => 'required|numeric|min:0',
-            'items.*.quantity'     => 'required|numeric|min:0.001',
-        ]);
+        try {
+            $validated = $request->validate([
+                'customer_name'  => 'nullable|string|max:255',
+                'customer_phone' => 'nullable|string|max:50',
+                'notes'          => 'nullable|string|max:1000',
+                'valid_until'    => 'nullable|date|after_or_equal:today',
+                'user_id'        => 'nullable|exists:users,id',
+                'items'          => 'required|array|min:1',
+                'items.*.product_id'   => 'nullable|integer',
+                'items.*.product_name' => 'required|string|max:255',
+                'items.*.unit_price'   => 'required|numeric|min:0',
+                'items.*.quantity'     => 'required|numeric|min:0.001',
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            \Illuminate\Support\Facades\Log::error('Validation Failed in QuoteController: ' . json_encode($e->errors()));
+            throw $e;
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Unknown error in QuoteController store validation: ' . $e->getMessage());
+            throw $e;
+        }
 
         DB::beginTransaction();
         try {
@@ -99,6 +119,7 @@ class QuoteController extends Controller
             return response()->json($quote->load('items'), 201);
         } catch (\Throwable $e) {
             DB::rollBack();
+            \Illuminate\Support\Facades\Log::error('Database Error in QuoteController store: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
             return response()->json(['message' => 'Error al guardar el presupuesto: ' . $e->getMessage()], 500);
         }
     }

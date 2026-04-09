@@ -21,6 +21,9 @@ class BusinessSettingSeeder extends Seeder
             ['key' => 'logo_path', 'value' => null],
             ['key' => 'address', 'value' => null],
             ['key' => 'phone', 'value' => null],
+            ['key' => 'printer_type', 'value' => 'usb'],
+            ['key' => 'printer_paper_width', 'value' => '58'],
+            ['key' => 'printer_com_port', 'value' => 'POS-58'],
         ];
 
         foreach ($settings as $setting) {
