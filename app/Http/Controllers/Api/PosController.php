@@ -4,11 +4,13 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use App\Models\Customer;
 use App\Models\CustomerTransaction;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\StockMovement;
+use App\Models\Quote;
 use Illuminate\Support\Facades\DB;
 
 class PosController extends Controller
@@ -50,7 +52,11 @@ class PosController extends Controller
             'payments.*.total_amount'     => 'required|numeric|min:0',
             'tendered_amount'        => 'nullable|numeric',
             'change_amount'          => 'nullable|numeric',
-            'cash_shift_id'          => 'required|integer|exists:cash_shifts,id',
+            'cash_shift_id'          => [
+                'required',
+                'integer',
+                Rule::exists('cash_shifts', 'id')->where('status', 'open'),
+            ],
             'user_id'                => 'nullable|integer|exists:users,id',
             'customer_id'            => 'nullable|integer|exists:customers,id',
             'status'                 => 'nullable|string|in:pending,completed',
@@ -59,11 +65,12 @@ class PosController extends Controller
             'items.*.quantity'       => 'required|numeric|min:0.001',
             'items.*.unit_price'     => 'required|numeric',
             'items.*.subtotal'       => 'required|numeric',
+            'quote_id'               => 'nullable|integer|exists:quotes,id',
         ], [
-            'customer_id.exists' => 'El cliente seleccionado no existe en el sistema.',
-            'user_id.exists' => 'El cajero actual no está registrado en el sistema. Inicie sesión nuevamente.',
-            'cash_shift_id.exists'         => 'El turno de caja no es válido o ya fue cerrado.',
-            'items.*.product_id.exists' => 'Uno de los productos en el carrito ya no está disponible en la base de datos.',
+            'cash_shift_id.exists'         => 'El turno de caja ya fue cerrado. Por favor, recargue la aplicación.',
+            'customer_id.exists'           => 'El cliente seleccionado no existe en el sistema.',
+            'user_id.exists'               => 'El cajero actual no está registrado en el sistema. Inicie sesión nuevamente.',
+            'items.*.product_id.exists'    => 'Uno de los productos en el carrito ya no está disponible en la base de datos.',
         ]);
 
         $isPendingSale = ($validated['status'] ?? 'completed') === 'pending';
@@ -156,6 +163,14 @@ class PosController extends Controller
                     'balance_after' => $customer->balance,
                     'description'   => "Venta en Cta. Cte. — Ticket #{$sale->id}",
                 ]);
+            }
+
+            // Si proviene de un presupuesto, cerrarlo
+            if (!empty($validated['quote_id'])) {
+                $quote = Quote::find($validated['quote_id']);
+                if ($quote && $quote->status !== 'closed') {
+                    $quote->update(['status' => 'closed']);
+                }
             }
 
             return response()->json([

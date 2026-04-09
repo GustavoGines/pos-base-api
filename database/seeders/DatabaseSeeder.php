@@ -20,6 +20,7 @@ class DatabaseSeeder extends Seeder
             BusinessSettingSeeder::class,
             PaymentMethodSeeder::class,
             BigCatalogSeeder::class,   // 100 productos en 8 categorías
+            //HardwareStoreSeeder::class,
         ]);
     }
 }
