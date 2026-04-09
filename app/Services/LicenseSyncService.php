@@ -71,14 +71,21 @@ class LicenseSyncService
                 $this->setSetting('license_plan_mode', $planMode);
                 $this->setSetting('license_is_lifetime', $planMode === 'lifetime' ? '1' : '0');
                 
+                // [feature-flag] Tipo de negocio — persiste en BD local para que el Flutter lo lea offline
+                $this->setSetting('license_business_type', $data['business_type'] ?? 'retail');
+                
                 // Metadatos de suscripción extendidos
                 $this->setSetting('license_expires_at', $data['expires_at'] ?? null);
                 $this->setSetting('license_next_payment_at', $data['next_payment_at'] ?? null);
                 $this->setSetting('license_manage_url', $data['manage_url'] ?? null);
                 
-                // Mapear addons
-                $addons = $data['allowed_addons'] ?? $data['addons'] ?? [];
-                $this->setSetting('license_allowed_addons', is_array($addons) ? json_encode($addons) : $addons);
+                // [feature-flags] El servidor envía 'addons' (ej: ['fast_pos', 'quotes', 'multiple_prices'])
+                // Guardamos bajo 'license_addons' como JSON para que el middleware y el Flutter lo lean.
+                $addons = $data['addons'] ?? $data['allowed_addons'] ?? [];
+                $addonsJson = is_array($addons) ? json_encode($addons) : ($addons ?? '[]');
+                $this->setSetting('license_addons', $addonsJson);
+                // Mantener la key legada para retrocompatibilidad con código existente
+                $this->setSetting('license_allowed_addons', $addonsJson);
                 
                 $this->setSetting('last_license_check', now()->toIso8601String());
             } else if ($response->status() === 401 || $response->status() === 403) {
@@ -146,13 +153,19 @@ class LicenseSyncService
                 $this->setSetting('license_plan_mode', $planMode);
                 $this->setSetting('license_is_lifetime', $planMode === 'lifetime' ? '1' : '0');
 
+                // [feature-flag] Tipo de negocio
+                $this->setSetting('license_business_type', $data['business_type'] ?? 'retail');
+
                 // Metadatos extendidos
                 $this->setSetting('license_expires_at', $data['expires_at'] ?? null);
                 $this->setSetting('license_next_payment_at', $data['next_payment_at'] ?? null);
                 $this->setSetting('license_manage_url', $data['manage_url'] ?? null);
                 
-                $addons = $data['allowed_addons'] ?? $data['addons'] ?? [];
-                $this->setSetting('license_allowed_addons', is_array($addons) ? json_encode($addons) : $addons);
+                $addons = $data['addons'] ?? $data['allowed_addons'] ?? [];
+                $addonsJson = is_array($addons) ? json_encode($addons) : ($addons ?? '[]');
+                // Guardar bajo ambas keys: 'license_addons' (nueva) y 'license_allowed_addons' (legada)
+                $this->setSetting('license_addons', $addonsJson);
+                $this->setSetting('license_allowed_addons', $addonsJson);
                 
                 $this->setSetting('last_license_check', now()->toIso8601String());
             } else if ($response->status() === 401 || $response->status() === 403) {
@@ -199,11 +212,16 @@ class LicenseSyncService
                 $this->setSetting('license_plan_mode', $planMode); 
                 $this->setSetting('license_is_lifetime', $planMode === 'lifetime' ? '1' : '0');
 
+                // [feature-flag] Tipo de negocio — se persiste en la BD local para modo offline
+                $this->setSetting('license_business_type', $data['business_type'] ?? 'retail');
+
                 // Metadatos extendidos
                 $this->setSetting('license_expires_at', $data['expires_at'] ?? null);
                 $this->setSetting('license_next_payment_at', $data['next_payment_at'] ?? null);
                 $this->setSetting('license_manage_url', $data['manage_url'] ?? null);
 
+                // Guardar bajo ambas keys: 'license_addons' (nueva) y 'license_allowed_addons' (legada)
+                $this->setSetting('license_addons', $addonsEncoded);
                 $this->setSetting('license_allowed_addons', $addonsEncoded);
                 $this->setSetting('last_license_check', now()->toIso8601String());
                 

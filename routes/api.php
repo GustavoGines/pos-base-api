@@ -71,7 +71,7 @@ Route::prefix('registers')->group(function () {
     Route::get('/', [CashRegisterController::class, 'index']);
 
     // Admin/Premium routes
-    Route::middleware(['addon:multi_caja'])->group(function () {
+    Route::middleware(['feature:multi_caja'])->group(function () {
         Route::post('/', [CashRegisterController::class, 'store']);
         Route::put('/{id}', [CashRegisterController::class, 'update']);
         Route::delete('/{id}', [CashRegisterController::class, 'destroy']);
@@ -84,4 +84,15 @@ Route::prefix('trash')->group(function () {
     Route::get('/{model}', [TrashController::class, 'index']);
     Route::post('/{model}/{id}/restore', [TrashController::class, 'restore']);
     Route::delete('/{model}/{id}/force', [TrashController::class, 'forceDelete']);
+});
+
+// ── Módulo Ferretería: Presupuestos — protegido por Feature Flag ─────────────
+use App\Http\Controllers\Api\QuoteController;
+
+Route::middleware(['feature:quotes'])->prefix('quotes')->group(function () {
+    Route::get('/',        [QuoteController::class, 'index']);
+    Route::post('/',       [QuoteController::class, 'store']);
+    Route::get('/number/{number}', [QuoteController::class, 'showByNumber']);
+    Route::get('/{quote}', [QuoteController::class, 'show']);
+    Route::patch('/{quote}/status', [QuoteController::class, 'updateStatus']);
 });

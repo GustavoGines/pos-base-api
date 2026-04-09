@@ -9,6 +9,7 @@ use App\Models\CustomerTransaction;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\StockMovement;
+use App\Models\Quote;
 use Illuminate\Support\Facades\DB;
 
 class PosController extends Controller
@@ -59,6 +60,7 @@ class PosController extends Controller
             'items.*.quantity'       => 'required|numeric|min:0.001',
             'items.*.unit_price'     => 'required|numeric',
             'items.*.subtotal'       => 'required|numeric',
+            'quote_id'               => 'nullable|integer|exists:quotes,id',
         ], [
             'customer_id.exists' => 'El cliente seleccionado no existe en el sistema.',
             'user_id.exists' => 'El cajero actual no está registrado en el sistema. Inicie sesión nuevamente.',
@@ -156,6 +158,14 @@ class PosController extends Controller
                     'balance_after' => $customer->balance,
                     'description'   => "Venta en Cta. Cte. — Ticket #{$sale->id}",
                 ]);
+            }
+
+            // Si proviene de un presupuesto, cerrarlo
+            if (!empty($validated['quote_id'])) {
+                $quote = Quote::find($validated['quote_id']);
+                if ($quote && $quote->status !== 'closed') {
+                    $quote->update(['status' => 'closed']);
+                }
             }
 
             return response()->json([

@@ -53,6 +53,9 @@ class ProductController extends Controller
             ],
             'cost_price' => 'numeric|min:0',
             'selling_price' => 'numeric|min:0|gte:cost_price',
+            // [hardware_store] Listas de precio estáticas — opcionales para retail
+            'price_wholesale' => 'nullable|numeric|min:0',
+            'price_card'      => 'nullable|numeric|min:0',
             'stock' => 'numeric',
             'min_stock' => 'nullable|numeric|min:0',
             'active' => 'boolean',
@@ -137,6 +140,9 @@ class ProductController extends Controller
             ],
             'cost_price' => 'numeric|min:0',
             'selling_price' => 'numeric|min:0|gte:cost_price',
+            // [hardware_store] Listas de precio estáticas — opcionales para retail
+            'price_wholesale' => 'nullable|numeric|min:0',
+            'price_card'      => 'nullable|numeric|min:0',
             'stock' => 'numeric',
             'min_stock' => 'nullable|numeric|min:0',
             'active' => 'boolean',
