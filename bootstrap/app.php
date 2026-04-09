@@ -13,8 +13,9 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
-            'addon'    => \App\Http\Middleware\CheckAddonPermission::class,
-            'feature'  => \App\Http\Middleware\CheckFeatureAccess::class, // [feature-flags] Seguridad modular
+            'addon'            => \App\Http\Middleware\CheckAddonPermission::class,
+            'feature'          => \App\Http\Middleware\CheckFeatureAccess::class,   // [feature-flags] Seguridad modular
+            'session.validate' => \App\Http\Middleware\ValidateSessionToken::class, // [single-session] Sesión única por usuario
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

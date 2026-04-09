@@ -26,6 +26,7 @@ class User extends Authenticatable
         'role',
         'pin',
         'permissions',
+        'session_token',
     ];
 
     /**
@@ -37,6 +38,7 @@ class User extends Authenticatable
         'password',
         'remember_token',
         'pin',
+        'session_token',  // Nunca exponer el token en respuestas de listado de users
     ];
 
     /**
