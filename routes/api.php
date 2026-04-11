@@ -79,6 +79,7 @@ Route::middleware(['session.validate'])->group(function () {
     // ── Ventas: anulación y pago de cuentas corrientes ───────────────
     Route::post('/sales/{sale}/void', [SalesController::class, 'void']);
     Route::put('/sales/{sale}/pay', [SalesController::class, 'pay']);
+    Route::get('/sales/{sale}/ticket-pdf', [SalesController::class, 'ticketPdf']);
 
     // ── Clientes: cuentas corrientes (escritura) ─────────────────────
     Route::apiResource('customers', CustomerController::class)->except(['index', 'show']);

@@ -239,4 +239,23 @@ class SalesController extends Controller
             'sale'    => $sale->fresh()->load('items.product', 'user:id,name', 'payments.paymentMethod:id,name,code,is_cash'),
         ]);
     }
+
+    /**
+     * GET /api/sales/{sale}/ticket-pdf
+     * Descarga el PDF del comprobante/factura en formato A4
+     */
+    public function ticketPdf(Sale $sale)
+    {
+        $sale->load('items.product', 'user', 'cashier', 'customer', 'payments.paymentMethod');
+        $settings = \App\Models\BusinessSetting::all()->pluck('value', 'key')->toArray();
+
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.ticket_a4', [
+            'sale' => $sale,
+            'settings' => $settings
+        ]);
+
+        return response($pdf->output(), 200)
+            ->header('Content-Type', 'application/pdf')
+            ->header('Content-Disposition', 'inline; filename="ticket-'.$sale->id.'.pdf"');
+    }
 }
