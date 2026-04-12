@@ -124,5 +124,6 @@ Route::middleware(['session.validate'])->group(function () {
 
     // ── Módulo de Reportes Gerenciales ────────────────────────────────
     Route::get('/reports/profit-by-category/export', [\App\Http\Controllers\Api\ReportController::class, 'exportProfitByCategory']);
-    Route::get('/reports/profit-by-category', [\App\Http\Controllers\Api\ReportController::class, 'profitByCategory']);
+    Route::get('/reports/profit-by-category/pdf',    [\App\Http\Controllers\Api\ReportController::class, 'exportPdfByCategory']);
+    Route::get('/reports/profit-by-category',        [\App\Http\Controllers\Api\ReportController::class, 'profitByCategory']);
 });
