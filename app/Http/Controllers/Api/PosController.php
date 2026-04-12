@@ -35,6 +35,7 @@ class PosController extends Controller
                     $q->orWhere('id', $query);
                 }
             })
+            ->with(['children', 'priceTiers'])
             ->get();
 
         return response()->json($products);
@@ -125,27 +126,76 @@ class PosController extends Controller
             foreach ($validated['items'] as $itemData) {
                 $product = Product::findOrFail($itemData['product_id']);
 
+                // Determinar el costo histórico
+                $currentCostPrice = 0;
+                if ($product->is_combo) {
+                    $combos = DB::table('product_combos')->where('parent_product_id', $product->id)->get();
+                    foreach ($combos as $c) {
+                        $childProd = Product::find($c->child_product_id);
+                        if ($childProd) {
+                            $currentCostPrice += ($childProd->cost_price * $c->quantity);
+                        }
+                    }
+                } else {
+                    $currentCostPrice = (float) $product->cost_price;
+                }
+
+                // === MOTOR DE PRECIOS VOLUMÉTRICOS ===
+                // Calculamos cuál de los tramos le correspondería a esta cantidad X
+                $expectedUnitPrice = $product->getPriceForQuantity((float) $itemData['quantity']);
+
                 $sale->items()->create([
-                    'product_id'   => $product->id,
-                    'product_name' => $product->name,
-                    'quantity'     => $itemData['quantity'],
+                    'product_id'      => $product->id,
+                    'product_name'    => $product->name,
+                    'quantity'        => $itemData['quantity'],
+                    'unit_cost_price' => $currentCostPrice,
+                    // Usualmente confiamos en el Frontend para el unit_price final porque
+                    // el cajero puede haber aplicado un descuento manual sobre el tramo.
+                    // Si se requiere bloqueo estricto, haríamos:
+                    // abort_if($itemData['unit_price'] < $expectedUnitPrice, 400, "Precio no autorizado");
                     'unit_price'   => $itemData['unit_price'],
                     'subtotal'     => $itemData['subtotal'],
                 ]);
 
 
 
-                $product->stock -= $itemData['quantity'];
-                $product->sales_count += (int) $itemData['quantity'];
-                $product->save();
+                // Si es un combo, descontar de los ingredientes (children)
+                if ($product->is_combo) {
+                    $combos = DB::table('product_combos')->where('parent_product_id', $product->id)->get();
+                    foreach ($combos as $combo) {
+                        $childProd = Product::findOrFail($combo->child_product_id);
+                        $qtyDeducted = $itemData['quantity'] * $combo->quantity;
+                        
+                        $childProd->stock -= $qtyDeducted;
+                        $childProd->save();
 
-                StockMovement::create([
-                    'product_id' => $product->id,
-                    'user_id'    => $validated['user_id'] ?? null,
-                    'type'       => 'sale',
-                    'quantity'   => -$itemData['quantity'],
-                    'notes'      => "Sale #{$sale->id}"
-                ]);
+                        StockMovement::create([
+                            'product_id' => $childProd->id,
+                            'user_id'    => $validated['user_id'] ?? null,
+                            'type'       => 'sale',
+                            'quantity'   => -$qtyDeducted,
+                            'notes'      => "Venta #{$sale->id} (Hijo del Combo: {$product->name})"
+                        ]);
+                    }
+                    
+                    // Al producto Padre/Combo solo le subimos el contador estadístico de ventas
+                    $product->sales_count += (int) $itemData['quantity'];
+                    $product->save();
+                    
+                } else {
+                    // Producto normal unitario
+                    $product->stock -= $itemData['quantity'];
+                    $product->sales_count += (int) $itemData['quantity'];
+                    $product->save();
+
+                    StockMovement::create([
+                        'product_id' => $product->id,
+                        'user_id'    => $validated['user_id'] ?? null,
+                        'type'       => 'sale',
+                        'quantity'   => -$itemData['quantity'],
+                        'notes'      => "Venta #{$sale->id}"
+                    ]);
+                }
             }
 
             // Si es cuenta corriente, registrar la deuda en Customer + Ledger

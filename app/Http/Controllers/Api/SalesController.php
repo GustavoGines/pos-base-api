@@ -154,12 +154,27 @@ class SalesController extends Controller
                 foreach ($validated['items'] as $itemData) {
                     $product = \App\Models\Product::find($itemData['product_id']);
                     if ($product) {
+                        // Determinar el costo histórico
+                        $currentCostPrice = 0;
+                        if ($product->is_combo) {
+                            $combos = \Illuminate\Support\Facades\DB::table('product_combos')->where('parent_product_id', $product->id)->get();
+                            foreach ($combos as $c) {
+                                $childProd = \App\Models\Product::find($c->child_product_id);
+                                if ($childProd) {
+                                    $currentCostPrice += ($childProd->cost_price * $c->quantity);
+                                }
+                            }
+                        } else {
+                            $currentCostPrice = (float) $product->cost_price;
+                        }
+
                         $sale->items()->create([
-                            'product_id'   => $product->id,
-                            'product_name' => $product->name,
-                            'quantity'     => $itemData['quantity'],
-                            'unit_price'   => $itemData['unit_price'],
-                            'subtotal'     => $itemData['subtotal'],
+                            'product_id'      => $product->id,
+                            'product_name'    => $product->name,
+                            'quantity'        => $itemData['quantity'],
+                            'unit_cost_price' => $currentCostPrice,
+                            'unit_price'      => $itemData['unit_price'],
+                            'subtotal'        => $itemData['subtotal'],
                         ]);
                     }
                 }
@@ -218,15 +233,34 @@ class SalesController extends Controller
             // Devolver stock de cada ítem al producto
             foreach ($sale->items as $item) {
                 if ($item->product) {
-                    $item->product->increment('stock', $item->quantity);
+                    if ($item->product->is_combo) {
+                        $combos = DB::table('product_combos')->where('parent_product_id', $item->product_id)->get();
+                        foreach ($combos as $combo) {
+                            $childProd = \App\Models\Product::find($combo->child_product_id);
+                            if ($childProd) {
+                                $qtyRestored = $item->quantity * $combo->quantity;
+                                $childProd->increment('stock', $qtyRestored);
 
-                    StockMovement::create([
-                        'product_id' => $item->product_id,
-                        'user_id'    => $userId ?? null,
-                        'type'       => 'in',
-                        'quantity'   => $item->quantity,
-                        'notes'      => "Reversión por anulación de Venta #{$sale->id}",
-                    ]);
+                                \App\Models\StockMovement::create([
+                                    'product_id' => $childProd->id,
+                                    'user_id'    => $userId ?? null,
+                                    'type'       => 'in',
+                                    'quantity'   => $qtyRestored,
+                                    'notes'      => "Reversión (Combo Hijo) Venta #{$sale->id}",
+                                ]);
+                            }
+                        }
+                    } else {
+                        $item->product->increment('stock', $item->quantity);
+
+                        \App\Models\StockMovement::create([
+                            'product_id' => $item->product_id,
+                            'user_id'    => $userId ?? null,
+                            'type'       => 'in',
+                            'quantity'   => $item->quantity,
+                            'notes'      => "Reversión por anulación de Venta #{$sale->id}",
+                        ]);
+                    }
                 }
             }
 

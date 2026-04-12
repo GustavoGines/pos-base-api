@@ -121,4 +121,8 @@ Route::middleware(['session.validate'])->group(function () {
         Route::get('/{quote}', [QuoteController::class, 'show']);
         Route::patch('/{quote}/status', [QuoteController::class, 'updateStatus']);
     });
+
+    // ── Módulo de Reportes Gerenciales ────────────────────────────────
+    Route::get('/reports/profit-by-category/export', [\App\Http\Controllers\Api\ReportController::class, 'exportProfitByCategory']);
+    Route::get('/reports/profit-by-category', [\App\Http\Controllers\Api\ReportController::class, 'profitByCategory']);
 });

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Product;
+use App\Models\ProductPriceTier;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -12,7 +13,7 @@ class ProductController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Product::with(['category', 'brand', 'supplier']);
+        $query = Product::with(['category', 'brand', 'supplier', 'children', 'priceTiers']);
 
         if ($search = $request->query('search')) {
             $like = '%' . $search . '%';
@@ -65,6 +66,14 @@ class ProductController extends Controller
             'category_id' => 'nullable|exists:categories,id',
             'brand_id' => 'nullable|exists:brands,id',
             'supplier_id' => 'nullable|exists:suppliers,id',
+            'is_combo' => 'boolean',
+            'combo_ingredients' => 'nullable|array|required_if:is_combo,true',
+            'combo_ingredients.*.id' => 'required_with:combo_ingredients|exists:products,id',
+            'combo_ingredients.*.quantity' => 'required_with:combo_ingredients|numeric|min:0.001',
+            // Tramos de precio mayorista
+            'price_tiers'                => 'nullable|array',
+            'price_tiers.*.min_quantity' => 'required_with:price_tiers|numeric|min:1',
+            'price_tiers.*.unit_price'   => 'required_with:price_tiers|numeric|min:0',
         ]);
 
         // Flujo de Código Interno (PLU)
@@ -84,12 +93,26 @@ class ProductController extends Controller
         }
 
         $product = Product::create($validated);
-        return response()->json($product->load(['category', 'brand', 'supplier']), 201);
+
+        if (!empty($validated['is_combo']) && $request->has('combo_ingredients')) {
+            $syncData = [];
+            foreach ($request->combo_ingredients as $ingredient) {
+                $syncData[$ingredient['id']] = ['quantity' => $ingredient['quantity']];
+            }
+            $product->children()->sync($syncData);
+        }
+
+        // Sincronizar tramos de precio si vienen en el payload
+        if ($request->has('price_tiers')) {
+            $this->syncPriceTiers($product, $request->price_tiers ?? []);
+        }
+
+        return response()->json($product->load(['category', 'brand', 'supplier', 'children', 'priceTiers']), 201);
     }
 
     public function show(Product $product)
     {
-        return response()->json($product->load(['category', 'brand', 'supplier']));
+        return response()->json($product->load(['category', 'brand', 'supplier', 'children', 'priceTiers']));
     }
 
     public function adjustStock(Request $request, Product $product)
@@ -152,6 +175,14 @@ class ProductController extends Controller
             'category_id' => 'nullable|exists:categories,id',
             'brand_id' => 'nullable|exists:brands,id',
             'supplier_id' => 'nullable|exists:suppliers,id',
+            'is_combo' => 'boolean',
+            'combo_ingredients' => 'nullable|array|required_if:is_combo,true',
+            'combo_ingredients.*.id' => 'required_with:combo_ingredients|exists:products,id',
+            'combo_ingredients.*.quantity' => 'required_with:combo_ingredients|numeric|min:0.001',
+            // Tramos de precio mayorista
+            'price_tiers'                => 'nullable|array',
+            'price_tiers.*.min_quantity' => 'required_with:price_tiers|numeric|min:1',
+            'price_tiers.*.unit_price'   => 'required_with:price_tiers|numeric|min:0',
         ]);
         // Flujo de Código Interno (PLU) en actualización
         if (empty($request->internal_code)) {
@@ -166,7 +197,25 @@ class ProductController extends Controller
         }
 
         $product->update($validated);
-        return response()->json($product->load(['category', 'brand', 'supplier']));
+
+        if (array_key_exists('is_combo', $validated)) {
+            if (!empty($validated['is_combo']) && $request->has('combo_ingredients')) {
+                $syncData = [];
+                foreach ($request->combo_ingredients as $ingredient) {
+                    $syncData[$ingredient['id']] = ['quantity' => $ingredient['quantity']];
+                }
+                $product->children()->sync($syncData);
+            } else if (empty($validated['is_combo'])) {
+                $product->children()->detach();
+            }
+        }
+
+        // Sincronizar tramos de precio si vienen en el payload
+        if ($request->has('price_tiers')) {
+            $this->syncPriceTiers($product, $request->price_tiers ?? []);
+        }
+
+        return response()->json($product->load(['category', 'brand', 'supplier', 'children', 'priceTiers']));
     }
 
     public function destroy(Product $product)
@@ -228,5 +277,34 @@ class ProductController extends Controller
         $checksum = (10 - ($sum % 10)) % 10;
         
         return $base . $checksum;
+    }
+
+    /**
+     * Sincroniza los tramos de precio mayorista provistos en el payload.
+     * Elimina los antiguos y recrea los nuevos asegurando consistencia.
+     */
+    private function syncPriceTiers(Product $product, array $tiersData): void
+    {
+        // Borramos los actuales (estrategia replace-all, más robusta para Tiers)
+        $product->priceTiers()->delete();
+
+        // Si no mandan nada, ya quedó limpio
+        if (empty($tiersData)) {
+            return;
+        }
+
+        $recordsToInsert = [];
+        foreach ($tiersData as $tier) {
+            $recordsToInsert[] = [
+                'product_id'   => $product->id,
+                'min_quantity' => $tier['min_quantity'],
+                'unit_price'   => $tier['unit_price'],
+                'created_at'   => now(),
+                'updated_at'   => now(),
+            ];
+        }
+
+        // Insertamos en bulk
+        ProductPriceTier::insert($recordsToInsert);
     }
 }
