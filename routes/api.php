@@ -126,4 +126,8 @@ Route::middleware(['session.validate'])->group(function () {
     Route::get('/reports/profit-by-category/export', [\App\Http\Controllers\Api\ReportController::class, 'exportProfitByCategory']);
     Route::get('/reports/profit-by-category/pdf',    [\App\Http\Controllers\Api\ReportController::class, 'exportPdfByCategory']);
     Route::get('/reports/profit-by-category',        [\App\Http\Controllers\Api\ReportController::class, 'profitByCategory']);
+    Route::get('/reports/monthly-balance',           [\App\Http\Controllers\Api\ReportController::class, 'monthlyBalance']);
+
+    // ── Módulo de Inteligencia de Inventario ──────────────────────────
+    Route::get('/inventory/alerts',                  [\App\Http\Controllers\Api\ProductController::class, 'inventoryAlerts']);
 });

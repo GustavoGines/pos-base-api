@@ -240,6 +240,68 @@ class ProductController extends Controller
     }
 
     /**
+     * Motor de Predicción de Quiebre de Stock (Velocidad de Venta).
+     *
+     * Algoritmo:
+     *   avg_daily_units  = SUM(qty vendidas en últimos 15 días) / 15
+     *   days_of_coverage = stock_actual / avg_daily_units
+     *
+     * Solo devuelve productos activos donde:
+     *   - Tienen stock > 0 (si el stock ya es 0, es un quiebre consumado, no predictivo)
+     *   - avg_daily_units > 0  (el producto vendió algo en los últimos 15 días)
+     *   - days_of_coverage < $threshold (umbral configurable, default 7 días)
+     */
+    public function inventoryAlerts(\Illuminate\Http\Request $request)
+    {
+        $periodDays = 15;
+        $threshold  = (int) $request->query('threshold', 7);   // días de cobertura máx. para incluir
+        $since      = now()->subDays($periodDays)->startOfDay();
+
+        // Subquery: unidades vendidas por producto en los últimos N días
+        $salesVelocity = \Illuminate\Support\Facades\DB::table('sale_items')
+            ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
+            ->where('sales.status', 'completed')
+            ->where('sales.created_at', '>=', $since)
+            ->selectRaw('product_id, SUM(quantity) as total_sold')
+            ->groupBy('product_id');
+
+        // Query principal: productos activos con stock > 0, cruzado con velocidad
+        $products = \Illuminate\Support\Facades\DB::table('products')
+            ->joinSub($salesVelocity, 'vel', 'vel.product_id', '=', 'products.id')
+            ->leftJoin('categories', 'categories.id', '=', 'products.category_id')
+            ->where('products.active', true)
+            ->where('products.stock', '>', 0)
+            ->selectRaw("
+                products.id                     as product_id,
+                products.name                   as product_name,
+                COALESCE(categories.name, 'Sin Categoría') as category,
+                products.stock                  as current_stock,
+                ROUND(vel.total_sold / ?, 2)    as avg_daily_units,
+                ROUND(products.stock / (vel.total_sold / ?), 1) as days_of_coverage
+            ", [$periodDays, $periodDays])
+            ->havingRaw('days_of_coverage < ?', [$threshold])
+            ->orderByRaw('days_of_coverage ASC')
+            ->get();
+
+        // Clasificación semafórica en PHP (evita lógica condicional en el cliente)
+        $alerts = $products->map(function ($row) {
+            $row->alert_level = match(true) {
+                $row->days_of_coverage < 3  => 'critical',   // 🔴 Rojo
+                $row->days_of_coverage < 7  => 'warning',    // 🟡 Amarillo
+                default                      => 'info',       // 🟢 por si se amplía el threshold
+            };
+            return $row;
+        });
+
+        return response()->json([
+            'period_analyzed_days' => $periodDays,
+            'threshold_days'       => $threshold,
+            'generated_at'         => now()->toIso8601String(),
+            'alerts'               => $alerts,
+        ]);
+    }
+
+    /**
      * Genera un PLU numérico de 5 dígitos secuencial.
      */
     private function generateUniqueInternalCode(): string
