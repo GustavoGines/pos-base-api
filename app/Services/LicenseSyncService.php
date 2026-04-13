@@ -104,14 +104,13 @@ class LicenseSyncService
                 $this->setSetting('license_next_payment_at', $data['next_payment_at'] ?? null);
                 $this->setSetting('license_manage_url', $data['manage_url'] ?? null);
                 
-                // [feature-flags] El servidor envía 'addons' (ej: ['fast_pos', 'z_reports', 'current_accounts'])
-                // Normalizamos alias del servidor a nombres internos antes de guardar.
-                $addons = $data['addons'] ?? $data['allowed_addons'] ?? [];
-                if (!is_array($addons)) $addons = json_decode($addons ?? '[]', true) ?? [];
-                $addons = $this->normalizeAddons($addons);
-                $addonsJson = json_encode($addons);
-                $this->setSetting('license_addons', $addonsJson);
-                $this->setSetting('license_allowed_addons', $addonsJson);
+                // [feature-flags] Nuevo Diccionario de Características
+                if (isset($data['features'])) {
+                    $this->setSetting('license_features_dict', json_encode($data['features']));
+                }
+                
+                // LIMPIEZA EXTREMA: Eliminar keys de legado de la base de datos local
+                BusinessSetting::whereIn('key', ['license_addons', 'license_allowed_addons'])->delete();
                 
                 $this->setSetting('last_license_check', now()->toIso8601String());
             } else if ($response->status() === 401 || $response->status() === 403) {
@@ -187,13 +186,13 @@ class LicenseSyncService
                 $this->setSetting('license_next_payment_at', $data['next_payment_at'] ?? null);
                 $this->setSetting('license_manage_url', $data['manage_url'] ?? null);
                 
-                $addons = $data['addons'] ?? $data['allowed_addons'] ?? [];
-                if (!is_array($addons)) $addons = json_decode($addons ?? '[]', true) ?? [];
-                $addons = $this->normalizeAddons($addons);
-                $addonsJson = json_encode($addons);
-                // Guardar bajo ambas keys: 'license_addons' (nueva) y 'license_allowed_addons' (legada)
-                $this->setSetting('license_addons', $addonsJson);
-                $this->setSetting('license_allowed_addons', $addonsJson);
+                // [feature-flags] Nuevo Diccionario de Características
+                if (isset($data['features'])) {
+                    $this->setSetting('license_features_dict', json_encode($data['features']));
+                }
+
+                // LIMPIEZA EXTREMA: Eliminar keys de legado
+                BusinessSetting::whereIn('key', ['license_addons', 'license_allowed_addons'])->delete();
                 
                 $this->setSetting('last_license_check', now()->toIso8601String());
             } else if ($response->status() === 401 || $response->status() === 403) {
@@ -229,11 +228,10 @@ class LicenseSyncService
                 $data = $response->json();
                 $plan = $data['plan'] ?? $data['plan_type'] ?? 'basic';
                 
-                // Addons: normalizar alias del servidor antes de guardar
-                $addons = $data['allowed_addons'] ?? $data['addons'] ?? [];
-                if (!is_array($addons)) $addons = json_decode($addons ?? '[]', true) ?? [];
-                $addons = $this->normalizeAddons($addons);
-                $addonsEncoded = json_encode($addons);
+                // [feature-flags] Diccionario de Características
+                if (isset($data['features'])) {
+                    $this->setSetting('license_features_dict', json_encode($data['features']));
+                }
 
                 $this->setSetting('license_key', $licenseKey);
                 $this->setSetting('app_plan', $plan);
@@ -250,9 +248,9 @@ class LicenseSyncService
                 $this->setSetting('license_next_payment_at', $data['next_payment_at'] ?? null);
                 $this->setSetting('license_manage_url', $data['manage_url'] ?? null);
 
-                // Guardar bajo ambas keys
-                $this->setSetting('license_addons', $addonsEncoded);
-                $this->setSetting('license_allowed_addons', $addonsEncoded);
+                // LIMPIEZA EXTREMA: Eliminar keys de legado
+                BusinessSetting::whereIn('key', ['license_addons', 'license_allowed_addons'])->delete();
+                
                 $this->setSetting('last_license_check', now()->toIso8601String());
                 
                 return $plan;
