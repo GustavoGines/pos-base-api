@@ -250,8 +250,14 @@ class SalesController extends Controller
                                 ]);
                             }
                         }
+                        // Disminuir contador de ventas del Combo Padre
+                        $newCount = max(0, $item->product->sales_count - (int) $item->quantity);
+                        $item->product->update(['sales_count' => $newCount]);
                     } else {
                         $item->product->increment('stock', $item->quantity);
+                        // Disminuir contador de ventas
+                        $newCount = max(0, $item->product->sales_count - (int) $item->quantity);
+                        $item->product->update(['sales_count' => $newCount]);
 
                         \App\Models\StockMovement::create([
                             'product_id' => $item->product_id,

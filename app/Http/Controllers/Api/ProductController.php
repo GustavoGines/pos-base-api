@@ -254,7 +254,7 @@ class ProductController extends Controller
     public function inventoryAlerts(\Illuminate\Http\Request $request)
     {
         $periodDays = 15;
-        $threshold  = (int) $request->query('threshold', 7);   // días de cobertura máx. para incluir
+        $threshold  = (int) $request->query('threshold', 3);   // Solo alertamos <= 3 días de cobertura
         $since      = now()->subDays($periodDays)->startOfDay();
 
         // Subquery: unidades vendidas por producto en los últimos N días
@@ -265,31 +265,52 @@ class ProductController extends Controller
             ->selectRaw('product_id, SUM(quantity) as total_sold')
             ->groupBy('product_id');
 
-        // Query principal: productos activos con stock > 0, cruzado con velocidad
+        // Query unificada: Alertas Reactivas (Quiebre/Stock Min) + Predictivas (Velocidad de venta)
         $products = \Illuminate\Support\Facades\DB::table('products')
-            ->joinSub($salesVelocity, 'vel', 'vel.product_id', '=', 'products.id')
+            ->leftJoinSub($salesVelocity, 'vel', 'vel.product_id', '=', 'products.id')
             ->leftJoin('categories', 'categories.id', '=', 'products.category_id')
             ->where('products.active', true)
-            ->where('products.stock', '>', 0)
-            ->selectRaw("
+            ->where('products.is_combo', false)
+            ->selectRaw(sprintf("
                 products.id                     as product_id,
                 products.name                   as product_name,
+                products.internal_code          as internal_code,
+                products.is_sold_by_weight      as is_sold_by_weight,
                 COALESCE(categories.name, 'Sin Categoría') as category,
                 products.stock                  as current_stock,
-                ROUND(vel.total_sold / ?, 2)    as avg_daily_units,
-                ROUND(products.stock / (vel.total_sold / ?), 1) as days_of_coverage
-            ", [$periodDays, $periodDays])
-            ->havingRaw('days_of_coverage < ?', [$threshold])
-            ->orderByRaw('days_of_coverage ASC')
+                products.min_stock              as min_stock,
+                
+                -- COLD START: Cálculo dinámico de días de vida para no subestimar promedios (Tope max: 15, Tope min: 1)
+                ROUND(COALESCE(vel.total_sold, 0) / LEAST(GREATEST(DATEDIFF(NOW(), COALESCE(products.created_at, NOW() - INTERVAL %1\$d DAY)), 1), %1\$d), 2) as avg_daily_units,
+                
+                -- ALERTA PREDICTIVA: Excluye recién nacidos (< 2 días / 48 hrs) asignando 9999 (silencio estadístico)
+                IF(COALESCE(vel.total_sold, 0) > 0 AND DATEDIFF(NOW(), COALESCE(products.created_at, NOW() - INTERVAL %1\$d DAY)) >= 2, 
+                   ROUND( IF(products.stock > COALESCE(products.min_stock, 0), products.stock - COALESCE(products.min_stock, 0), 0) / (vel.total_sold / LEAST(GREATEST(DATEDIFF(NOW(), COALESCE(products.created_at, NOW() - INTERVAL %1\$d DAY)), 1), %1\$d)), 1), 
+                   9999) as days_of_coverage
+            ", $periodDays))
+            ->havingRaw('
+                days_of_coverage <= ? 
+                OR current_stock <= 0 
+                OR (min_stock IS NOT NULL AND current_stock <= min_stock)
+            ', [$threshold])
+            ->orderByRaw('current_stock ASC, days_of_coverage ASC')
             ->get();
 
-        // Clasificación semafórica en PHP (evita lógica condicional en el cliente)
+        // Clasificación semafórica unificada en PHP (Zero-Processing para Flutter)
         $alerts = $products->map(function ($row) {
             $row->alert_level = match(true) {
-                $row->days_of_coverage < 3  => 'critical',   // 🔴 Rojo
-                $row->days_of_coverage < 7  => 'warning',    // 🟡 Amarillo
-                default                      => 'info',       // 🟢 por si se amplía el threshold
+                $row->current_stock <= 0 => 'critical',                                // Quiebre total (Reactivo)
+                !is_null($row->min_stock) && $row->current_stock <= $row->min_stock => 'critical', // Debajo del mínimo (Reactivo)
+                $row->days_of_coverage <= 3  => 'critical',                             // Quiebre inminente (Predictivo)
+                default                      => 'info',
             };
+
+            $row->alert_type = match(true) {
+                $row->current_stock <= 0 => 'out_of_stock',
+                !is_null($row->min_stock) && $row->current_stock <= $row->min_stock => 'low_stock',
+                default => 'predictive',
+            };
+            
             return $row;
         });
 
