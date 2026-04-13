@@ -23,6 +23,31 @@ class LicenseSyncService
         );
     }
 
+    /**
+     * Normaliza los addons del servidor de licencias a los nombres internos del sistema.
+     * El servidor puede enviar alias distintos (ej: 'z_reports') que el sistema
+     * Flutter espera bajo otro nombre ('advanced_reports').
+     */
+    private function normalizeAddons(array $addons): array
+    {
+        // Mapa: alias del servidor => nombre interno del sistema (solo renombres reales)
+        $aliasMap = [
+            'fast_pos'         => 'fast_pos',
+            'current_accounts' => 'current_accounts',
+            'multi_caja'       => 'multi_caja',
+            'quotes'           => 'quotes',
+            'z_reports'        => 'z_reports',        // Reportes Z de auditoría (cierre de turno)
+            'advanced_reports' => 'advanced_reports', // Reportes Gerenciales (addon separado)
+        ];
+
+        $normalized = [];
+        foreach ($addons as $addon) {
+            $normalized[] = $aliasMap[$addon] ?? $addon;
+        }
+
+        return array_values(array_unique($normalized));
+    }
+
     private function getInstallationId(): string
     {
         $id = $this->getSetting('installation_id');
@@ -79,12 +104,13 @@ class LicenseSyncService
                 $this->setSetting('license_next_payment_at', $data['next_payment_at'] ?? null);
                 $this->setSetting('license_manage_url', $data['manage_url'] ?? null);
                 
-                // [feature-flags] El servidor envía 'addons' (ej: ['fast_pos', 'quotes', 'multiple_prices'])
-                // Guardamos bajo 'license_addons' como JSON para que el middleware y el Flutter lo lean.
+                // [feature-flags] El servidor envía 'addons' (ej: ['fast_pos', 'z_reports', 'current_accounts'])
+                // Normalizamos alias del servidor a nombres internos antes de guardar.
                 $addons = $data['addons'] ?? $data['allowed_addons'] ?? [];
-                $addonsJson = is_array($addons) ? json_encode($addons) : ($addons ?? '[]');
+                if (!is_array($addons)) $addons = json_decode($addons ?? '[]', true) ?? [];
+                $addons = $this->normalizeAddons($addons);
+                $addonsJson = json_encode($addons);
                 $this->setSetting('license_addons', $addonsJson);
-                // Mantener la key legada para retrocompatibilidad con código existente
                 $this->setSetting('license_allowed_addons', $addonsJson);
                 
                 $this->setSetting('last_license_check', now()->toIso8601String());
@@ -162,7 +188,9 @@ class LicenseSyncService
                 $this->setSetting('license_manage_url', $data['manage_url'] ?? null);
                 
                 $addons = $data['addons'] ?? $data['allowed_addons'] ?? [];
-                $addonsJson = is_array($addons) ? json_encode($addons) : ($addons ?? '[]');
+                if (!is_array($addons)) $addons = json_decode($addons ?? '[]', true) ?? [];
+                $addons = $this->normalizeAddons($addons);
+                $addonsJson = json_encode($addons);
                 // Guardar bajo ambas keys: 'license_addons' (nueva) y 'license_allowed_addons' (legada)
                 $this->setSetting('license_addons', $addonsJson);
                 $this->setSetting('license_allowed_addons', $addonsJson);
@@ -201,9 +229,11 @@ class LicenseSyncService
                 $data = $response->json();
                 $plan = $data['plan'] ?? $data['plan_type'] ?? 'basic';
                 
-                // Addons support
+                // Addons: normalizar alias del servidor antes de guardar
                 $addons = $data['allowed_addons'] ?? $data['addons'] ?? [];
-                $addonsEncoded = is_array($addons) ? json_encode($addons) : $addons;
+                if (!is_array($addons)) $addons = json_decode($addons ?? '[]', true) ?? [];
+                $addons = $this->normalizeAddons($addons);
+                $addonsEncoded = json_encode($addons);
 
                 $this->setSetting('license_key', $licenseKey);
                 $this->setSetting('app_plan', $plan);
@@ -220,7 +250,7 @@ class LicenseSyncService
                 $this->setSetting('license_next_payment_at', $data['next_payment_at'] ?? null);
                 $this->setSetting('license_manage_url', $data['manage_url'] ?? null);
 
-                // Guardar bajo ambas keys: 'license_addons' (nueva) y 'license_allowed_addons' (legada)
+                // Guardar bajo ambas keys
                 $this->setSetting('license_addons', $addonsEncoded);
                 $this->setSetting('license_allowed_addons', $addonsEncoded);
                 $this->setSetting('last_license_check', now()->toIso8601String());
