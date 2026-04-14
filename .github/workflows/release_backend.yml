@@ -36,13 +36,15 @@ jobs:
           
       - name: Notify License Server
         run: |
+          MSG=$(git log -1 --pretty=format:"%B")
+          jq -n \
+            --arg version "${{ github.ref_name }}" \
+            --arg component "backend" \
+            --arg url "${{ secrets.R2_PUBLIC_BASE_URL }}/update_backend_${{ github.ref_name }}.zip" \
+            --arg changelog "$MSG" \
+            --arg token "${{ secrets.LICENSE_SERVER_TOKEN }}" \
+            '{version: $version, component: $component, download_url: $url, changelog: $changelog, is_critical: false, token: $token}' > payload.json
+            
           curl -X POST "${{ secrets.LICENSE_SERVER_URL }}/api/releases/new" \
           -H "Content-Type: application/json" \
-          -d '{
-            "version": "${{ github.ref_name }}",
-            "component": "backend",
-            "download_url": "${{ secrets.R2_PUBLIC_BASE_URL }}/update_backend_${{ github.ref_name }}.zip",
-            "changelog": "Auto-generated backend release for ${{ github.ref_name }}",
-            "is_critical": false,
-            "token": "${{ secrets.LICENSE_SERVER_TOKEN }}"
-          }'
+          -d @payload.json
