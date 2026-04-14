@@ -24,7 +24,7 @@ class CheckFeatureAccess
     {
         // Leer el JSON de features desde la BD local (persistido por LicenseSyncService)
         $featuresJson = DB::table('business_settings')
-            ->where('key', 'license_addons')
+            ->where('key', 'license_features_dict')
             ->value('value');
 
         $features = [];
@@ -35,7 +35,7 @@ class CheckFeatureAccess
             }
         }
 
-        if (!in_array($feature, $features)) {
+        if (!isset($features[$feature]) || $features[$feature] !== true) {
             return response()->json([
                 'message'    => "La licencia activa no incluye el módulo requerido: '{$feature}'. Actualice su plan.",
                 'error_code' => 'FEATURE_NOT_LICENSED',
