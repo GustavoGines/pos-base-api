@@ -1,2 +1,2 @@
-v1.2.1 - OTA Test Final
+v1.2.2 - OTA Test Final
 Build: 2026-04-14
