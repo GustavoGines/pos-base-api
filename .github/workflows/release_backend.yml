@@ -36,7 +36,7 @@ jobs:
           
       - name: Notify License Server
         run: |
-          MSG=$(git log -1 --pretty=format:"%B")
+          MSG=$(git log -1 --no-merges --pretty=format:"%B")
           jq -n \
             --arg version "${{ github.ref_name }}" \
             --arg component "backend" \
