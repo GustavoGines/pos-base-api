@@ -35,8 +35,32 @@ void main(List<String> args) async {
   print('Ruta ZIP: $zipPath');
   print('Ruta Destino: $targetDir');
 
-  print('Esperando 3 segundos a que los procesos liberen los archivos...');
-  await Future.delayed(const Duration(seconds: 3));
+  // Espera inteligente para asegurar que el Frontend cerró y liberó los archivos
+  if (component == 'frontend') {
+    print('Esperando a que la aplicación cierre completamente...');
+    final exeFile = File(p.join(targetDir, 'Sistema_POS.exe'));
+    bool isLocked = true;
+    int retries = 0;
+    while (isLocked && retries < 15) {
+      try {
+        if (exeFile.existsSync()) {
+          final f = exeFile.openSync(mode: FileMode.append);
+          f.closeSync();
+        }
+        isLocked = false;
+      } catch (_) {
+        await Future.delayed(const Duration(seconds: 1));
+        retries++;
+      }
+    }
+    if (isLocked) {
+      print('Advertencia: El ejecutable sigue bloqueado tras 15 segundos.');
+    }
+  } else {
+    // Para el backend esperamos 3 segundos genéricos
+    print('Esperando 3 segundos a que los procesos en segundo plano liberen archivos...');
+    await Future.delayed(const Duration(seconds: 3));
+  }
 
   print('Extrayendo actualizaciones en el directorio...');
   try {
@@ -45,20 +69,47 @@ void main(List<String> args) async {
 
     for (final file in archive) {
       final filename = file.name;
+      
+      // Auto-protección: el actualizador no puede sobreescribirse a sí mismo mientras corre
+      if (component == 'frontend' && filename.toLowerCase().endsWith('updater.exe')) {
+        continue;
+      }
+
       if (file.isFile) {
         final data = file.content as List<int>;
         final filePath = p.join(targetDir, filename);
         final outFile = File(filePath);
-        outFile.createSync(recursive: true);
-        outFile.writeAsBytesSync(data);
+        
+        try {
+          outFile.createSync(recursive: true);
+          outFile.writeAsBytesSync(data);
+        } catch (fileError) {
+          print('ADVERTENCIA: No se pudo escribir el archivo $filename ($fileError). Probando renombre de archivo bloqueado...');
+          // Intento fallback: Mover el archivo bloqueado a .bak y escribir el nuevo
+          try {
+            if (outFile.existsSync()) {
+              final backupPath = filePath + '.bak-${DateTime.now().millisecondsSinceEpoch}';
+              outFile.renameSync(backupPath);
+              File(backupPath).delete().ignore(); // Fire and forget deletion
+            }
+            outFile.createSync(recursive: true);
+            outFile.writeAsBytesSync(data);
+          } catch (fallbackErr) {
+            print('ERROR FATAL: El archivo $filename está completamente bloqueado. ($fallbackErr)');
+          }
+        }
       } else {
         final dirPath = p.join(targetDir, filename);
-        Directory(dirPath).createSync(recursive: true);
+        try {
+          Directory(dirPath).createSync(recursive: true);
+        } catch (e) {
+          print('Error creando directorio $filename: $e');
+        }
       }
     }
     print('Extracción completada con éxito.');
   } catch (e) {
-    print('Error extrayendo el ZIP: $e');
+    print('Error DECODIFICANDO el ZIP: $e');
   }
 
   // Lógicas por componente
