@@ -57,4 +57,9 @@ class Sale extends Model
     {
         return $this->belongsTo(Customer::class);
     }
+
+    public function deliveryNote()
+    {
+        return $this->hasOne(DeliveryNote::class);
+    }
 }

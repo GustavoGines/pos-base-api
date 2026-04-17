@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\SalesController;
 use App\Http\Controllers\Api\StockController;
 use App\Http\Controllers\Api\TrashController;
 use App\Http\Controllers\Api\QuoteController;
+use App\Http\Controllers\DeliveryNoteController;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // RUTAS PÚBLICAS — No requieren sesión activa
@@ -130,4 +131,11 @@ Route::middleware(['session.validate'])->group(function () {
 
     // ── Módulo de Inteligencia de Inventario ──────────────────────────
     Route::get('/inventory/alerts',                  [\App\Http\Controllers\Api\ProductController::class, 'inventoryAlerts']);
+
+    // ── Módulo Logística (Remitos / Corralón) ──────────────────────────
+    Route::prefix('delivery-notes')->group(function () {
+        Route::get('/', [DeliveryNoteController::class, 'index']);
+        Route::post('/from-sale/{saleId}', [DeliveryNoteController::class, 'generateFromSale']);
+        Route::put('/{id}/deliver', [DeliveryNoteController::class, 'updateDelivery']);
+    });
 });
