@@ -40,7 +40,8 @@ class ProductController extends Controller
                   ->orderBy('name', 'asc');
         }
 
-        return response()->json($query->paginate(100));
+        $perPage = min((int) $request->query('per_page', 100), 500); // Cap de seguridad: máx 500
+        return response()->json($query->paginate($perPage));
     }
 
     public function store(Request $request)
