@@ -46,6 +46,7 @@ class PosController extends Controller
         $validated = $request->validate([
             'total'                  => 'required|numeric',
             'total_surcharge'        => 'required|numeric|min:0',
+            'shipping_cost'          => 'nullable|numeric|min:0',
             'payments'               => 'exclude_if:status,pending|required|array|min:1',
             'payments.*.payment_method_id' => 'required|integer|exists:payment_methods,id',
             'payments.*.base_amount'      => 'required|numeric|min:0',
@@ -95,7 +96,7 @@ class PosController extends Controller
             ], 422);
         }
 
-        return DB::transaction(function () use ($validated, $isCuentaCorriente, $isPendingSale, $ccPaymentTotal) {
+        return DB::transaction(function () use ($validated, $isCuentaCorriente, $isPendingSale, $ccPaymentTotal, $request) {
             $total = (float) $validated['total'];
             $totalSurcharge = (float) $validated['total_surcharge'];
 
@@ -110,6 +111,7 @@ class PosController extends Controller
                 'user_id'                => $validated['user_id'] ?? null,
                 'customer_id'            => $validated['customer_id'] ?? null,
                 'status'                 => $validated['status'] ?? 'completed',
+                'shipping_cost'          => $validated['shipping_cost'] ?? 0,
             ]);
 
             if (!$isPendingSale) {
@@ -122,6 +124,9 @@ class PosController extends Controller
                     ]);
                 }
             }
+
+            $requiresDispatch = $request->input('requires_dispatch', false);
+            $fulfillmentStatus = $request->input('fulfillment_status', 'pending');
 
             foreach ($validated['items'] as $itemData) {
                 $product = Product::findOrFail($itemData['product_id']);
@@ -141,59 +146,78 @@ class PosController extends Controller
                 }
 
                 // === MOTOR DE PRECIOS VOLUMÉTRICOS ===
-                // Calculamos cuál de los tramos le correspondería a esta cantidad X
                 $expectedUnitPrice = $product->getPriceForQuantity((float) $itemData['quantity']);
 
-                $sale->items()->create([
+                $saleItem = $sale->items()->create([
                     'product_id'      => $product->id,
                     'product_name'    => $product->name,
                     'quantity'        => $itemData['quantity'],
                     'unit_cost_price' => $currentCostPrice,
-                    // Usualmente confiamos en el Frontend para el unit_price final porque
-                    // el cajero puede haber aplicado un descuento manual sobre el tramo.
-                    // Si se requiere bloqueo estricto, haríamos:
-                    // abort_if($itemData['unit_price'] < $expectedUnitPrice, 400, "Precio no autorizado");
                     'unit_price'   => $itemData['unit_price'],
                     'subtotal'     => $itemData['subtotal'],
                 ]);
 
+                // Lógica de Descuento de Stock:
+                // SOLO descontamos stock de INMEDIATO si:
+                // 1) NO lleva remito (requiresDispatch == false)
+                // 2) SÍ lleva remito, pero es "Se lo lleva AHORA" (fulfillmentStatus == 'delivered')
+                $shouldDeductStock = (!$requiresDispatch) || ($requiresDispatch && $fulfillmentStatus === 'delivered');
 
+                if ($shouldDeductStock) {
+                    // Si es un combo, descontar de los ingredientes (children)
+                    if ($product->is_combo) {
+                        $combos = DB::table('product_combos')->where('parent_product_id', $product->id)->get();
+                        foreach ($combos as $combo) {
+                            $childProd = Product::findOrFail($combo->child_product_id);
+                            $qtyDeducted = $itemData['quantity'] * $combo->quantity;
+                            
+                            $childProd->stock -= $qtyDeducted;
+                            $childProd->save();
 
-                // Si es un combo, descontar de los ingredientes (children)
-                if ($product->is_combo) {
-                    $combos = DB::table('product_combos')->where('parent_product_id', $product->id)->get();
-                    foreach ($combos as $combo) {
-                        $childProd = Product::findOrFail($combo->child_product_id);
-                        $qtyDeducted = $itemData['quantity'] * $combo->quantity;
+                            StockMovement::create([
+                                'product_id' => $childProd->id,
+                                'user_id'    => $validated['user_id'] ?? null,
+                                'type'       => 'sale',
+                                'quantity'   => -$qtyDeducted,
+                                'notes'      => "Venta #{$sale->id} (Hijo del Combo: {$product->name})"
+                            ]);
+                        }
                         
-                        $childProd->stock -= $qtyDeducted;
-                        $childProd->save();
+                        // Al producto Padre/Combo solo le subimos el contador estadístico de ventas
+                        $product->sales_count += (int) $itemData['quantity'];
+                        $product->save();
+                        
+                    } else {
+                        // Producto normal unitario
+                        $product->stock -= $itemData['quantity'];
+                        $product->sales_count += (int) $itemData['quantity'];
+                        $product->save();
 
                         StockMovement::create([
-                            'product_id' => $childProd->id,
+                            'product_id' => $product->id,
                             'user_id'    => $validated['user_id'] ?? null,
                             'type'       => 'sale',
-                            'quantity'   => -$qtyDeducted,
-                            'notes'      => "Venta #{$sale->id} (Hijo del Combo: {$product->name})"
+                            'quantity'   => -$itemData['quantity'],
+                            'notes'      => "Venta #{$sale->id}"
                         ]);
                     }
-                    
-                    // Al producto Padre/Combo solo le subimos el contador estadístico de ventas
-                    $product->sales_count += (int) $itemData['quantity'];
-                    $product->save();
-                    
-                } else {
-                    // Producto normal unitario
-                    $product->stock -= $itemData['quantity'];
-                    $product->sales_count += (int) $itemData['quantity'];
-                    $product->save();
+                }
+            }
 
-                    StockMovement::create([
-                        'product_id' => $product->id,
-                        'user_id'    => $validated['user_id'] ?? null,
-                        'type'       => 'sale',
-                        'quantity'   => -$itemData['quantity'],
-                        'notes'      => "Venta #{$sale->id}"
+            // Crear el remito asociado a la venta
+            if ($requiresDispatch) {
+                $deliveryNote = \App\Models\DeliveryNote::create([
+                    'sale_id' => $sale->id,
+                    'status'  => $fulfillmentStatus, // 'pending' o 'delivered'
+                    'notes'   => 'Generado automáticamente desde Checkout.',
+                ]);
+
+                foreach ($validated['items'] as $itemData) {
+                    \App\Models\DeliveryNoteItem::create([
+                        'delivery_note_id'   => $deliveryNote->id,
+                        'product_id'         => $itemData['product_id'],
+                        'quantity_purchased' => $itemData['quantity'],
+                        'quantity_delivered' => $fulfillmentStatus === 'delivered' ? $itemData['quantity'] : 0,
                     ]);
                 }
             }
@@ -225,7 +249,7 @@ class PosController extends Controller
 
             return response()->json([
                 'message' => 'Sale processed successfully',
-                'sale'    => $sale->load('items', 'payments.paymentMethod'),
+                'sale'    => $sale->load('items', 'payments.paymentMethod', 'deliveryNote', 'deliveryNote.items'),
             ], 201);
         });
     }

@@ -95,6 +95,7 @@ class SalesController extends Controller
             'payments.*.surcharge_amount' => 'required|numeric|min:0',
             'payments.*.total_amount'     => 'required|numeric|min:0',
             'total_surcharge'        => 'required|numeric|min:0',
+            'shipping_cost'          => 'nullable|numeric|min:0',
             'tendered_amount'        => 'nullable|numeric|min:0',
             'change_amount'          => 'nullable|numeric',
             'items'                  => 'nullable|array',
@@ -206,6 +207,7 @@ class SalesController extends Controller
                 'tendered_amount' => $validated['tendered_amount'] ?? $sale->total,
                 'change_amount'   => $validated['change_amount'] ?? 0,
                 'total_surcharge' => $validated['total_surcharge'] ?? 0,
+                'shipping_cost'   => $validated['shipping_cost'] ?? $sale->shipping_cost,
                 'cashier_id'      => $userId,
                 'payment_status'  => (isset($validated['payments']) && current($validated['payments'])['payment_method_id'] === 5) ? 'pending' : 'paid', // 5 = cuenta corriente
             ]);
@@ -230,41 +232,80 @@ class SalesController extends Controller
         $userId = $request->input('user_id');
 
         DB::transaction(function () use ($sale, $userId) {
+            // Buscar si hay remito
+            $deliveryNote = \App\Models\DeliveryNote::with('items')->where('sale_id', $sale->id)->first();
+
             // Devolver stock de cada ítem al producto
             foreach ($sale->items as $item) {
                 if ($item->product) {
-                    if ($item->product->is_combo) {
-                        $combos = DB::table('product_combos')->where('parent_product_id', $item->product_id)->get();
-                        foreach ($combos as $combo) {
-                            $childProd = \App\Models\Product::find($combo->child_product_id);
-                            if ($childProd) {
-                                $qtyRestored = $item->quantity * $combo->quantity;
-                                $childProd->increment('stock', $qtyRestored);
+                    // Calcular cuánto stock hay que devolver realmente
+                    $qtyToRestore = $item->quantity;
+                    
+                    if ($deliveryNote) {
+                        // Si hay remito, solo devolvemos lo que ya fue entregado (y por tanto descontado)
+                        $dnItem = $deliveryNote->items->where('product_id', $item->product_id)->first();
+                        $qtyToRestore = $dnItem ? $dnItem->quantity_delivered : 0;
+                    }
 
-                                \App\Models\StockMovement::create([
-                                    'product_id' => $childProd->id,
-                                    'user_id'    => $userId ?? null,
-                                    'type'       => 'in',
-                                    'quantity'   => $qtyRestored,
-                                    'notes'      => "Reversión (Combo Hijo) Venta #{$sale->id}",
-                                ]);
+                    if ($qtyToRestore > 0) {
+                        if ($item->product->is_combo) {
+                            $combos = DB::table('product_combos')->where('parent_product_id', $item->product_id)->get();
+                            foreach ($combos as $combo) {
+                                $childProd = \App\Models\Product::find($combo->child_product_id);
+                                if ($childProd) {
+                                    $qtyRestored = $qtyToRestore * $combo->quantity;
+                                    $childProd->increment('stock', $qtyRestored);
+
+                                    \App\Models\StockMovement::create([
+                                        'product_id' => $childProd->id,
+                                        'user_id'    => $userId ?? null,
+                                        'type'       => 'in',
+                                        'quantity'   => $qtyRestored,
+                                        'notes'      => "Reversión (Combo Hijo) Venta #{$sale->id}",
+                                    ]);
+                                }
                             }
-                        }
-                        // Disminuir contador de ventas del Combo Padre
-                        $newCount = max(0, $item->product->sales_count - (int) $item->quantity);
-                        $item->product->update(['sales_count' => $newCount]);
-                    } else {
-                        $item->product->increment('stock', $item->quantity);
-                        // Disminuir contador de ventas
-                        $newCount = max(0, $item->product->sales_count - (int) $item->quantity);
-                        $item->product->update(['sales_count' => $newCount]);
+                        } else {
+                            $item->product->increment('stock', $qtyToRestore);
 
-                        \App\Models\StockMovement::create([
-                            'product_id' => $item->product_id,
-                            'user_id'    => $userId ?? null,
-                            'type'       => 'in',
-                            'quantity'   => $item->quantity,
-                            'notes'      => "Reversión por anulación de Venta #{$sale->id}",
+                            \App\Models\StockMovement::create([
+                                'product_id' => $item->product_id,
+                                'user_id'    => $userId ?? null,
+                                'type'       => 'in',
+                                'quantity'   => $qtyToRestore,
+                                'notes'      => "Reversión por anulación de Venta #{$sale->id}",
+                            ]);
+                        }
+                    }
+
+                    // Disminuir contador de ventas (siempre se revierte la cantidad vendida total)
+                    $newCount = max(0, $item->product->sales_count - (int) $item->quantity);
+                    $item->product->update(['sales_count' => $newCount]);
+                }
+            }
+
+            // Cancelar el remito si existe
+            if ($deliveryNote) {
+                $deliveryNote->update(['status' => 'cancelled']);
+            }
+
+            // Revertir transacciones de Cuenta Corriente si existen
+            $customerTransactions = \App\Models\CustomerTransaction::where('sale_id', $sale->id)->get();
+            foreach ($customerTransactions as $tx) {
+                if ($tx->type === 'charge') {
+                    $customer = \App\Models\Customer::lockForUpdate()->find($tx->customer_id);
+                    if ($customer) {
+                        $customer->balance -= $tx->amount;
+                        $customer->save();
+
+                        \App\Models\CustomerTransaction::create([
+                            'customer_id'   => $customer->id,
+                            'user_id'       => $userId ?? 1,
+                            'sale_id'       => $sale->id,
+                            'type'          => 'payment', // payment cancels out the charge
+                            'amount'        => $tx->amount,
+                            'balance_after' => $customer->balance,
+                            'description'   => "Reversión por anulación de Venta #{$sale->id}",
                         ]);
                     }
                 }

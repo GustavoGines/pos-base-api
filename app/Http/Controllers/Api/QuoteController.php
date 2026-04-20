@@ -70,6 +70,8 @@ class QuoteController extends Controller
                 'notes'          => 'nullable|string|max:1000',
                 'valid_until'    => 'nullable|date|after_or_equal:today',
                 'user_id'        => 'nullable|exists:users,id',
+                // Lista de precios aplicada (base | wholesale | card | custom label)
+                'price_list'     => 'nullable|string|max:100',
                 'items'          => 'required|array|min:1',
                 'items.*.product_id'   => 'nullable|integer',
                 'items.*.product_name' => 'required|string|max:255',
@@ -101,6 +103,7 @@ class QuoteController extends Controller
                 'notes'          => $validated['notes'] ?? null,
                 'valid_until'    => $validated['valid_until'] ?? null,
                 'user_id'        => $validated['user_id'] ?? null,
+                'price_list'     => $validated['price_list'] ?? 'base',
             ]);
 
             foreach ($validated['items'] as $item) {

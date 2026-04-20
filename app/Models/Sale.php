@@ -14,13 +14,14 @@ class Sale extends Model
     protected $fillable = [
         'total', 'total_surcharge', 'payment_status', 'amount_due',
         'status', 'cash_shift_id', 'tendered_amount', 'change_amount',
-        'user_id', 'cashier_id', 'customer_id',
+        'user_id', 'cashier_id', 'customer_id', 'shipping_cost',
     ];
 
     protected $casts = [
         'total'           => 'decimal:2',
         'total_surcharge' => 'decimal:2',
         'amount_due'      => 'decimal:2',
+        'shipping_cost'   => 'decimal:2',
     ];
 
     public function isVoided(): bool

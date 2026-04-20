@@ -18,6 +18,7 @@ class Customer extends Model
         'credit_limit',
         'balance',
         'is_active',
+        'default_price_tier',
     ];
 
     protected $casts = [
