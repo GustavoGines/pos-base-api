@@ -8,11 +8,29 @@ use Illuminate\Http\Request;
 
 class DeliveryNoteController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $notes = DeliveryNote::with(['sale.customer', 'items.product'])
-            ->whereIn('status', ['pending', 'partial'])
-            ->get();
+        $query = DeliveryNote::with(['sale.customer', 'items.product']);
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        } else {
+            $query->whereIn('status', ['pending', 'partial']);
+        }
+
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                // Buscar por ID de remito
+                $q->where('id', 'like', "%{$search}%")
+                  // O buscar por cliente asociado a la venta
+                  ->orWhereHas('sale.customer', function($qCust) use ($search) {
+                      $qCust->where('name', 'like', "%{$search}%");
+                  });
+            });
+        }
+
+        $notes = $query->orderBy('id', 'desc')->paginate($request->input('per_page', 50));
             
         return response()->json($notes);
     }
