@@ -31,9 +31,12 @@ class SettingController extends Controller
         $data = $request->all();
 
         foreach ($data as $key => $value) {
+            // Si el valor es un array u objeto (ej: custom_price_tiers), serializar a JSON string
+            $storedValue = is_array($value) ? json_encode($value) : $value;
+            
             BusinessSetting::updateOrCreate(
                 ['key' => $key],
-                ['value' => $value]
+                ['value' => $storedValue]
             );
         }
 

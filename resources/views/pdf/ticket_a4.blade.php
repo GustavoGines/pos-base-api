@@ -109,16 +109,17 @@
             text-align: center;
         }
         .watermark {
-            position: absolute;
-            top: 40%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            font-size: 70px;
-            color: rgba(0, 0, 0, 0.05);
-            font-weight: bold;
-            z-index: -1;
+            position: fixed;
+            top: 35%;
+            left: -10%;
+            width: 120%;
             text-align: center;
-            line-height: 1.2;
+            font-size: 85px;
+            color: #e8e8e8;
+            font-weight: bold;
+            z-index: -999;
+            transform: rotate(-35deg);
+            line-height: 1.1;
         }
     </style>
 </head>
@@ -244,15 +245,23 @@
                 <td style="width: 50%; vertical-align: bottom;">
                     <div class="footer-totals" style="margin-top: 0;">
                         <table>
-                            @if($sale->total_surcharge > 0)
+                            @if($sale->total_surcharge > 0 || $sale->shipping_cost > 0)
                             <tr>
                                 <td>Subtotal:</td>
-                                <td class="text-right">${{ number_format($sale->total, 2, ',', '.') }}</td>
+                                <td class="text-right">${{ number_format($sale->total - $sale->shipping_cost, 2, ',', '.') }}</td>
                             </tr>
+                            @if($sale->shipping_cost > 0)
+                            <tr>
+                                <td>Flete / Envío:</td>
+                                <td class="text-right">${{ number_format($sale->shipping_cost, 2, ',', '.') }}</td>
+                            </tr>
+                            @endif
+                            @if($sale->total_surcharge > 0)
                             <tr>
                                 <td>Recargos/Intereses:</td>
                                 <td class="text-right">${{ number_format($sale->total_surcharge, 2, ',', '.') }}</td>
                             </tr>
+                            @endif
                             @endif
                             <tr class="total-row">
                                 <td style="padding-top: 15px;">TOTAL:</td>

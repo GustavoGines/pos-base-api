@@ -12,7 +12,7 @@ class Quote extends Model
     protected $fillable = [
         'quote_number', 'status', 'subtotal', 'total',
         'notes', 'customer_name', 'customer_phone',
-        'valid_until', 'user_id',
+        'valid_until', 'user_id', 'price_list',
     ];
 
     protected $casts = [
