@@ -249,7 +249,7 @@ class PosController extends Controller
 
             return response()->json([
                 'message' => 'Sale processed successfully',
-                'sale'    => $sale->load('items', 'payments.paymentMethod', 'deliveryNote', 'deliveryNote.items'),
+                'sale'    => $sale->load('items', 'payments.paymentMethod', 'deliveryNote', 'deliveryNote.items', 'deliveryNote.items.product'),
             ], 201);
         });
     }

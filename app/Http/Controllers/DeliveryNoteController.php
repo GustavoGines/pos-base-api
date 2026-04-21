@@ -74,8 +74,7 @@ class DeliveryNoteController extends Controller
 
         $note = DeliveryNote::with('items')->findOrFail($id);
 
-        $allDelivered = true;
-        
+
         foreach ($request->items as $itemRequest) {
             $item = $note->items->where('id', $itemRequest['id'])->first();
             if ($item) {
@@ -126,9 +125,17 @@ class DeliveryNoteController extends Controller
                     }
                 }
 
-                if ($newDelivered < $item->quantity_purchased) {
-                    $allDelivered = false;
-                }
+            }
+        }
+
+        // Re-evaluar el estado iterando sobre TODOS los ítems del remito, no solo los enviados en el request
+        $allDelivered = true;
+        // Recargar los ítems para asegurar que tenemos los valores actualizados
+        $note->load('items');
+        foreach ($note->items as $item) {
+            if ($item->quantity_delivered < $item->quantity_purchased) {
+                $allDelivered = false;
+                break;
             }
         }
 
