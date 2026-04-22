@@ -28,6 +28,41 @@ class SettingController extends Controller
      */
     public function update(Request $request)
     {
+        // Validación explícita para los campos de porcentaje del motor global de precios.
+        // El resto de claves son libres (arquitectura genérica key-value).
+        $request->validate([
+            'card_percentage'       => 'sometimes|numeric|between:-100,100',
+            'wholesale_percentage'  => 'sometimes|numeric|between:-100,100',
+        ]);
+
+        // ── Guard SaaS: enable_advanced_price_tiers ───────────────────────────────
+        // Si el payload intenta activar el toggle de Multi-Listas, verificamos que
+        // la licencia del tenant incluya el feature 'multiple_prices'.
+        // Usamos la misma fuente que CheckFeatureAccess para ser consistentes.
+        if ($request->has('enable_advanced_price_tiers')) {
+            $requestedValue = $request->input('enable_advanced_price_tiers');
+            $wantsToEnable  = $requestedValue === '1' || $requestedValue === true || $requestedValue === 1;
+
+            if ($wantsToEnable) {
+                $featuresJson = BusinessSetting::where('key', 'license_features_dict')->value('value');
+                $features     = [];
+                if (!empty($featuresJson)) {
+                    $decoded = json_decode($featuresJson, true);
+                    if (is_array($decoded)) {
+                        $features = $decoded;
+                    }
+                }
+
+                if (empty($features['multiple_prices']) || $features['multiple_prices'] !== true) {
+                    return response()->json([
+                        'message'    => 'El plan de licencia activo no incluye el módulo "Múltiples Listas de Precios" (multiple_prices). Actualice su plan para activar esta función.',
+                        'error_code' => 'FEATURE_NOT_LICENSED',
+                        'required'   => 'multiple_prices',
+                    ], 403);
+                }
+            }
+        }
+
         $data = $request->all();
 
         foreach ($data as $key => $value) {

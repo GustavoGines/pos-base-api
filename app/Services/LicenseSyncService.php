@@ -131,6 +131,11 @@ class LicenseSyncService
      */
     private function handleOfflineGracePeriod()
     {
+        // Las licencias Lifetime nunca se bloquean por falta de conectividad.
+        // Espeja la misma lógica del Flutter (_checkOfflineGrace): si es lifetime, salir.
+        $planMode = $this->getSetting('license_plan_mode', 'saas');
+        if ($planMode === 'lifetime') return;
+
         $lastCheck = $this->getSetting('last_license_check');
         
         if (!$lastCheck) {
@@ -142,7 +147,7 @@ class LicenseSyncService
         $hoursSinceLastCheck = $lastCheckDate->diffInHours(now());
 
         if ($hoursSinceLastCheck > 72) {
-            // Grace period vencido
+            // Grace period vencido — solo aplica a planes SaaS
             $this->setSetting('app_plan', 'blocked');
         } else {
             // Todavía en Grace Period. Mantiene el plan actual silenciosamente.
