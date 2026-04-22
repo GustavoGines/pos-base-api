@@ -32,9 +32,9 @@ Route::prefix('auth')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
 });
 
-// Configuración y licencia (lectura/escritura pública — acceso solo por LAN)
+// Lectura de configuración pública — necesaria en el arranque de la app ANTES del login
 Route::get('/settings', [SettingController::class, 'index']);
-Route::put('/settings', [SettingController::class, 'update']);
+// Escritura de licencia pública — se necesita sin sesión para activar/sincronizar licencias
 Route::post('/settings/license', [SettingController::class, 'updateLicense']);
 Route::post('/settings/license/sync', [SettingController::class, 'syncLicense']);
 
@@ -67,6 +67,10 @@ Route::apiResource('payment-methods', \App\Http\Controllers\Api\PaymentMethodCon
 // ══════════════════════════════════════════════════════════════════════════════
 
 Route::middleware(['session.validate'])->group(function () {
+
+    // ── Configuración del negocio (ESCRITURA PROTEGIDA) ───────────────
+    // Requiere sesión activa. La validación de features SaaS se hace dentro del controller.
+    Route::put('/settings', [SettingController::class, 'update']);
 
     // ── POS: Procesar venta (CRÍTICO) ────────────────────────────────
     Route::post('/pos/sales', [PosController::class, 'processSale']);
