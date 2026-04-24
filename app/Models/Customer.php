@@ -19,6 +19,7 @@ class Customer extends Model
         'balance',
         'is_active',
         'default_price_tier',
+        'delivery_address',
     ];
 
     protected $casts = [

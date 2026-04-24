@@ -14,7 +14,7 @@ class Sale extends Model
     protected $fillable = [
         'total', 'total_surcharge', 'payment_status', 'amount_due',
         'status', 'cash_shift_id', 'tendered_amount', 'change_amount',
-        'user_id', 'cashier_id', 'customer_id', 'shipping_cost',
+        'user_id', 'cashier_id', 'customer_id', 'shipping_cost', 'delivery_address',
     ];
 
     protected $casts = [

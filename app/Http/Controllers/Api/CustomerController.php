@@ -47,6 +47,7 @@ class CustomerController extends Controller
             'credit_limit'    => 'nullable|numeric|min:0',
             'balance'         => 'nullable|numeric',
             'default_price_tier' => 'nullable|string|in:base,wholesale,card',
+            'delivery_address' => 'nullable|string|max:500',
         ], [
             'name.required'            => 'El nombre del cliente es obligatorio.',
             'document_number.required' => 'El número de documento es obligatorio.',
@@ -92,6 +93,7 @@ class CustomerController extends Controller
             'credit_limit'    => 'nullable|numeric|min:0',
             'is_active'       => 'sometimes|boolean',
             'default_price_tier' => 'nullable|string|in:base,wholesale,card',
+            'delivery_address' => 'nullable|string|max:500',
         ], [
             'name.required'            => 'El nombre del cliente es obligatorio.',
             'document_number.required' => 'El número de documento es obligatorio.',

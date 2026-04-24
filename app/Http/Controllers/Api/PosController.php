@@ -62,6 +62,7 @@ class PosController extends Controller
             ],
             'user_id'                => 'nullable|integer|exists:users,id',
             'customer_id'            => 'nullable|integer|exists:customers,id',
+            'delivery_address'       => 'nullable|string|max:500',
             'status'                 => 'nullable|string|in:pending,completed',
             'items'                  => 'required|array|min:1',
             'items.*.product_id'     => 'required|integer|exists:products,id',
@@ -111,6 +112,7 @@ class PosController extends Controller
                 'cash_shift_id'          => $validated['cash_shift_id'],
                 'user_id'                => $validated['user_id'] ?? null,
                 'customer_id'            => $validated['customer_id'] ?? null,
+                'delivery_address'       => $validated['delivery_address'] ?? null,
                 'status'                 => $validated['status'] ?? 'completed',
                 'shipping_cost'          => $validated['shipping_cost'] ?? 0,
             ]);

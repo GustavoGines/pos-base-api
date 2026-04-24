@@ -18,9 +18,9 @@ class ProductController extends Controller
         if ($search = $request->query('search')) {
             $like = '%' . $search . '%';
             $query->where(function ($q) use ($like, $search) {
-                $q->where('name', 'like', $like)
-                  ->orWhere('barcode', 'like', $like)
-                  ->orWhere('internal_code', 'like', $like);
+                $q->where('products.name', 'like', $like)
+                  ->orWhere('products.barcode', 'like', $like)
+                  ->orWhere('products.internal_code', 'like', $like);
             });
         }
 
@@ -38,13 +38,14 @@ class ProductController extends Controller
                       ->orderBy('brands.name', $sortDir)
                       ->select('products.*');
             } else {
-                $query->orderBy($sortBy, $sortDir);
+                $column = $sortBy === 'name' ? 'products.name' : $sortBy;
+                $query->orderBy($column, $sortDir);
             }
         } else {
             // Default sorting when no specific sort is requested
-            $query->orderBy('sales_count', 'desc')
-                  ->orderBy('is_sold_by_weight', 'desc')
-                  ->orderBy('name', 'asc');
+            $query->orderBy('products.sales_count', 'desc')
+                  ->orderBy('products.is_sold_by_weight', 'desc')
+                  ->orderBy('products.name', 'asc');
         }
 
         $perPage = min((int) $request->query('per_page', 100), 500); // Cap de seguridad: máx 500
