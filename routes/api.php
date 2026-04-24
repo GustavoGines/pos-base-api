@@ -40,8 +40,9 @@ Route::post('/settings/license/sync', [SettingController::class, 'syncLicense'])
 
 // Verificación de turno activo (necesaria antes del login para decidir ruta inicial)
 Route::prefix('shifts')->group(function () {
+    // /current sigue siendo pública: necesaria antes del login para decidir la ruta inicial.
     Route::get('/current', [CashShiftController::class, 'current']);
-    Route::get('/', [CashShiftController::class, 'index']);
+    // /index (historial completo) se mueve al grupo protegido (ver más abajo).
 });
 
 // Lista de cajas disponibles (necesaria en CashRegisterScreen antes de login)
@@ -52,13 +53,16 @@ Route::get('/pos/products/search', [PosController::class, 'searchProducts']);
 
 // Lectura de catálogo, clientes e historial (pantallas de solo lectura)
 Route::get('/catalog/products/alerts/critical', [ProductController::class, 'criticalAlerts']);
+Route::get('/catalog/products/stock', [ProductController::class, 'stockBulk']);
 Route::apiResource('catalog/products', ProductController::class)->only(['index', 'show']);
 Route::get('/catalog/categories', [CategoryController::class, 'index']);
 Route::get('/catalog/brands', [BrandController::class, 'index']);
 Route::apiResource('customers', CustomerController::class)->only(['index', 'show']);
 Route::get('/sales', [SalesController::class, 'index']);
 Route::get('/sales/pending', [SalesController::class, 'pending']);
-Route::apiResource('users', \App\Http\Controllers\Api\UserController::class)->only(['index']);
+// FIX A-2: GET /users era pública y exponía nombres y roles sin sesión.
+// Ahora la lista de usuarios solo se puede obtener con un token válido.
+// La ruta de lectura se consolida dentro del grupo session.validate (ver más abajo).
 Route::apiResource('payment-methods', \App\Http\Controllers\Api\PaymentMethodController::class)->only(['index']);
 
 
@@ -69,8 +73,9 @@ Route::apiResource('payment-methods', \App\Http\Controllers\Api\PaymentMethodCon
 Route::middleware(['session.validate'])->group(function () {
 
     // ── Configuración del negocio (ESCRITURA PROTEGIDA) ───────────────
-    // Requiere sesión activa. La validación de features SaaS se hace dentro del controller.
-    Route::put('/settings', [SettingController::class, 'update']);
+    Route::middleware(['role.admin'])->group(function () {
+        Route::put('/settings', [SettingController::class, 'update']);
+    });
 
     // ── POS: Procesar venta (CRÍTICO) ────────────────────────────────
     Route::post('/pos/sales', [PosController::class, 'processSale']);
@@ -107,18 +112,24 @@ Route::middleware(['session.validate'])->group(function () {
     Route::apiResource('catalog/brands', BrandController::class)->except(['index']);
 
     // ── Cajas (escritura: crear/editar/borrar) ───────────────────────
-    Route::middleware(['feature:multi_caja'])->group(function () {
+    Route::middleware(['feature:multi_caja', 'role.admin'])->group(function () {
         Route::post('/registers', [CashRegisterController::class, 'store']);
         Route::put('/registers/{id}', [CashRegisterController::class, 'update']);
         Route::delete('/registers/{id}', [CashRegisterController::class, 'destroy']);
     });
 
-    // ── Usuarios: escritura (agregar, editar, borrar empleados) ──────
-    Route::apiResource('users', \App\Http\Controllers\Api\UserController::class)->except(['index']);
+    // FIX A-2: Usuarios — lectura Y escritura ahora protegidas por sesión activa.
+    Route::middleware(['role.admin'])->group(function () {
+        Route::apiResource('users', \App\Http\Controllers\Api\UserController::class);
+    });
+
+    // FIX S-1: Historial de turnos protegido — no puede ser consultado sin sesión activa.
+    // Solo /shifts/current sigue siendo pública (necesaria pre-login).
+    Route::get('/shifts', [CashShiftController::class, 'index']);
 
     // ── Métodos de pago y papelera (admin) ───────────────────────────
     Route::apiResource('payment-methods', \App\Http\Controllers\Api\PaymentMethodController::class)->except(['index']);
-    Route::prefix('trash')->group(function () {
+    Route::middleware(['role.admin'])->prefix('trash')->group(function () {
         Route::get('/{model}', [TrashController::class, 'index']);
         Route::post('/{model}/{id}/restore', [TrashController::class, 'restore']);
         Route::delete('/{model}/{id}/force', [TrashController::class, 'forceDelete']);
@@ -133,11 +144,14 @@ Route::middleware(['session.validate'])->group(function () {
         Route::patch('/{quote}/status', [QuoteController::class, 'updateStatus']);
     });
 
-    // ── Módulo de Reportes Gerenciales ────────────────────────────────
-    Route::get('/reports/profit-by-category/export', [\App\Http\Controllers\Api\ReportController::class, 'exportProfitByCategory']);
-    Route::get('/reports/profit-by-category/pdf',    [\App\Http\Controllers\Api\ReportController::class, 'exportPdfByCategory']);
-    Route::get('/reports/profit-by-category',        [\App\Http\Controllers\Api\ReportController::class, 'profitByCategory']);
-    Route::get('/reports/monthly-balance',           [\App\Http\Controllers\Api\ReportController::class, 'monthlyBalance']);
+    // ── Módulo de Reportes Gerenciales (ADMIN) ───────────────────────
+    Route::middleware(['role.admin'])->group(function () {
+        Route::get('/reports/sales-by-category/export', [\App\Http\Controllers\Api\ReportController::class, 'exportProfitByCategory']);
+        Route::get('/reports/sales-by-category/pdf',    [\App\Http\Controllers\Api\ReportController::class, 'exportPdfByCategory']);
+        Route::get('/reports/sales-by-category',        [\App\Http\Controllers\Api\ReportController::class, 'profitByCategory']);
+        Route::get('/reports/sales-by-brand',            [\App\Http\Controllers\Api\ReportController::class, 'profitByBrand']);
+        Route::get('/reports/monthly-balance',           [\App\Http\Controllers\Api\ReportController::class, 'monthlyBalance']);
+    });
 
     // ── Módulo de Inteligencia de Inventario ──────────────────────────
     Route::get('/inventory/alerts',                  [\App\Http\Controllers\Api\ProductController::class, 'inventoryAlerts']);

@@ -110,6 +110,12 @@ class CustomerController extends Controller
      */
     public function destroy(Customer $customer)
     {
+        if ($customer->balance > 0) {
+            return response()->json([
+                'message' => 'No se puede eliminar un cliente con saldo pendiente (deudor).'
+            ], 403);
+        }
+
         $customer->delete();
         return response()->json(null, 204);
     }
@@ -213,7 +219,7 @@ class CustomerController extends Controller
                 // ── Crear registro inmutable en el Ledger ────────────────────
                 $trx = CustomerTransaction::create([
                     'customer_id'            => $lockedCustomer->id,
-                    'user_id'                => auth()->id() ?? 1,
+                    'user_id'                => $request->attributes->get('authenticated_user')?->id ?? 1,
                     'cash_shift_id'          => $activeShift ? $activeShift->id : null,
                     'sale_id'                => count($processedSales) === 1 ? $processedSales[0] : null,
                     'type'                   => 'payment',

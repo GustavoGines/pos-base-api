@@ -250,7 +250,7 @@ class SalesController extends Controller
             return response()->json(['message' => 'Esta venta ya está anulada.'], 422);
         }
 
-        $userId = $request->input('user_id');
+        $userId = $request->input('user_id') ?? $request->attributes->get('authenticated_user')?->id;
 
         DB::transaction(function () use ($sale, $userId) {
             // Buscar si hay remito

@@ -26,7 +26,7 @@ class StockController extends Controller
             'user_id'   => 'nullable|exists:users,id',
         ]);
 
-        DB::transaction(function () use ($validated, $product) {
+        DB::transaction(function () use ($validated, $product, $request) {
             // Solo registramos movimiento si la cantidad es realmente mayor a cero
             if ($validated['quantity'] > 0) {
                 // Mapeo de tipos para consistencia (in/increment -> in, out/decrement -> out)
@@ -45,7 +45,7 @@ class StockController extends Controller
                 // Registrar el movimiento solo si hubo cambio físico de stock
                 StockMovement::create([
                     'product_id' => $product->id,
-                    'user_id'    => $validated['user_id'] ?? auth()->id(),
+                    'user_id'    => $validated['user_id'] ?? $request->attributes->get('authenticated_user')?->id,
                     'type'       => $type,
                     'quantity'   => $validated['quantity'],
                     'notes'      => $validated['notes'] ?? 'Ajuste manual desde panel de control',

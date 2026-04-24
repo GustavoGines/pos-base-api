@@ -124,9 +124,11 @@ class UserController extends Controller
      */
     public function destroy(Request $request, User $user)
     {
-        // No puede borrarse a sí mismo
-        // (En un sistema real usaríamos el token; aquí recibimos el id del usuario activo)
-        if ($request->input('current_user_id') && (int)$request->input('current_user_id') === $user->id) {
+        // FIX U-3: El current_user_id venía del body del request y era bypasseable.
+        // Ahora usamos el token del header para identificar fehacientemente al actor.
+        $actingUser = User::where('session_token', $request->header('X-Session-Token'))->first();
+
+        if ($actingUser && $actingUser->id === $user->id) {
             return response()->json(['message' => 'No puedes eliminar tu propio perfil.'], 422);
         }
 
