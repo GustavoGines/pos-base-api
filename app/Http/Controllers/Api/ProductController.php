@@ -26,13 +26,20 @@ class ProductController extends Controller
 
         $allowedSorts = [
             'id', 'name', 'selling_price', 'cost_price', 'stock',
-            'barcode', 'internal_code', 'category_id', 'is_sold_by_weight', 'active', 'sales_count', 'vencimiento_dias'
+            'barcode', 'internal_code', 'category_id', 'brand_id', 'is_sold_by_weight', 'active', 'sales_count', 'vencimiento_dias'
         ];
         $sortBy = $request->query('sort_by');
         $sortDir = $request->query('sort_direction') === 'desc' ? 'desc' : 'asc';
 
         if ($sortBy && in_array($sortBy, $allowedSorts)) {
-            $query->orderBy($sortBy, $sortDir);
+            // Ordenar por nombre de marca (no por ID numérico) para que sea intuitivo
+            if ($sortBy === 'brand_id') {
+                $query->leftJoin('brands', 'brands.id', '=', 'products.brand_id')
+                      ->orderBy('brands.name', $sortDir)
+                      ->select('products.*');
+            } else {
+                $query->orderBy($sortBy, $sortDir);
+            }
         } else {
             // Default sorting when no specific sort is requested
             $query->orderBy('sales_count', 'desc')
