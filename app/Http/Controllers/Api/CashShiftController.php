@@ -69,8 +69,8 @@ class CashShiftController extends Controller
             'closer_user_id'   => 'nullable|exists:users,id',
         ]);
 
-        // Prioridad: auth()->id() si hay sesión, sino viene del body (PIN auth sin tokens)
-        $closerUserId = auth()->id() ?? $validated['closer_user_id'] ?? null;
+        // Prioridad: authenticated_user si hay sesión, sino viene del body (PIN auth sin tokens)
+        $closerUserId = $request->attributes->get('authenticated_user')?->id ?? $validated['closer_user_id'] ?? null;
 
         try {
             $shift = $this->cashShiftService->closeShift(

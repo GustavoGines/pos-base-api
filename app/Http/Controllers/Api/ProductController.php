@@ -150,7 +150,7 @@ class ProductController extends Controller
                 'type' => $validated['type'],
                 'quantity' => $validated['quantity'],
                 'notes' => $validated['notes'] ?? 'Ajuste manual desde catálogo',
-                'user_id' => auth()->id(), // Asumiendo que hay un usuario autenticado
+                'user_id' => $request->attributes->get('authenticated_user')?->id ?? 1, // Asumiendo que hay un usuario autenticado
             ]);
         }
 
@@ -249,6 +249,32 @@ class ProductController extends Controller
     }
 
     /**
+     * Retorna el stock actualizado ÚNICAMENTE de los productos indicados.
+     * Endpoint ultra-liviano para la actualización post-venta del POS.
+     * GET /api/catalog/products/stock?ids=1,5,9
+     */
+    public function stockBulk(Request $request)
+    {
+        $ids = array_filter(
+            array_map('intval', explode(',', $request->query('ids', ''))),
+            fn($id) => $id > 0
+        );
+
+        if (empty($ids)) {
+            return response()->json([]);
+        }
+
+        // Cap de seguridad: máximo 200 IDs por llamada
+        $ids = array_slice($ids, 0, 200);
+
+        $stocks = Product::whereIn('id', $ids)
+            ->select('id', 'stock')
+            ->get();
+
+        return response()->json($stocks);
+    }
+
+    /**
      * Motor de Predicción de Quiebre de Stock (Velocidad de Venta).
      *
      * Algoritmo:
@@ -334,6 +360,7 @@ class ProductController extends Controller
     /**
      * Genera un PLU numérico de 5 dígitos secuencial.
      */
+
     private function generateUniqueInternalCode(): string
     {
         // Obtener el último código interno numérico (incluso si fue borrado)

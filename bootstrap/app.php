@@ -16,6 +16,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'addon'            => \App\Http\Middleware\CheckAddonPermission::class,
             'feature'          => \App\Http\Middleware\CheckFeatureAccess::class,   // [feature-flags] Seguridad modular
             'session.validate' => \App\Http\Middleware\ValidateSessionToken::class, // [single-session] Sesión única por usuario
+            'role.admin'       => \App\Http\Middleware\EnsureUserIsAdmin::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
