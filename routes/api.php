@@ -91,6 +91,12 @@ Route::middleware(['session.validate'])->group(function () {
     Route::post('/customers/{customer}/payments', [CustomerController::class, 'registerPayment']);
     Route::get('/customers/{customer}/pending-sales', [CustomerController::class, 'getPendingSales']);
 
+    // ── Módulo Cartera de Cheques ────────────────────────────────────
+    Route::middleware(['feature:checks'])->group(function () {
+        Route::get('/third-party-checks', [\App\Http\Controllers\Api\ThirdPartyCheckController::class, 'index']);
+        Route::patch('/third-party-checks/{check}/status', [\App\Http\Controllers\Api\ThirdPartyCheckController::class, 'updateStatus']);
+    });
+
     // ── Catálogo: escritura (crear, editar, borrar productos) ────────
     Route::apiResource('catalog/products', ProductController::class)->except(['index', 'show']);
     Route::post('/catalog/products/bulk-delete', [CatalogController::class, 'bulkDelete']);

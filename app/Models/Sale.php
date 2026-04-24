@@ -63,4 +63,13 @@ class Sale extends Model
     {
         return $this->hasOne(DeliveryNote::class);
     }
+
+    /**
+     * Cheques de terceros recibidos en esta venta.
+     * IMPORTANTE: No agregar a ningún with([]) de listado global.
+     */
+    public function checks(): HasMany
+    {
+        return $this->hasMany(ThirdPartyCheck::class);
+    }
 }

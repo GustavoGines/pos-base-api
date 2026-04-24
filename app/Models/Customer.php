@@ -42,4 +42,13 @@ class Customer extends Model
     {
         return $this->hasMany(Sale::class);
     }
+
+    /**
+     * Cheques de terceros aportados por este cliente.
+     * IMPORTANTE: No agregar a ningún with([]) de listado global.
+     */
+    public function checks(): HasMany
+    {
+        return $this->hasMany(ThirdPartyCheck::class);
+    }
 }
