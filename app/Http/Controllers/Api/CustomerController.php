@@ -139,10 +139,11 @@ class CustomerController extends Controller
     {
         $request->validate([
             'amount'         => 'required|numeric|gt:0',
-            'payment_method' => 'required|string|in:cash,card,transfer',
+            'payment_method' => 'required|string|in:cash,card,transfer,cheque',
             'description'    => 'nullable|string|max:255',
             'sale_ids'       => 'nullable|array',
             'sale_ids.*'     => 'integer|exists:sales,id',
+            'check_details'  => 'nullable|array|required_if:payment_method,cheque',
         ]);
 
         $amount = (float) $request->amount;
@@ -219,6 +220,23 @@ class CustomerController extends Controller
                     'balance_after'          => $lockedCustomer->balance,
                     'description'            => $description,
                 ]);
+
+                // ── Crear cheque si aplica ───────────────────────────────────
+                if ($paymentMethod === 'cheque' && $request->filled('check_details')) {
+                    \App\Models\ThirdPartyCheck::create([
+                        'cash_shift_id'   => $activeShift ? $activeShift->id : null,
+                        'customer_id'     => $lockedCustomer->id,
+                        'sale_id'         => count($processedSales) === 1 ? $processedSales[0] : null,
+                        'bank_name'       => $request->check_details['bank_name'],
+                        'check_number'    => $request->check_details['check_number'],
+                        'issuer_cuit'     => $request->check_details['issuer_cuit'],
+                        'issuer_name'     => $request->check_details['issuer_name'],
+                        'issue_date'      => $request->check_details['issue_date'],
+                        'payment_date'    => $request->check_details['payment_date'],
+                        'amount'          => $amount,
+                        'status'          => 'in_wallet',
+                    ]);
+                }
 
                 return $trx;
             });

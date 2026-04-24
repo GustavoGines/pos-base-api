@@ -11,6 +11,7 @@ use App\Models\Product;
 use App\Models\Sale;
 use App\Models\StockMovement;
 use App\Models\Quote;
+use App\Models\ThirdPartyCheck;
 use Illuminate\Support\Facades\DB;
 
 class PosController extends Controller
@@ -116,12 +117,35 @@ class PosController extends Controller
 
             if (!$isPendingSale) {
                 foreach ($validated['payments'] as $payment) {
+                    $paymentMethod = \App\Models\PaymentMethod::find($payment['payment_method_id']);
+
+                    // ── 1. Registro genérico SalePayment (siempre) ──
                     $sale->payments()->create([
                         'payment_method_id' => $payment['payment_method_id'],
                         'base_amount'       => $payment['base_amount'],
                         'surcharge_amount'  => $payment['surcharge_amount'],
                         'total_amount'      => $payment['total_amount'],
                     ]);
+
+                    // ── 2. Bridge de Cheque (solo si el método es 'cheque' Y vienen datos del cartón) ──
+                    // SEGURIDAD: Dos condiciones simultáneas. Un pago en efectivo nunca las satisface.
+                    if ($paymentMethod && $paymentMethod->code === 'cheque' && $request->has('check_details')) {
+                        $cd = $request->input('check_details');
+                        ThirdPartyCheck::create([
+                            'bank_name'    => $cd['bank_name'],
+                            'check_number' => $cd['check_number'],
+                            'amount'       => $payment['total_amount'], // importe ya calculado con recargo
+                            'issue_date'   => $cd['issue_date'],
+                            'payment_date' => $cd['payment_date'],
+                            'issuer_name'  => $cd['issuer_name'],
+                            'issuer_cuit'  => $cd['issuer_cuit'],
+                            'customer_id'  => $sale->customer_id,
+                            'sale_id'      => $sale->id,
+                            'cash_shift_id'=> $validated['cash_shift_id'],
+                            'supplier_id'  => null,
+                            'status'       => 'in_wallet',
+                        ]);
+                    }
                 }
             }
 

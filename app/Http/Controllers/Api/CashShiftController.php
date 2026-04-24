@@ -84,6 +84,7 @@ class CashShiftController extends Controller
                 'shift'   => $shift->load('user', 'cashRegister', 'closedByUser'),
             ]);
         } catch (Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error closing shift: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
             $status = $e->getCode() === 403 ? 403 : 500;
             return response()->json(['message' => $e->getMessage()], $status);
         }

@@ -163,6 +163,13 @@ class CashShiftService
                 ->where('status', 'completed')
                 ->sum('total_surcharge');
 
+            // Cheques recibidos en el turno
+            $checkSales = \App\Models\ThirdPartyCheck::where('cash_shift_id', $shiftId)->sum('amount');
+            $checkCount = \App\Models\ThirdPartyCheck::where('cash_shift_id', $shiftId)->count();
+            $checkDetails = \App\Models\ThirdPartyCheck::where('cash_shift_id', $shiftId)
+                ->get(['id', 'bank_name', 'check_number', 'amount', 'payment_date', 'issuer_name'])
+                ->toArray();
+
             // El efectivo físico esperado en la gaveta = Fondo Inicial + SOLO pagos en métodos is_cash
             $expectedBalance = $shift->opening_balance + $cashSales;
             
@@ -178,6 +185,9 @@ class CashShiftService
                 'card_sales'        => $cardSales,
                 'transfer_sales'    => $transferSales,
                 'total_surcharge'   => $totalSurcharge,
+                'check_sales'       => $checkSales,
+                'check_count'       => $checkCount,
+                'check_details'     => json_encode($checkDetails),
                 'status'            => 'closed',
                 'closed_by_user_id' => $closerUserId,
             ]);

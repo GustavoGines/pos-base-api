@@ -25,6 +25,9 @@ class CashShift extends Model
         'card_sales',
         'transfer_sales',
         'total_surcharge',
+        'check_sales',
+        'check_count',
+        'check_details',
         'status',
     ];
 
