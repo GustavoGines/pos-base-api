@@ -103,11 +103,14 @@ Route::middleware(['session.validate'])->group(function () {
     });
 
     // ── Catálogo: escritura (crear, editar, borrar productos) ────────
-    Route::apiResource('catalog/products', ProductController::class)->except(['index', 'show']);
     Route::post('/catalog/products/bulk-delete', [CatalogController::class, 'bulkDelete']);
     Route::put('/catalog/products/bulk-update', [CatalogController::class, 'bulkUpdate']);
+    Route::get('/catalog/bulk-price-history', [CatalogController::class, 'bulkPriceHistory']);
+    Route::post('/catalog/bulk-price-history/{id}/revert', [CatalogController::class, 'bulkPriceRevert']);
+    Route::post('/catalog/products/bulk-price-preview', [CatalogController::class, 'bulkPricePreview']);
     Route::put('/catalog/products/bulk-price-update', [CatalogController::class, 'bulkPriceUpdate']);
     Route::post('/catalog/products/{product}/adjust-stock', [StockController::class, 'adjust']);
+    Route::apiResource('catalog/products', ProductController::class)->except(['index', 'show']);
     Route::apiResource('catalog/categories', CategoryController::class)->except(['index']);
     Route::apiResource('catalog/brands', BrandController::class)->except(['index']);
 
