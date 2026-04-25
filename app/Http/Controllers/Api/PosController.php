@@ -70,6 +70,7 @@ class PosController extends Controller
             'items.*.unit_price'     => 'required|numeric',
             'items.*.subtotal'       => 'required|numeric',
             'quote_id'               => 'nullable|integer|exists:quotes,id',
+            'price_list'             => 'nullable|string|max:100',
         ], [
             'cash_shift_id.exists'         => 'El turno de caja ya fue cerrado. Por favor, recargue la aplicación.',
             'customer_id.exists'           => 'El cliente seleccionado no existe en el sistema.',
@@ -115,6 +116,7 @@ class PosController extends Controller
                 'delivery_address'       => $validated['delivery_address'] ?? null,
                 'status'                 => $validated['status'] ?? 'completed',
                 'shipping_cost'          => $validated['shipping_cost'] ?? 0,
+                'price_list'             => $validated['price_list'] ?? null,
             ]);
 
             if (!$isPendingSale) {
@@ -202,7 +204,7 @@ class PosController extends Controller
 
                             StockMovement::create([
                                 'product_id' => $childProd->id,
-                                'user_id'    => $validated['user_id'] ?? null,
+                                'user_id'    => $validated['user_id'] ?? $request->attributes->get('authenticated_user')?->id,
                                 'type'       => 'sale',
                                 'quantity'   => -$qtyDeducted,
                                 'notes'      => "Venta #{$sale->id} (Hijo del Combo: {$product->name})"
@@ -221,7 +223,7 @@ class PosController extends Controller
 
                         StockMovement::create([
                             'product_id' => $product->id,
-                            'user_id'    => $validated['user_id'] ?? null,
+                            'user_id'    => $validated['user_id'] ?? $request->attributes->get('authenticated_user')?->id,
                             'type'       => 'sale',
                             'quantity'   => -$itemData['quantity'],
                             'notes'      => "Venta #{$sale->id}"

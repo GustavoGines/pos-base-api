@@ -67,4 +67,26 @@ class StockController extends Controller
             'new_stock'    => $product->stock,
         ]);
     }
+
+    /**
+     * Historial de Movimientos de Stock (Kardex).
+     * GET /api/audit/stock
+     */
+    public function kardex(Request $request)
+    {
+        $query = StockMovement::with(['product', 'user'])->latest();
+
+        if ($request->has('product_id')) {
+            $query->where('product_id', $request->product_id);
+        }
+
+        if ($request->has('start_date') && $request->has('end_date')) {
+            $query->whereBetween('created_at', [
+                $request->start_date . ' 00:00:00',
+                $request->end_date . ' 23:59:59'
+            ]);
+        }
+
+        return response()->json($query->paginate($request->query('per_page', 50)));
+    }
 }

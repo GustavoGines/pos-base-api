@@ -103,6 +103,16 @@ class ProductController extends Controller
 
         $product = Product::create($validated);
 
+        // Auditoría: Registrar stock inicial si es mayor a 0
+        if ($product->stock > 0) {
+            $product->stockMovements()->create([
+                'user_id'  => $request->attributes->get('authenticated_user')?->id,
+                'type'     => 'in',
+                'quantity' => $product->stock,
+                'notes'    => 'Stock inicial (Creación de producto)',
+            ]);
+        }
+
         if (!empty($validated['is_combo']) && $request->has('combo_ingredients')) {
             $syncData = [];
             foreach ($request->combo_ingredients as $ingredient) {
@@ -150,7 +160,7 @@ class ProductController extends Controller
                 'type' => $validated['type'],
                 'quantity' => $validated['quantity'],
                 'notes' => $validated['notes'] ?? 'Ajuste manual desde catálogo',
-                'user_id' => $request->attributes->get('authenticated_user')?->id ?? 1, // Asumiendo que hay un usuario autenticado
+                'user_id' => $request->attributes->get('authenticated_user')?->id,
             ]);
         }
 
@@ -205,7 +215,23 @@ class ProductController extends Controller
             $validated['barcode'] = empty($isWeight) ? $this->generateInternalEan13($validated['internal_code']) : null;
         }
 
+        // Auditoría de Stock: Guardar valor previo antes de actualizar
+        $oldStock = (float) $product->stock;
+        
         $product->update($validated);
+
+        // Si el stock cambió en la edición de la ficha, registrar el movimiento
+        if (array_key_exists('stock', $validated) && (float) $validated['stock'] !== $oldStock) {
+            $newStock = (float) $validated['stock'];
+            $diff = $newStock - $oldStock;
+            
+            $product->stockMovements()->create([
+                'user_id'  => $request->attributes->get('authenticated_user')?->id,
+                'type'     => $diff > 0 ? 'in' : 'out',
+                'quantity' => abs($diff),
+                'notes'    => "Modificación manual de ficha de producto (de $oldStock a $newStock)",
+            ]);
+        }
 
         if (array_key_exists('is_combo', $validated)) {
             if (!empty($validated['is_combo']) && $request->has('combo_ingredients')) {

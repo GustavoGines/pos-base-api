@@ -135,6 +135,11 @@ Route::middleware(['session.validate'])->group(function () {
         Route::delete('/{model}/{id}/force', [TrashController::class, 'forceDelete']);
     });
 
+    // ── Auditoría (Kardex) ───────────────────────────────────────────
+    Route::middleware(['role.admin'])->prefix('audit')->group(function () {
+        Route::get('/stock', [StockController::class, 'kardex']);
+    });
+
     // ── Módulo Presupuestos [hardware_store] ─────────────────────────
     Route::middleware(['feature:quotes'])->prefix('quotes')->group(function () {
         Route::get('/', [QuoteController::class, 'index']);

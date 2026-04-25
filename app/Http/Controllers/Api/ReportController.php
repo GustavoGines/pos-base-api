@@ -259,10 +259,13 @@ class ReportController extends Controller
     {
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
         $endDate   = $request->query('end_date',   Carbon::now()->endOfMonth()->toDateString());
+        $type      = $request->query('type', 'category');
+
+        $filename = $type === 'brand' ? 'reporte_ganancias_marcas.xlsx' : 'reporte_ganancias_categorias.xlsx';
 
         return \Maatwebsite\Excel\Facades\Excel::download(
-            new \App\Exports\ProfitByCategoryExport($startDate, $endDate),
-            'reporte_ganancias.xlsx'
+            new \App\Exports\ProfitByCategoryExport($startDate, $endDate, $type),
+            $filename
         );
     }
 
@@ -272,24 +275,40 @@ class ReportController extends Controller
     {
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
         $endDate   = $request->query('end_date',   Carbon::now()->endOfMonth()->toDateString());
+        $type      = $request->query('type', 'category');
 
-        $data = $this->getProfitDataArray($startDate, $endDate);
+        if ($type === 'brand') {
+            $data = $this->getProfitByBrandDataArray($startDate, $endDate);
+            $reportTitle = 'Reporte de Rentabilidad por Marca';
+        } else {
+            $data = $this->getProfitDataArray($startDate, $endDate);
+            $reportTitle = 'Reporte de Rentabilidad por Categoría';
+        }
 
-        // Totales globales para la sección KPI del encabezado
         $totalRevenue    = $data->sum('total_revenue');
         $totalProfit     = $data->sum('total_profit');
         $totalWithCost   = $data->sum('revenue_with_cost');
         $totalCost       = $totalWithCost - $data->sum('total_profit');
         $avgMargin       = $totalWithCost > 0 ? ($totalProfit / $totalWithCost) * 100 : 0;
 
+        $salesByPlan = DB::table('sales')
+            ->selectRaw('COALESCE(price_list, "base") as plan_name, COUNT(*) as total_tickets, SUM(total) as total_revenue')
+            ->whereBetween('created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
+            ->where('status', 'completed')
+            ->groupByRaw('COALESCE(price_list, "base")')
+            ->orderByDesc('total_revenue')
+            ->get();
+
         $pdf = Pdf::loadView('reports.pdf_profit', [
             'data'          => $data,
+            'reportTitle'   => $reportTitle,
             'startDate'     => $startDate,
             'endDate'       => $endDate,
             'totalRevenue'  => $totalRevenue,
             'totalProfit'   => $totalProfit,
             'totalCost'     => $totalCost,
             'avgMargin'     => $avgMargin,
+            'salesByPlan'   => $salesByPlan,
             'generatedAt'   => Carbon::now()->format('d/m/Y H:i'),
         ])->setPaper('a4', 'portrait');
 
