@@ -317,17 +317,11 @@ class ReportController extends Controller
 
     // ─── Endpoint: Balance Mensual Flexible ──────────────────────────────────
 
-    public function monthlyBalance(Request $request)
+    private function getMonthlyBalanceData(string $startMonth, string $endMonth)
     {
-        // Valores por defecto: mes actual − 5 meses → mes actual
-        $startMonth = $request->query('start_month', Carbon::now()->subMonths(5)->format('Y-m'));
-        $endMonth   = $request->query('end_month',   Carbon::now()->format('Y-m'));
-
-        // Convertimos YYYY-MM al primer y último día del rango completo
         $startDate = Carbon::parse($startMonth . '-01')->startOfMonth();
         $endDate   = Carbon::parse($endMonth   . '-01')->endOfMonth();
 
-        // Query por mes: agrupa ventas + calcula costo histórico (mismo fallback que el resto)
         $rows = DB::table('sale_items')
             ->join('sales',    'sales.id',    '=', 'sale_items.sale_id')
             ->join('products', 'products.id', '=', 'sale_items.product_id')
@@ -371,7 +365,6 @@ class ReportController extends Controller
             ->orderByRaw("period ASC")
             ->get();
 
-        // Enriquecemos con etiqueta legible y margen
         $months = $rows->map(function ($row) {
             $date         = Carbon::parse($row->period . '-01');
             $marginPct    = $row->revenue_with_cost > 0
@@ -388,23 +381,64 @@ class ReportController extends Controller
             ];
         });
 
-        // Totales acumulados del rango completo
         $grandRevenue     = $months->sum('total_revenue');
         $grandCost        = $months->sum('total_cost');
         $grandProfit      = $months->sum('total_profit');
         $grandRWC         = $rows->sum('revenue_with_cost');
         $grandMargin      = $grandRWC > 0 ? round(($grandProfit / $grandRWC) * 100, 1) : 0.0;
 
-        return response()->json([
-            'start_month' => $startMonth,
-            'end_month'   => $endMonth,
-            'months'      => $months,
-            'totals'      => [
+        return [
+            'months' => $months,
+            'totals' => [
                 'total_revenue' => round($grandRevenue, 2),
                 'total_cost'    => round($grandCost,    2),
                 'total_profit'  => round($grandProfit,  2),
                 'avg_margin_pct'=> $grandMargin,
-            ],
+            ]
+        ];
+    }
+
+    public function monthlyBalance(Request $request)
+    {
+        $startMonth = $request->query('start_month', Carbon::now()->subMonths(5)->format('Y-m'));
+        $endMonth   = $request->query('end_month',   Carbon::now()->format('Y-m'));
+
+        $data = $this->getMonthlyBalanceData($startMonth, $endMonth);
+
+        return response()->json([
+            'start_month' => $startMonth,
+            'end_month'   => $endMonth,
+            'months'      => $data['months'],
+            'totals'      => $data['totals'],
         ]);
     }
+
+    public function exportMonthlyBalanceExcel(Request $request)
+    {
+        $startMonth = $request->query('start_month', Carbon::now()->subMonths(5)->format('Y-m'));
+        $endMonth   = $request->query('end_month',   Carbon::now()->format('Y-m'));
+
+        return \Maatwebsite\Excel\Facades\Excel::download(
+            new \App\Exports\MonthlyBalanceExport($startMonth, $endMonth),
+            'balance_mensual_' . $startMonth . '_al_' . $endMonth . '.xlsx'
+        );
+    }
+
+    public function exportMonthlyBalancePdf(Request $request)
+    {
+        $startMonth = $request->query('start_month', Carbon::now()->subMonths(5)->format('Y-m'));
+        $endMonth   = $request->query('end_month',   Carbon::now()->format('Y-m'));
+
+        $data = $this->getMonthlyBalanceData($startMonth, $endMonth);
+
+        $pdf = Pdf::loadView('reports.pdf_monthly_balance', [
+            'data'        => $data,
+            'startMonth'  => $startMonth,
+            'endMonth'    => $endMonth,
+            'generatedAt' => Carbon::now()->format('d/m/Y H:i'),
+        ])->setPaper('a4', 'portrait');
+
+        return $pdf->download('balance_mensual_' . $startMonth . '_al_' . $endMonth . '.pdf');
+    }
+
 }

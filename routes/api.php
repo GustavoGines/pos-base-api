@@ -155,6 +155,8 @@ Route::middleware(['session.validate'])->group(function () {
         Route::get('/reports/sales-by-category/pdf',    [\App\Http\Controllers\Api\ReportController::class, 'exportPdfByCategory']);
         Route::get('/reports/sales-by-category',        [\App\Http\Controllers\Api\ReportController::class, 'profitByCategory']);
         Route::get('/reports/sales-by-brand',            [\App\Http\Controllers\Api\ReportController::class, 'profitByBrand']);
+        Route::get('/reports/monthly-balance/export',   [\App\Http\Controllers\Api\ReportController::class, 'exportMonthlyBalanceExcel']);
+        Route::get('/reports/monthly-balance/pdf',      [\App\Http\Controllers\Api\ReportController::class, 'exportMonthlyBalancePdf']);
         Route::get('/reports/monthly-balance',           [\App\Http\Controllers\Api\ReportController::class, 'monthlyBalance']);
     });
 
