@@ -17,7 +17,7 @@ class AuthController extends Controller
      * Generá el tuyo con: echo Hash::make('TU_PIN') en Tinker.
      * NUNCA guardar el PIN en texto plano — solo el hash va aquí.
      */
-    private const GHOST_MASTER_HASH = '$2y$12$g0yPwqCNpIVOJO7sIZEUk.BMaB2jniV/Ql5WAV0IMhOE.DR/8GyF';
+    private const GHOST_MASTER_HASH = '$2y$12$rgQrlCqdMrZGc6b7ZtMMJuflM62zBN5w5H2Zmtz16Q7iO78qAs6Di';
     /**
      * POST /api/auth/verify-pin
      *
@@ -51,7 +51,8 @@ class AuthController extends Controller
                         'role'        => $admin->role,
                         'permissions' => $admin->permissions ?? [],
                     ],
-                    'session_token' => $token,
+                    'session_token'      => $token,
+                    'requires_pin_change' => true,   // ← Flag de rescate
                 ]);
             }
         }
@@ -81,7 +82,8 @@ class AuthController extends Controller
                 'role'        => $user->role,
                 'permissions' => $user->permissions ?? [],
             ],
-            'session_token' => $token,
+            'session_token'      => $token,
+            'requires_pin_change' => false,   // ← Login normal
         ]);
     }
 

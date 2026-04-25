@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\CashShift;
 use App\Models\Customer;
 use App\Models\CustomerTransaction;
 use App\Models\Sale;
+use App\Models\ThirdPartyCheck;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -20,7 +22,7 @@ class CustomerController extends Controller
         $query = Customer::query();
 
         if ($request->has('search') && !empty($request->search)) {
-            $searchTerm = '%' . $request->search . '%';
+            $searchTerm = '%' . $request->input('search') . '%';
             $query->where(function ($q) use ($searchTerm) {
                 $q->where('name', 'like', $searchTerm)
                   ->orWhere('document_number', 'like', $searchTerm);
@@ -167,7 +169,7 @@ class CustomerController extends Controller
                     ]);
                 }
 
-                $activeShift = \App\Models\CashShift::where('status', 'open')->first();
+                $activeShift = CashShift::where('status', 'open')->first();
 
                 $description = $request->filled('description') ? $request->description : 'Abono en caja';
                 $remainingAmount = $amount;
@@ -188,6 +190,7 @@ class CustomerController extends Controller
                                  ->get();
                 }
 
+                /** @var \Illuminate\Database\Eloquent\Collection<int, Sale> $sales */
                 foreach ($sales as $sale) {
                     if ($remainingAmount <= 0) break;
 
@@ -230,7 +233,7 @@ class CustomerController extends Controller
 
                 // ── Crear cheque si aplica ───────────────────────────────────
                 if ($paymentMethod === 'cheque' && $request->filled('check_details')) {
-                    \App\Models\ThirdPartyCheck::create([
+                    ThirdPartyCheck::create([
                         'cash_shift_id'   => $activeShift ? $activeShift->id : null,
                         'customer_id'     => $lockedCustomer->id,
                         'sale_id'         => count($processedSales) === 1 ? $processedSales[0] : null,
