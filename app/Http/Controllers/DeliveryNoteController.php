@@ -103,7 +103,7 @@ class DeliveryNoteController extends Controller
 
                                     \App\Models\StockMovement::create([
                                         'product_id' => $childProd->id,
-                                        'user_id'    => $request->attributes->get('authenticated_user')?->id ?? 1,
+                                        'user_id'    => $request->attributes->get('authenticated_user')?->id,
                                         'type'       => 'sale', // o 'dispatch'
                                         'quantity'   => -$qtyDeducted,
                                         'notes'      => "Despacho Logístico (Hijo del Combo: {$product->name}) Remito #{$note->id}"
@@ -116,7 +116,7 @@ class DeliveryNoteController extends Controller
 
                             \App\Models\StockMovement::create([
                                 'product_id' => $product->id,
-                                'user_id'    => $request->attributes->get('authenticated_user')?->id ?? 1,
+                                'user_id'    => $request->attributes->get('authenticated_user')?->id,
                                 'type'       => 'sale', // o 'dispatch'
                                 'quantity'   => -$actualDeliveredNow,
                                 'notes'      => "Despacho Logístico Remito #{$note->id}"

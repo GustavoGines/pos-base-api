@@ -127,8 +127,8 @@ class CustomerController extends Controller
     public function getPendingSales(Customer $customer)
     {
         $pendingSales = Sale::where('customer_id', $customer->id)
-            ->where('payment_method', 'cuenta_corriente')
-            ->whereIn('payment_status', ['pending', 'partial'])
+            ->where('amount_due', '>', 0)
+            ->where('status', '!=', 'voided')
             ->with('items')
             ->orderByDesc('created_at')
             ->get();
@@ -182,7 +182,6 @@ class CustomerController extends Controller
                                  ->get();
                 } else {
                     $sales = Sale::where('customer_id', $lockedCustomer->id)
-                                 ->where('payment_method', 'cuenta_corriente')
                                  ->whereIn('payment_status', ['pending', 'partial'])
                                  ->lockForUpdate()
                                  ->orderBy('created_at', 'asc')

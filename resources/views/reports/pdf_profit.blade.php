@@ -233,7 +233,7 @@
     <div class="header-top">
         <div>
             <div class="brand-name">Sistema POS</div>
-            <div class="brand-subtitle">Módulo de Reportes Gerenciales — Plan Enterprise</div>
+            <div class="brand-subtitle">Módulo de Rentabilidad y Auditoría</div>
         </div>
         <div class="report-meta">
             <div>Generado el {{ $generatedAt }}</div>
@@ -241,10 +241,10 @@
         </div>
     </div>
     <div class="report-title-block">
-        <div class="report-title">Reporte de Rentabilidad por Categoría</div>
+        <div class="report-title">{{ $reportTitle ?? 'Reporte de Rentabilidad' }}</div>
         <div class="period-badge">
             {{ \Carbon\Carbon::parse($startDate)->format('d/m/Y') }}
-            &nbsp;→&nbsp;
+            &nbsp;-&nbsp;
             {{ \Carbon\Carbon::parse($endDate)->format('d/m/Y') }}
         </div>
     </div>
@@ -276,6 +276,36 @@
         </div>
     </div>
 </div>
+
+{{-- ═══════════════════════ RESUMEN POR PLAN / LISTA ═══════════════════════ --}}
+@if(isset($salesByPlan) && count($salesByPlan) > 0)
+<div class="content" style="padding-bottom: 0;">
+    <div class="section-title">Desglose por Lista de Precios (Plan)</div>
+    <table>
+        <thead>
+            <tr>
+                <th style="width:40%">Lista de Precios Aplicada</th>
+                <th class="num" style="width:20%">Tickets Emitidos</th>
+                <th class="num" style="width:40%">Facturación Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach($salesByPlan as $plan)
+                <tr class="row-product">
+                    <td style="font-weight: 600; text-transform: uppercase;">
+                        <span class="cat-icon" style="background: #7c3aed;"></span>
+                        {{ $plan->plan_name === 'base' ? 'Minorista (Base)' : $plan->plan_name }}
+                    </td>
+                    <td class="num">{{ number_format($plan->total_tickets, 0, ',', '.') }}</td>
+                    <td class="num" style="font-weight: 600; color: #1e3a5f;">
+                        ${{ number_format($plan->total_revenue, 2, ',', '.') }}
+                    </td>
+                </tr>
+            @endforeach
+        </tbody>
+    </table>
+</div>
+@endif
 
 {{-- ═══════════════════════ TABLA DETALLADA ═══════════════════ --}}
 <div class="content">
@@ -333,7 +363,7 @@
                     @endphp
                     <tr class="row-product">
                         <td>
-                            <span class="product-arrow">↳</span>
+                            <span class="product-arrow">></span>
                             {{ $prod['product_name'] }}
                         </td>
                         <td class="num">{{ number_format($prod['items_sold'], 0, ',', '.') }}</td>

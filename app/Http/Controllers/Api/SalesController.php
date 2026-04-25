@@ -107,7 +107,7 @@ class SalesController extends Controller
         ]);
 
         DB::transaction(function () use ($validated, $sale, $request) {
-            $userId = $validated['user_id'] ?? $request->input('user_id');
+            $userId = $validated['user_id'] ?? $request->input('user_id') ?? $request->attributes->get('authenticated_user')?->id;
 
             // Si el cliente envía 'items', hubo Order Recall y modificaciones
             if (isset($validated['items'])) {
@@ -279,7 +279,7 @@ class SalesController extends Controller
 
                                     \App\Models\StockMovement::create([
                                         'product_id' => $childProd->id,
-                                        'user_id'    => $userId ?? null,
+                                        'user_id'    => $userId,
                                         'type'       => 'in',
                                         'quantity'   => $qtyRestored,
                                         'notes'      => "Reversión (Combo Hijo) Venta #{$sale->id}",
@@ -291,7 +291,7 @@ class SalesController extends Controller
 
                             \App\Models\StockMovement::create([
                                 'product_id' => $item->product_id,
-                                'user_id'    => $userId ?? null,
+                                'user_id'    => $userId,
                                 'type'       => 'in',
                                 'quantity'   => $qtyToRestore,
                                 'notes'      => "Reversión por anulación de Venta #{$sale->id}",
