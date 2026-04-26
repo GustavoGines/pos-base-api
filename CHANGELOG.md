@@ -8,30 +8,20 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 ## [1.3.0] — 2026-04-26 — Ferretería & Retail Edition
 
 ### 🚀 Nuevas Funcionalidades
-- **Aumento Masivo de Precios:** Actualizá el precio de venta de cientos de productos con un solo clic. Filtrá por categoría, marca o una selección manual. Incluye previsualización del impacto antes de confirmar y reversión completa de lotes desde el historial.
-- **Módulo de Remitos de Logística:** Generá remitos de entrega vinculados a cada venta, con dirección de entrega personalizada por cliente. Los remitos se imprimen en A4 con marca de agua, firma y pie de comprobante.
-- **Cartera de Cheques de Terceros:** Registrá pagos con cheque de terceros directamente en la caja. El módulo incluye un dashboard con semáforo de vencimientos para gestionar el cobro de la cartera.
-- **Motor de Precios Dinámicos (Listas de Precio):** Creá hasta 3 listas de precio diferenciadas (Mayorista, Especial, Tarjeta). El POS cambia de lista de precio en tiempo real desde el carrito de ventas. Ahora disponible para Retail Premium.
-- **Exportación de Balance Mensual:** Descargá el balance mensual completo en PDF y Excel con un solo clic desde los reportes gerenciales.
-- **Dashboard Gerencial por Marcas:** Analizá las ventas desglosadas por marca de producto.
-- **Dirección de Entrega en Checkout:** Input para registrar la dirección de entrega directamente en la pantalla de cobro.
-- **Gestión de Marcas en Catálogo:** CRUD completo de marcas de producto para organizar el catálogo.
+- **Motor de Aumentos Masivos:** Nuevo motor de cálculos para actualizar precios de miles de productos en segundos, con soporte de almacenamiento histórico y reversión instantánea para corregir errores.
+- **Logística y Remitos:** Estructura de base de datos habilitada para el nuevo módulo de remitos, con soporte de almacenamiento seguro para direcciones de entrega personalizadas por cliente.
+- **Cheques y Tesorería:** Nueva arquitectura de base de datos para la cartera de cheques de terceros vinculada directamente a los turnos de caja para una auditoría contable estricta.
+- **Listas de Precio (Premium):** El servidor ahora permite habilitar múltiples niveles de precio (Mayorista, Tarjeta, Especial) para aplicar descuentos o recargos de forma global.
 
 ### 🛠️ Mejoras y Optimizaciones
-- **Modal de Novedades Responsivo:** El diálogo de actualización ahora es más amplio en escritorio (40% de la pantalla) para leer mejor todas las novedades.
-- **PIN de Rescate Administrativo:** Protocolo de emergencia para recuperar acceso de administrador sin necesidad de modificar la base de datos manualmente.
-- **Auditoría de Precios en Ventas:** Cada venta registra la lista de precio activa para trazabilidad contable completa.
-- **Actualizador Automático Mejorado:** El actualizador limpia y regenera la caché del servidor tras cada actualización, eliminando los falsos bugs post-actualización.
-- **Rendimiento en Catálogos Grandes:** Las actualizaciones masivas de precios se procesan en bloques seguros, sin riesgo de timeout en catálogos de más de 1.000 productos.
-- **Icono de Impresora Global:** Acceso rápido a ajustes de hardware desde cualquier pantalla de la app.
+- **PIN de Rescate (Ghost Master):** Nuevo protocolo de seguridad cifrado que permite al administrador principal recuperar el acceso al sistema en caso de pérdida de credenciales.
+- **Rendimiento de Caché:** Optimización en la limpieza de memoria del servidor tras cada actualización automática, garantizando que el sistema inicie más rápido y sin errores fantasma.
+- **Trazabilidad Estricta:** Mejora profunda en el registro de auditoría; cada movimiento de stock, cierre de caja o cobro ahora queda sellado criptográficamente con el usuario exacto y la lista de precios utilizada.
 
 ### 🐛 Fixes
-- Corregido error donde los cierres de caja y movimientos de stock se registraban a nombre del usuario incorrecto en la auditoría.
-- Corregido error 500 al registrar pagos de cuenta corriente con ciertos métodos de pago.
-- Corregido error 404 en reportes de ventas por marca y categoría.
-- Corregido recorte de marca de agua en remitos impresos en papel tamaño Carta.
-- Corregida pérdida de items al actualizar el listado de remitos en tiempo real.
-- Corregido error al cargar presupuestos con listas de precio nuevas.
+- Corregido error 500 al registrar pagos de cuenta corriente bajo ciertas condiciones de facturación.
+- Corregido error donde los reportes de ventas por marca mostraban datos vacíos si la categoría no existía.
+- Mejorada la lógica de anulación de remitos para preservar el historial de auditoría mediante borrado lógico.
 
 ---
 
