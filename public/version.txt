@@ -1,2 +1,2 @@
-v1.2.4 - OTA Test Final
-Build: 2026-04-14
+v1.3.0 - Ferretería & Retail Edition
+Build: 2026-04-26
