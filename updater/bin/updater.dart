@@ -63,19 +63,31 @@ void main(List<String> args) async {
 
   // Lógicas por componente
   if (component == 'backend') {
-    print('Ejecutando php artisan migrate --force en backend...');
-    try {
-      final result = Process.runSync(
-        'php',
-        ['artisan', 'migrate', '--force'],
-        workingDirectory: targetDir,
-      );
-      print('Migración stdout:\n${result.stdout}');
-      if (result.stderr.toString().trim().isNotEmpty) {
-        print('Migración stderr:\n${result.stderr}');
+    final commands = [
+      ['artisan', 'migrate', '--force'],
+      ['artisan', 'optimize:clear'],
+      ['artisan', 'optimize'],
+    ];
+
+    for (final cmd in commands) {
+      final cmdString = 'php ${cmd.join(' ')}';
+      print('Ejecutando $cmdString en backend...');
+      try {
+        final result = Process.runSync(
+          'php',
+          cmd,
+          workingDirectory: targetDir,
+        );
+        
+        if (result.stdout.toString().trim().isNotEmpty) {
+          print('STDOUT ($cmdString):\n${result.stdout}');
+        }
+        if (result.stderr.toString().trim().isNotEmpty) {
+          print('STDERR ($cmdString):\n${result.stderr}');
+        }
+      } catch (e) {
+        print('Error al intentar ejecutar $cmdString: $e');
       }
-    } catch (e) {
-      print('Error al intentar ejecutar la migración: $e');
     }
 
     try {
