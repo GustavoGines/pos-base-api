@@ -41,7 +41,7 @@ jobs:
         run: |
           # Leer el changelog directamente del archivo CHANGELOG.md
           VERSION_NO_V=$(echo "${{ github.ref_name }}" | sed 's/^v//')
-          MSG=$(awk "/^## \[${VERSION_NO_V}\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md | sed -e '/^---/d' | awk 'NF {print} !NF {if (p) print ""; p=1}' | sed '/^$/N;/^\n$/D')
+          MSG=$(awk "/^## \[${VERSION_NO_V}\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md | sed -e '/^---/d' | awk 'NF {print} !NF {if (p) print ""; p=1}' | sed '/^$/N;/^\n$/D' | sed 's/\*\*//g' | sed 's/### //g')
           if [ -z "$MSG" ]; then MSG="Release ${{ github.ref_name }} generado automaticamente por CI/CD."; fi
           jq -n \
             --arg version "${{ github.ref_name }}" \
