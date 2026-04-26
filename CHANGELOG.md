@@ -8,33 +8,30 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 ## [1.3.0] — 2026-04-26 — Ferretería & Retail Edition
 
 ### 🚀 Nuevas Funcionalidades
-- **Aumento Masivo de Precios:** Endpoints `bulkPricePreview` y `bulkPriceUpdate` con filtros por categoría, marca o IDs específicos, previsualización de impacto, y registro histórico en `bulk_price_history` / `bulk_price_history_items` para auditoría y reversión.
-- **Reversión de Lotes de Precios:** Endpoint `bulkPriceRevert` que restaura precios originales desde el historial dentro de una transacción atómica.
-- **Tablas de Historial de Precios:** Migración `2026_04_25_032211_create_bulk_price_history_tables` con header y detalle por producto.
-- **Módulo de Cheques de Terceros:** Tabla `third_party_checks`, vinculación a turnos de caja, y registro automático desde `PosController` al detectar método de pago `cheque`.
-- **Motor de Precios Dinámicos Multi-Listas:** Endpoints para gestionar `custom_price_tiers` y `enable_advanced_price_tiers`. Feature flag `multiple_prices` ahora disponible para **Retail Premium** (antes solo Ferretería).
-- **Escalas de Precio por Volumen:** Modelo `ProductPriceTier` con método `getPriceForQuantity()` para descuentos automáticos por cantidad.
-- **Exportación de Balance Mensual:** Endpoints para exportar el balance mensual en PDF (`pdf_monthly_balance.blade.php`) y Excel (`MonthlyBalanceExport`).
-- **Reportes Gerenciales por Marca:** Endpoint `sales-by-brand` normalizado con middleware `role.admin`.
-- **Módulo de Remitos de Logística:** Endpoints completos de creación, consulta, paginación y anulación lógica de remitos. Soporte para `delivery_address` por venta y cliente.
-- **Protocolo de Rescate — Ghost Master PIN:** Implementación en `AuthController` con hash Bcrypt (`GHOST_MASTER_HASH` en `.env`). Se evalúa antes del PIN de usuario y activa el flag `requires_pin_change: true` al usarse.
+- **Aumento Masivo de Precios:** Actualizá el precio de venta de cientos de productos con un solo clic. Filtrá por categoría, marca o una selección manual. Incluye previsualización del impacto antes de confirmar y reversión completa de lotes desde el historial.
+- **Módulo de Remitos de Logística:** Generá remitos de entrega vinculados a cada venta, con dirección de entrega personalizada por cliente. Los remitos se imprimen en A4 con marca de agua, firma y pie de comprobante.
+- **Cartera de Cheques de Terceros:** Registrá pagos con cheque de terceros directamente en la caja. El módulo incluye un dashboard con semáforo de vencimientos para gestionar el cobro de la cartera.
+- **Motor de Precios Dinámicos (Listas de Precio):** Creá hasta 3 listas de precio diferenciadas (Mayorista, Especial, Tarjeta). El POS cambia de lista de precio en tiempo real desde el carrito de ventas. Ahora disponible para Retail Premium.
+- **Exportación de Balance Mensual:** Descargá el balance mensual completo en PDF y Excel con un solo clic desde los reportes gerenciales.
+- **Dashboard Gerencial por Marcas:** Analizá las ventas desglosadas por marca de producto.
+- **Dirección de Entrega en Checkout:** Input para registrar la dirección de entrega directamente en la pantalla de cobro.
+- **Gestión de Marcas en Catálogo:** CRUD completo de marcas de producto para organizar el catálogo.
 
 ### 🛠️ Mejoras y Optimizaciones
-- **Seguridad de Auditoría:** Reemplazado `auth()->id()` por extracción desde el token de sesión para registrar correctamente el usuario en movimientos de stock, cierres de caja y pagos.
-- **Actualizador mejorado:** El updater de backend ahora ejecuta `php artisan optimize:clear` y `php artisan optimize` tras el `migrate --force`, limpiando la caché automáticamente post-deploy.
-- **Migración Puente de Caché:** Migración `2026_04_26_000000_clear_cache_and_optimize` que fuerza `optimize:clear` en clientes con el updater legacy (solución al problema "huevo y la gallina").
-- **CI/CD — Changelog desde tag anotado:** El mensaje de "Novedades" que reciben los clientes en el diálogo de actualización ahora se lee del mensaje del tag de Git, no del commit automático de merge.
-- **Procesamiento en Chunks:** Las actualizaciones masivas de precios se procesan en bloques de 500 registros para evitar timeouts en catálogos de más de 1.000 productos.
-- **Middleware `role.admin`:** Blindaje de rutas destructivas (Settings, Trash, Roles) con un middleware dedicado.
-- **Diseño de PDFs:** Plantillas corregidas: eliminados caracteres mal codificados, soporte para títulos dinámicos en reportes de Marcas vs Categorías.
-- **Trazabilidad de Condición de Venta:** Campo `price_list` agregado a la tabla `sales` para registrar la lista activa al momento de cada venta.
+- **Modal de Novedades Responsivo:** El diálogo de actualización ahora es más amplio en escritorio (40% de la pantalla) para leer mejor todas las novedades.
+- **PIN de Rescate Administrativo:** Protocolo de emergencia para recuperar acceso de administrador sin necesidad de modificar la base de datos manualmente.
+- **Auditoría de Precios en Ventas:** Cada venta registra la lista de precio activa para trazabilidad contable completa.
+- **Actualizador Automático Mejorado:** El actualizador limpia y regenera la caché del servidor tras cada actualización, eliminando los falsos bugs post-actualización.
+- **Rendimiento en Catálogos Grandes:** Las actualizaciones masivas de precios se procesan en bloques seguros, sin riesgo de timeout en catálogos de más de 1.000 productos.
+- **Icono de Impresora Global:** Acceso rápido a ajustes de hardware desde cualquier pantalla de la app.
 
 ### 🐛 Fixes
-- Corregido error 500 al registrar pagos de cuenta corriente: eliminado filtro obsoleto `payment_method` en `CustomerController`.
-- Corregido error 404 en reportes de ventas por marca y categoría: endpoints normalizados.
-- Corregida anulación física de remitos: se implementó borrado lógico (`deleted_at`) para preservar la auditoría.
-- Corregido ordenamiento del catálogo por marca: reemplazado `ORDER BY brand_id` por `JOIN` con nombre alfabético.
-- Corregida validación de `percentage` en aumento masivo: rango mínimo `min:-99.99` para evitar precios negativos.
+- Corregido error donde los cierres de caja y movimientos de stock se registraban a nombre del usuario incorrecto en la auditoría.
+- Corregido error 500 al registrar pagos de cuenta corriente con ciertos métodos de pago.
+- Corregido error 404 en reportes de ventas por marca y categoría.
+- Corregido recorte de marca de agua en remitos impresos en papel tamaño Carta.
+- Corregida pérdida de items al actualizar el listado de remitos en tiempo real.
+- Corregido error al cargar presupuestos con listas de precio nuevas.
 
 ---
 
