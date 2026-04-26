@@ -36,7 +36,10 @@ jobs:
           
       - name: Notify License Server
         run: |
-          MSG=$(git log -1 --no-merges --pretty=format:"%B")
+          # Leer el changelog desde el mensaje del TAG anotado (fuente de verdad oficial).
+          # El Release Manager escribe el texto completo al crear el tag con: git tag -a v1.3.0 -m "..."
+          MSG=$(git tag -l "${{ github.ref_name }}" --format='%(contents)')
+          if [ -z "$MSG" ]; then MSG="Release ${{ github.ref_name }} generado automaticamente por CI/CD."; fi
           jq -n \
             --arg version "${{ github.ref_name }}" \
             --arg component "backend" \
