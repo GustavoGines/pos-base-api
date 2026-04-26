@@ -98,7 +98,7 @@ class CatalogController extends Controller
     public function bulkPricePreview(Request $request)
     {
         $validated = $request->validate([
-            'percentage' => 'required|numeric',
+            'percentage' => 'required|numeric|min:-99.99',
             'product_ids' => 'nullable|array',
             'product_ids.*' => 'integer|exists:products,id',
             'category_id' => 'nullable|exists:categories,id',
@@ -136,7 +136,7 @@ class CatalogController extends Controller
     public function bulkPriceUpdate(Request $request)
     {
         $validated = $request->validate([
-            'percentage' => 'required|numeric',
+            'percentage' => 'required|numeric|min:-99.99',
             'product_ids' => 'nullable|array',
             'product_ids.*' => 'integer|exists:products,id',
             'category_id' => 'nullable|exists:categories,id',
@@ -208,7 +208,10 @@ class CatalogController extends Controller
             $updateData['cost_price'] = DB::raw($this->_getNewPriceExpression($validated['percentage'], 'none', 'cost_price'));
         }
 
-        $count = Product::whereIn('id', $products->pluck('id'))->update($updateData);
+        $count = 0;
+        foreach ($products->pluck('id')->chunk(500) as $chunk) {
+            $count += Product::whereIn('id', $chunk)->update($updateData);
+        }
 
         return response()->json([
             'message' => "Se actualizaron exitosamente los precios de {$count} productos.",
