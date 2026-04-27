@@ -105,9 +105,23 @@ class LicenseSyncService
                 $this->setSetting('license_manage_url', $data['manage_url'] ?? null);
                 
                 // [feature-flags] Nuevo Diccionario de Características
-                if (isset($data['features'])) {
-                    $this->setSetting('license_features_dict', json_encode($data['features']));
+                $features = $data['features'] ?? [];
+                
+                // Failsafe local override: Si el servidor remoto de licencias es antiguo y no envía
+                // las nuevas llaves, pero el plan es Premium/Pro, forzamos la habilitación local.
+                $planLower = strtolower($data['plan'] ?? $data['plan_type'] ?? 'basic');
+                if (in_array($planLower, ['premium', 'pro'])) {
+                    $features['multi_caja'] = $features['multi_caja'] ?? true;
+                    $features['advanced_reports'] = $features['advanced_reports'] ?? true;
+                    
+                    if (($data['business_type'] ?? 'retail') === 'hardware_store') {
+                        $features['multiple_prices'] = $features['multiple_prices'] ?? true;
+                        $features['logistics'] = $features['logistics'] ?? true;
+                        $features['cheques'] = $features['cheques'] ?? true;
+                        $features['predictive_alerts'] = $features['predictive_alerts'] ?? true;
+                    }
                 }
+                $this->setSetting('license_features_dict', json_encode($features));
                 
                 // LIMPIEZA EXTREMA: Eliminar keys de legado de la base de datos local
                 BusinessSetting::whereIn('key', ['license_addons', 'license_allowed_addons'])->delete();
@@ -192,9 +206,23 @@ class LicenseSyncService
                 $this->setSetting('license_manage_url', $data['manage_url'] ?? null);
                 
                 // [feature-flags] Nuevo Diccionario de Características
-                if (isset($data['features'])) {
-                    $this->setSetting('license_features_dict', json_encode($data['features']));
+                $features = $data['features'] ?? [];
+                
+                // Failsafe local override: Si el servidor remoto de licencias es antiguo y no envía
+                // las nuevas llaves, pero el plan es Premium/Pro, forzamos la habilitación local.
+                $planLower = strtolower($data['plan'] ?? $data['plan_type'] ?? 'basic');
+                if (in_array($planLower, ['premium', 'pro'])) {
+                    $features['multi_caja'] = $features['multi_caja'] ?? true;
+                    $features['advanced_reports'] = $features['advanced_reports'] ?? true;
+                    
+                    if (($data['business_type'] ?? 'retail') === 'hardware_store') {
+                        $features['multiple_prices'] = $features['multiple_prices'] ?? true;
+                        $features['logistics'] = $features['logistics'] ?? true;
+                        $features['cheques'] = $features['cheques'] ?? true;
+                        $features['predictive_alerts'] = $features['predictive_alerts'] ?? true;
+                    }
                 }
+                $this->setSetting('license_features_dict', json_encode($features));
 
                 // LIMPIEZA EXTREMA: Eliminar keys de legado
                 BusinessSetting::whereIn('key', ['license_addons', 'license_allowed_addons'])->delete();
@@ -234,9 +262,23 @@ class LicenseSyncService
                 $plan = $data['plan'] ?? $data['plan_type'] ?? 'basic';
                 
                 // [feature-flags] Diccionario de Características
-                if (isset($data['features'])) {
-                    $this->setSetting('license_features_dict', json_encode($data['features']));
+                $features = $data['features'] ?? [];
+                
+                // Failsafe local override: Si el servidor remoto de licencias es antiguo y no envía
+                // las nuevas llaves, pero el plan es Premium/Pro, forzamos la habilitación local.
+                $planLower = strtolower($data['plan'] ?? $data['plan_type'] ?? 'basic');
+                if (in_array($planLower, ['premium', 'pro'])) {
+                    $features['multi_caja'] = $features['multi_caja'] ?? true;
+                    $features['advanced_reports'] = $features['advanced_reports'] ?? true;
+                    
+                    if (($data['business_type'] ?? 'retail') === 'hardware_store') {
+                        $features['multiple_prices'] = $features['multiple_prices'] ?? true;
+                        $features['logistics'] = $features['logistics'] ?? true;
+                        $features['cheques'] = $features['cheques'] ?? true;
+                        $features['predictive_alerts'] = $features['predictive_alerts'] ?? true;
+                    }
                 }
+                $this->setSetting('license_features_dict', json_encode($features));
 
                 $this->setSetting('license_key', $licenseKey);
                 $this->setSetting('app_plan', $plan);
