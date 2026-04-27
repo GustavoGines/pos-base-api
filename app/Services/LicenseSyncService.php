@@ -114,7 +114,8 @@ class LicenseSyncService
                     $features['multi_caja'] = $features['multi_caja'] ?? true;
                     $features['advanced_reports'] = $features['advanced_reports'] ?? true;
                     
-                    if (($data['business_type'] ?? 'retail') === 'hardware_store') {
+                    $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store' || !empty($features['quotes']);
+                    if ($isHardwareStore) {
                         $features['multiple_prices'] = $features['multiple_prices'] ?? true;
                         $features['logistics'] = $features['logistics'] ?? true;
                         $features['cheques'] = $features['cheques'] ?? true;
@@ -215,7 +216,8 @@ class LicenseSyncService
                     $features['multi_caja'] = $features['multi_caja'] ?? true;
                     $features['advanced_reports'] = $features['advanced_reports'] ?? true;
                     
-                    if (($data['business_type'] ?? 'retail') === 'hardware_store') {
+                    $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store' || !empty($features['quotes']);
+                    if ($isHardwareStore) {
                         $features['multiple_prices'] = $features['multiple_prices'] ?? true;
                         $features['logistics'] = $features['logistics'] ?? true;
                         $features['cheques'] = $features['cheques'] ?? true;
@@ -271,7 +273,8 @@ class LicenseSyncService
                     $features['multi_caja'] = $features['multi_caja'] ?? true;
                     $features['advanced_reports'] = $features['advanced_reports'] ?? true;
                     
-                    if (($data['business_type'] ?? 'retail') === 'hardware_store') {
+                    $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store' || !empty($features['quotes']);
+                    if ($isHardwareStore) {
                         $features['multiple_prices'] = $features['multiple_prices'] ?? true;
                         $features['logistics'] = $features['logistics'] ?? true;
                         $features['cheques'] = $features['cheques'] ?? true;
