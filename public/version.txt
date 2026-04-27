@@ -1,2 +1,2 @@
-v1.3.0 - Ferretería & Retail Edition
-Build: 2026-04-26
+v1.3.1 - Ferretería & Retail Edition
+Build: 2026-04-27

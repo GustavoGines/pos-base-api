@@ -34,6 +34,7 @@ Route::prefix('auth')->group(function () {
 
 // Lectura de configuración pública — necesaria en el arranque de la app ANTES del login
 Route::get('/settings', [SettingController::class, 'index']);
+Route::get('/version-check', [SettingController::class, 'versionCheck']);
 // Escritura de licencia pública — se necesita sin sesión para activar/sincronizar licencias
 Route::post('/settings/license', [SettingController::class, 'updateLicense']);
 Route::post('/settings/license/sync', [SettingController::class, 'syncLicense']);

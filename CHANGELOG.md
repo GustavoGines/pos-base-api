@@ -5,6 +5,16 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 
 ---
 
+## [1.3.1] — 2026-04-26 — Actualizaciones Inteligentes
+
+### 🚀 Nuevas Funcionalidades
+- **Nuevo Motor de Verificación:** Incorporamos un nuevo sistema de consulta directa. Ahora el sistema puede leer y verificar la versión real instalada en tu servidor en tiempo real, brindando información 100% precisa a todas las cajas.
+
+### 🛠️ Mejoras de Estabilidad
+- **Sincronización Perfecta:** Olvidate de los errores de actualización. Esta mejora garantiza que cualquier caja de cobro sepa exactamente cuándo es necesario actualizar el servidor y cuándo no, evitando paradas innecesarias y agilizando tu operación diaria.
+
+---
+
 ## [1.3.0] — 2026-04-26 — Ferretería & Retail Edition
 
 ### 🚀 Nuevas Funcionalidades
@@ -44,6 +54,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 
 ---
 
+[1.3.1]: https://github.com/GustavoGines/pos-base-api/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/GustavoGines/pos-base-api/compare/v1.2.4...v1.3.0
 [1.2.4]: https://github.com/GustavoGines/pos-base-api/compare/v1.1.0...v1.2.4
 [1.1.0]: https://github.com/GustavoGines/pos-base-api/releases/tag/v1.1.0

@@ -23,6 +23,25 @@ class SettingController extends Controller
     }
 
     /**
+     * Devuelve la versión actual del backend leyendo public/version.txt
+     */
+    public function versionCheck()
+    {
+        $path = public_path('version.txt');
+        $version = '0.0.0';
+
+        if (file_exists($path)) {
+            $content = file_get_contents($path);
+            // Busca patrón vX.Y.Z o X.Y.Z
+            if (preg_match('/(\d+\.\d+\.\d+)/', $content, $matches)) {
+                $version = $matches[1];
+            }
+        }
+
+        return response()->json(['version' => $version]);
+    }
+
+    /**
      * Actualiza o crea múltiples configuraciones
      * Recibe un JSON tipo: {"company_name": "MyR", "printer_type": "usb", ...}
      */
