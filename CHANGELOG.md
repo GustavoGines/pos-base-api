@@ -23,6 +23,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 - Corregido error 500 al registrar pagos de cuenta corriente bajo ciertas condiciones de facturación.
 - Corregido error donde los reportes de ventas por marca mostraban datos vacíos si la categoría no existía.
 - Mejorada la lógica de anulación de remitos para preservar el historial de auditoría mediante borrado lógico.
+- Eliminado el directorio `updater/` zombie del repositorio del backend. El único actualizador oficial es el que reside en el frontend. Fuente única de verdad.
 
 ---
 
