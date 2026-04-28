@@ -13,23 +13,17 @@ class UserSeeder extends Seeder
      */
     public function run(): void
     {
+        // Usuario Administrador por defecto
+        // PIN: 1234  |  Password: admin1234
+        // ⚠️ El cliente DEBE cambiar el PIN desde Ajustes > Usuarios al primer inicio.
         User::updateOrCreate(
             ['email' => 'admin@pos.com'],
             [
-                'name' => 'Leo',
-                'role' => 'admin',
-                'pin' => Hash::make('1234'),
-                'password' => Hash::make('secret123') // Por si acaso algún día implementan web login
-            ]
-        );
-
-        User::updateOrCreate(
-            ['email' => 'cajero@pos.com'],
-            [
-                'name' => 'Sobrino 1',
-                'role' => 'cashier',
-                'pin' => Hash::make('5678'),
-                'password' => Hash::make('secret123')
+                'name'        => 'Administrador',
+                'role'        => 'admin',
+                'pin'         => Hash::make('1234'),
+                'password'    => Hash::make('admin1234'),
+                'permissions' => json_encode(['void_sales', 'manage_catalog', 'adjust_stock', 'view_global_history']),
             ]
         );
     }

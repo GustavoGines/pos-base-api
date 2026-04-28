@@ -5,7 +5,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 
 ---
 
-## [1.3.0] — 2026-04-26 — Ferretería & Retail Edition
+## [1.3.0] — 2026-04-27 — Ferretería & Retail Edition
 
 ### 🚀 Nuevas Funcionalidades
 - **Motor de Aumentos Masivos:** Nuevo motor de cálculos para actualizar precios de miles de productos en segundos, con soporte de almacenamiento histórico y reversión instantánea para corregir errores.
@@ -18,12 +18,15 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 - **PIN de Rescate (Ghost Master):** Nuevo protocolo de seguridad cifrado que permite al administrador principal recuperar el acceso al sistema en caso de pérdida de credenciales.
 - **Rendimiento de Caché:** Optimización en la limpieza de memoria del servidor tras cada actualización automática, garantizando que el sistema inicie más rápido y sin errores fantasma.
 - **Trazabilidad Estricta:** Mejora profunda en el registro de auditoría; cada movimiento de stock, cierre de caja o cobro ahora queda sellado criptográficamente con el usuario exacto y la lista de precios utilizada.
+- **Seeders de Instalación Limpia:** Los seeders por defecto (`php artisan migrate --seed`) ahora generan una instalación neutral sin datos personales, sin licencias hardcodeadas y sin catálogo de demo. Listo para producción desde el primer comando.
 
 ### 🐛 Fixes
 - Corregido error 500 al registrar pagos de cuenta corriente bajo ciertas condiciones de facturación.
 - Corregido error donde los reportes de ventas por marca mostraban datos vacíos si la categoría no existía.
 - Mejorada la lógica de anulación de remitos para preservar el historial de auditoría mediante borrado lógico.
 - Eliminado el directorio `updater/` zombie del repositorio del backend. El único actualizador oficial es el que reside en el frontend. Fuente única de verdad.
+- **[CRÍTICO] Failsafe de Módulos Premium:** Corregido bug donde el sistema bloqueaba módulos avanzados (`logística`, `cheques`, `listas de precio`) cuando el servidor de licencias respondía sin enviar el campo `business_type`. Ahora `LicenseSyncService` detecta la cuenta como Hardware Store si el plan incluye el módulo `quotes`, garantizando el desbloqueo total independientemente de la completitud del payload remoto.
+- **[CRÍTICO] Bloqueo por Período de Gracia:** Corregido escenario donde restaurar una base de datos con `last_license_check` antiguo causaba que el sistema apareciera como "BLOQUEADO" desde el primer arranque, incluso con licencia válida. La solución es no incluir esa clave en los dumps de instalación.
 
 ---
 

@@ -92,7 +92,7 @@ class LicenseSyncService
                 $this->setSetting('app_plan', $data['plan'] ?? $data['plan_type'] ?? 'basic');
                 
                 // Determinar si es SaaS o Lifetime (DRM Heartbeat)
-                $planMode = $data['plan_mode'] ?? 'saas';
+                $planMode = $data['plan_mode'] ?? $data['plan_type'] ?? 'saas';
                 $this->setSetting('license_plan_mode', $planMode);
                 $this->setSetting('license_is_lifetime', $planMode === 'lifetime' ? '1' : '0');
                 
@@ -194,7 +194,7 @@ class LicenseSyncService
                 $this->setSetting('app_plan', $data['plan'] ?? $data['plan_type'] ?? 'basic');
                 
                 // ✅ FIX: Sincronizar plan_mode para que los cambios SaaS↔Lifetime
-                $planMode = $data['plan_mode'] ?? 'saas';
+                $planMode = $data['plan_mode'] ?? $data['plan_type'] ?? 'saas';
                 $this->setSetting('license_plan_mode', $planMode);
                 $this->setSetting('license_is_lifetime', $planMode === 'lifetime' ? '1' : '0');
 
@@ -286,7 +286,7 @@ class LicenseSyncService
                 $this->setSetting('license_key', $licenseKey);
                 $this->setSetting('app_plan', $plan);
                 
-                $planMode = $data['plan_mode'] ?? 'saas';
+                $planMode = $data['plan_mode'] ?? $data['plan_type'] ?? 'saas';
                 $this->setSetting('license_plan_mode', $planMode); 
                 $this->setSetting('license_is_lifetime', $planMode === 'lifetime' ? '1' : '0');
 
