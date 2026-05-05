@@ -5,6 +5,13 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 
 ---
 
+## [1.3.2] — 2026-05-05 — Validaciones de Catálogo
+
+### 🐛 Fixes
+- **Consistencia de Datos:** Se agregó la regla de validación de unicidad (`unique`) a los nombres de las marcas y categorías en sus respectivos controladores para prevenir duplicados en la base de datos de manera estricta.
+
+---
+
 ## [1.3.1] — 2026-05-04 — OTA Loop Fix
 
 ### 🐛 Fixes
