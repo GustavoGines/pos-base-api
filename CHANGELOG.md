@@ -9,6 +9,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 
 ### 🐛 Fixes
 - **[CRÍTICO] Bucle Infinito de Actualizaciones OTA:** Se agregó la ruta pública `/version-check` requerida por el frontend para validar la versión instalada localmente del backend. Su ausencia causaba que el frontend asumiera la versión `0.0.0` y entrara en un bucle infinito pidiendo actualizaciones ya instaladas.
+- **Validación de Catálogo:** Se agregó regla de unicidad para impedir la creación o edición de productos con nombres duplicados.
 
 ---
 
