@@ -55,7 +55,12 @@ class ProductController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'name' => 'required|string|max:255',
+            'name' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('products')->whereNull('deleted_at')
+            ],
             'barcode' => [
                 'nullable',
                 'string',
@@ -174,7 +179,12 @@ class ProductController extends Controller
     public function update(Request $request, Product $product)
     {
         $validated = $request->validate([
-            'name' => 'sometimes|string|max:255',
+            'name' => [
+                'sometimes',
+                'string',
+                'max:255',
+                Rule::unique('products')->ignore($product->id)->whereNull('deleted_at')
+            ],
             'barcode' => [
                 'nullable',
                 'string',
