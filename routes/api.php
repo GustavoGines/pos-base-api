@@ -44,6 +44,16 @@ Route::get('/system/rescue-migrate', function () {
     return response()->json(['success' => true, 'output' => \Illuminate\Support\Facades\Artisan::output()]);
 });
 
+// Endpoint para que el Frontend verifique la versión local real del backend
+Route::get('/version-check', function () {
+    $path = public_path('version.txt');
+    $version = '0.0.0';
+    if (file_exists($path)) {
+        $version = trim(file_get_contents($path));
+    }
+    return response()->json(['version' => $version]);
+});
+
 // Verificación de turno activo (necesaria antes del login para decidir ruta inicial)
 Route::prefix('shifts')->group(function () {
     // /current sigue siendo pública: necesaria antes del login para decidir la ruta inicial.

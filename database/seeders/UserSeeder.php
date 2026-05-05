@@ -23,7 +23,7 @@ class UserSeeder extends Seeder
                 'role'        => 'admin',
                 'pin'         => Hash::make('1234'),
                 'password'    => Hash::make('admin1234'),
-                'permissions' => json_encode(['void_sales', 'manage_catalog', 'adjust_stock', 'view_global_history']),
+                'permissions' => ['void_sales', 'manage_catalog', 'adjust_stock', 'view_global_history'],
             ]
         );
     }

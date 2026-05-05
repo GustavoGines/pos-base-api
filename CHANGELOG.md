@@ -5,6 +5,13 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 
 ---
 
+## [1.3.1] — 2026-05-04 — OTA Loop Fix
+
+### 🐛 Fixes
+- **[CRÍTICO] Bucle Infinito de Actualizaciones OTA:** Se agregó la ruta pública `/version-check` requerida por el frontend para validar la versión instalada localmente del backend. Su ausencia causaba que el frontend asumiera la versión `0.0.0` y entrara en un bucle infinito pidiendo actualizaciones ya instaladas.
+
+---
+
 ## [1.3.0] — 2026-04-27 — Ferretería & Retail Edition
 
 ### 🚀 Nuevas Funcionalidades
