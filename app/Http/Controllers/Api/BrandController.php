@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Brand;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class BrandController extends Controller
 {
@@ -16,7 +17,7 @@ class BrandController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'name' => 'required|string|max:255',
+            'name' => ['required', 'string', 'max:255', Rule::unique('brands')],
             'description' => 'nullable|string',
         ]);
 
@@ -32,7 +33,7 @@ class BrandController extends Controller
     public function update(Request $request, Brand $brand)
     {
         $validated = $request->validate([
-            'name' => 'sometimes|string|max:255',
+            'name' => ['sometimes', 'string', 'max:255', Rule::unique('brands')->ignore($brand->id)],
             'description' => 'nullable|string',
         ]);
 
