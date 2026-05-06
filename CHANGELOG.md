@@ -5,6 +5,11 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 
 ---
 
+## [1.3.8] - 2026-05-06 - OTA PowerShell Array Fix
+
+### 🚀 Mejoras
+- **Sincronización con Frontend:** Incremento a v1.3.8 para coincidir con el parche definitivo del Frontend que resuelve el problema de destrucción de comillas dobles en PowerShell al usar `.bat` para actualizaciones. No hay cambios de código en la API local.
+
 ## [1.3.7] - 2026-05-06 - Auto-Retry Connection
 
 ### 🚀 Mejoras
