@@ -5,6 +5,13 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 
 ---
 
+## [1.3.3] — 2026-05-06 — Cache & Sync Fix
+
+### 🐛 Fixes
+- **Caché del Actualizador OTA:** Se implementó `clearstatcache()` en el endpoint `/version-check` para garantizar que la verificación de versión evada las memorias caché (como OPcache), resolviendo el falso bucle de actualización en PCs secundarias.
+
+---
+
 ## [1.3.2] — 2026-05-05 — Validaciones de Catálogo
 
 ### 🐛 Fixes

@@ -47,6 +47,7 @@ Route::get('/system/rescue-migrate', function () {
 // Endpoint para que el Frontend verifique la versión local real del backend
 Route::get('/version-check', function () {
     $path = public_path('version.txt');
+    clearstatcache(true, $path);
     $version = '0.0.0';
     if (file_exists($path)) {
         $version = trim(file_get_contents($path));
