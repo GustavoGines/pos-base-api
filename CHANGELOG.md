@@ -5,6 +5,11 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 
 ---
 
+## [1.3.4] - 2026-05-06 - OTA Path Fix (Sincronización con Frontend)
+
+### 🚀 Mejoras
+- **Sincronización de Versiones:** Incremento de versión a v1.3.4 para mantener paridad con el frontend, el cual recibió mejoras vitales en la descarga OTA de archivos ZIP hacia la carpeta `%TEMP%`. No hay cambios de código en la API.
+
 ## [1.3.3] — 2026-05-06 — Cache & Sync Fix
 
 ### 🐛 Fixes
