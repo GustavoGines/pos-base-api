@@ -52,7 +52,10 @@ Route::get('/version-check', function () {
     if (file_exists($path)) {
         $version = trim(file_get_contents($path));
     }
-    return response()->json(['version' => $version]);
+    return response()->json(['version' => $version])
+        ->header('Cache-Control', 'no-cache, no-store, must-revalidate')
+        ->header('Pragma', 'no-cache')
+        ->header('Expires', '0');
 });
 
 // Verificación de turno activo (necesaria antes del login para decidir ruta inicial)

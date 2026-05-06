@@ -5,6 +5,11 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 
 ---
 
+## [1.3.5] - 2026-05-06 - Strict Cache Busting Fix
+
+### 🐛 Fixes
+- **HTTP Cache Control:** Implementadas las cabeceras HTTP `Cache-Control: no-cache, no-store` en el endpoint `/version-check` para garantizar que absolutamente ningún proxy, router de red o caché local impida que las PCs secundarias reciban la última versión detectada, eliminando el falso bucle de actualización "Actualizar servidor".
+
 ## [1.3.4] - 2026-05-06 - OTA Path Fix (Sincronización con Frontend)
 
 ### 🚀 Mejoras
