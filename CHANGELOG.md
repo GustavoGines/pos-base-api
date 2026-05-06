@@ -5,6 +5,11 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 
 ---
 
+## [1.3.6] - 2026-05-06 - Dynamic Network IP Sync
+
+### 🚀 Mejoras
+- **Sincronización con Frontend:** Incremento a v1.3.6 para coincidir con el parche crítico del Frontend donde las PCs secundarias ahora consultan la IP dinámica de red en lugar de `127.0.0.1` para la verificación de versiones locales. No hay cambios de código en la API local.
+
 ## [1.3.5] - 2026-05-06 - Strict Cache Busting Fix
 
 ### 🐛 Fixes
