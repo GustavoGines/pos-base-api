@@ -5,6 +5,11 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 
 ---
 
+## [1.3.7] - 2026-05-06 - Auto-Retry Connection
+
+### 🚀 Mejoras
+- **Sincronización con Frontend:** Incremento a v1.3.7 para coincidir con el parche de calidad de vida del Frontend (Reintento de conexión automático). No hay cambios de código en la API local.
+
 ## [1.3.6] - 2026-05-06 - Dynamic Network IP Sync
 
 ### 🚀 Mejoras
