@@ -27,7 +27,16 @@ jobs:
         
       - name: Package Release
         run: |
-          zip -r update_backend_${{ github.ref_name }}.zip . -x ".git/*" -x "*.git*" -x ".env*" -x "storage/*" -x "tests/*" -x "node_modules/*"
+          zip -r update_backend_${{ github.ref_name }}.zip . \
+            -x ".git/*" \
+            -x "*.git*" \
+            -x ".env*" \
+            -x "storage/*" \
+            -x "tests/*" \
+            -x "node_modules/*" \
+            -x "updater_log.txt" \
+            -x "ota_result.txt" \
+            -x "ota_pending.json"
           
       - name: Upload to Cloudflare R2
         env:
