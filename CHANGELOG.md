@@ -5,10 +5,11 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 
 ---
 
-## [1.3.8] - 2026-05-06 - OTA PowerShell Array Fix
+## [1.3.8] - 2026-05-07 - OTA Distribution Fix
 
-### 🚀 Mejoras
-- **Sincronización con Frontend:** Incremento a v1.3.8 para coincidir con el parche definitivo del Frontend que resuelve el problema de destrucción de comillas dobles en PowerShell al usar `.bat` para actualizaciones. No hay cambios de código en la API local.
+### 🐛 Fixes
+- **Empaquetado OTA:** El workflow de GitHub Actions ahora excluye correctamente `updater_log.txt`, `ota_result.txt` y `ota_pending.json` del ZIP de distribución. Anteriormente estos archivos de diagnóstico se sobreescribían al instalar el update, corrompiendo el log de la sesión activa y el resultado que el frontend lee para confirmar el éxito.
+- **`.gitignore`:** Agregados explícitamente los archivos de diagnóstico OTA para que nunca sean trackeados por git en ningún entorno.
 
 ## [1.3.7] - 2026-05-06 - Auto-Retry Connection
 

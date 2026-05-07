@@ -22,3 +22,8 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Archivos de diagnóstico OTA (generados en tiempo de ejecución, no distribuir)
+updater_log.txt
+ota_result.txt
+ota_pending.json
