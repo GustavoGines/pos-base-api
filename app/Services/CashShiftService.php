@@ -15,24 +15,22 @@ class CashShiftService
      */
     public function hasMultiCajaPermission(): bool
     {
-        // Plan PRO/Enterprise incluye TODOS los módulos sin necesidad de addons explícitos.
-        $planType = BusinessSetting::where('key', 'license_plan_type')->value('value');
-        if (in_array($planType, ['pro', 'enterprise'])) {
+        // 1. Revisar el diccionario de features explícitas (SaaS)
+        $featuresJson = BusinessSetting::where('key', 'license_features_dict')->value('value');
+        if (!empty($featuresJson)) {
+            $decoded = json_decode($featuresJson, true);
+            if (is_array($decoded) && !empty($decoded['multi_caja'])) {
+                return true;
+            }
+        }
+
+        // 2. Failsafe por plan: Plan PRO/Premium incluye TODOS los módulos sin necesidad de addons explícitos.
+        $planType = strtolower(BusinessSetting::where('key', 'app_plan')->value('value') ?? '');
+        if (in_array($planType, ['pro', 'premium'])) {
             return true;
         }
 
-        // Plan Básico: Verificar si tiene el addon específico 'multi_caja'
-        $addonsJson = BusinessSetting::where('key', 'license_allowed_addons')->value('value');
-        $addons = [];
-        if ($addonsJson) {
-            $parsed = json_decode($addonsJson, true);
-            if (is_array($parsed)) {
-                $addons = $parsed;
-            } else if (is_string($parsed)) {
-                $addons = json_decode($parsed, true) ?? [];
-            }
-        }
-        return in_array('multi_caja', $addons);
+        return false;
     }
 
     /**

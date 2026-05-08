@@ -28,9 +28,14 @@ Route::prefix('auth')->group(function () {
     // Autorización puntual (AdminPinDialog): valida PIN SIN emitir token ni tocar sesiones
     Route::post('/authorize-pin', [AuthController::class, 'authorizePin'])->middleware('throttle:10,1');
 
+    // Validación silenciosa del token al arranque de la app (Crash Recovery)
+    // Pública para que funcione antes del primer login y sin middleware de sesión.
+    Route::get('/me', [AuthController::class, 'me'])->middleware('throttle:30,1');
+
     // Logout: requiere el token actual para poder nullificarlo
     Route::post('/logout', [AuthController::class, 'logout']);
 });
+
 
 // Lectura de configuración pública — necesaria en el arranque de la app ANTES del login
 Route::get('/settings', [SettingController::class, 'index']);

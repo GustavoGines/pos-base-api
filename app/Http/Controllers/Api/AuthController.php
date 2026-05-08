@@ -146,6 +146,48 @@ class AuthController extends Controller
     }
 
     /**
+     * GET /api/auth/me
+     *
+     * Valida que el token restaurado desde SharedPreferences todavía sea válido
+     * en la BD. Se llama al arranque de la app para evitar operar con un token
+     * stale (de una sesión anterior ya invalidada por otro login).
+     *
+     * Responde 200 + datos del usuario si el token es válido.
+     * Responde 401 SESSION_EXPIRED si el token no existe en BD.
+     * NO requiere middleware: funciona con token en header X-Session-Token.
+     */
+    public function me(Request $request)
+    {
+        $token = $request->header('X-Session-Token');
+
+        if (!$token) {
+            return response()->json([
+                'message'    => 'No autenticado.',
+                'error_code' => 'SESSION_MISSING',
+            ], 401);
+        }
+
+        $user = User::where('session_token', $token)->first();
+
+        if (!$user) {
+            return response()->json([
+                'message'    => 'Tu sesión fue cerrada porque otro dispositivo inició sesión con tu usuario.',
+                'error_code' => 'SESSION_EXPIRED',
+            ], 401);
+        }
+
+        return response()->json([
+            'user' => [
+                'id'          => $user->id,
+                'name'        => $user->name,
+                'email'       => $user->email,
+                'role'        => $user->role,
+                'permissions' => $user->permissions ?? [],
+            ],
+        ]);
+    }
+
+    /**
      * POST /api/auth/logout
      *
      * Invalida la sesión activa del usuario: pone session_token = NULL en BD.

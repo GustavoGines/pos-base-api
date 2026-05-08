@@ -128,8 +128,8 @@ class LicenseSyncService
                 BusinessSetting::whereIn('key', ['license_addons', 'license_allowed_addons'])->delete();
                 
                 $this->setSetting('last_license_check', now()->toIso8601String());
-            } else if ($response->status() === 401 || $response->status() === 403) {
-                // 401/403: Licencia suspendida, revocada o inválida
+            } else if ($response->status() === 401 || $response->status() === 403 || $response->status() === 404) {
+                // 401/403/404: Licencia suspendida, revocada o inválida
                 $this->setSetting('app_plan', 'blocked');
             } else {
                 // 500 u otros errores del servidor: Tratar como "Falla de Internet"
@@ -215,13 +215,20 @@ class LicenseSyncService
                 if (in_array($planLower, ['premium', 'pro'])) {
                     $features['multi_caja'] = $features['multi_caja'] ?? true;
                     $features['advanced_reports'] = $features['advanced_reports'] ?? true;
+                    $features['multiple_prices'] = $features['multiple_prices'] ?? true;
+                    $features['cheques'] = $features['cheques'] ?? true;
+                    $features['predictive_alerts'] = $features['predictive_alerts'] ?? true;
                     
-                    $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store' || !empty($features['quotes']);
+                    $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store';
+                    
                     if ($isHardwareStore) {
-                        $features['multiple_prices'] = $features['multiple_prices'] ?? true;
+                        $features['quotes'] = $features['quotes'] ?? true;
                         $features['logistics'] = $features['logistics'] ?? true;
-                        $features['cheques'] = $features['cheques'] ?? true;
-                        $features['predictive_alerts'] = $features['predictive_alerts'] ?? true;
+                    } else {
+                        // Si se cambió a Retail, forzamos a desactivar los módulos exclusivos de Ferretería
+                        // para que no queden "pegados" en caso de que el JSON del servidor remoto no esté limpio.
+                        $features['quotes'] = false;
+                        $features['logistics'] = false;
                     }
                 }
                 $this->setSetting('license_features_dict', json_encode($features));
@@ -230,8 +237,8 @@ class LicenseSyncService
                 BusinessSetting::whereIn('key', ['license_addons', 'license_allowed_addons'])->delete();
                 
                 $this->setSetting('last_license_check', now()->toIso8601String());
-            } else if ($response->status() === 401 || $response->status() === 403) {
-                // Si está revocada, actualizamos a blocked y tiramos error
+            } else if ($response->status() === 401 || $response->status() === 403 || $response->status() === 404) {
+                // Si está revocada o eliminada, actualizamos a blocked y tiramos error
                 $this->setSetting('app_plan', 'blocked');
                 throw new \Exception('La licencia ha sido suspendida, revocada o es inválida.');
             } else {
@@ -306,7 +313,7 @@ class LicenseSyncService
                 return $plan;
             }
 
-            if ($response->status() === 403 || $response->status() === 401) {
+            if ($response->status() === 403 || $response->status() === 401 || $response->status() === 404) {
                 throw new \Exception('La clave de licencia es inválida o está en uso en otra sucursal.');
             }
 
