@@ -267,11 +267,11 @@ class PosController extends Controller
                 ]);
             }
 
-            // Si proviene de un presupuesto, cerrarlo
+            // Si proviene de un presupuesto, marcarlo como aprobado
             if (!empty($validated['quote_id'])) {
                 $quote = Quote::find($validated['quote_id']);
-                if ($quote && $quote->status !== 'closed') {
-                    $quote->update(['status' => 'closed']);
+                if ($quote && $quote->status !== 'approved') {
+                    $quote->update(['status' => 'approved']);
                 }
             }
 
