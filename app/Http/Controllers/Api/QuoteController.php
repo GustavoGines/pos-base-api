@@ -101,7 +101,7 @@ class QuoteController extends Controller
                 'customer_name'  => $validated['customer_name'] ?? null,
                 'customer_phone' => $validated['customer_phone'] ?? null,
                 'notes'          => $validated['notes'] ?? null,
-                'valid_until'    => $validated['valid_until'] ?? null,
+                'valid_until'    => $validated['valid_until'] ?? now()->addDays(7)->toDateString(),
                 'user_id'        => $validated['user_id'] ?? null,
                 'price_list'     => $validated['price_list'] ?? 'base',
             ]);
