@@ -4,10 +4,10 @@ Todos los cambios notables del servidor Laravel (API local On-Premise) están do
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el proyecto adhiere a [Semantic Versioning](https://semver.org/).
 
 ---
-## [1.3.9] - 2026-05-08 - Quote Status Hotfix
+## [1.3.9] - 2026-05-08 - Actualización de Precios Dinámicos y Estabilidad de Cajas
 
-### 🐛 Fixes
-- **Ventas y Presupuestos:** Se corrigió un error crítico `500 Internal Server Error` que ocurría al intentar facturar un presupuesto recuperado. El backend ahora actualiza el estado del presupuesto a `approved` en lugar del estado inválido `closed` que rompía la validación ENUM de MySQL.
+### 🐛 Mejoras de Estabilidad
+- **Gestión de Presupuestos:** Se solucionó un inconveniente que bloqueaba la facturación de presupuestos recuperados. El sistema ahora procesa correctamente el cambio de estado, asegurando una transición fluida desde la cotización hasta la venta final sin errores del servidor.
 
 
 
