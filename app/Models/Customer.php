@@ -20,12 +20,14 @@ class Customer extends Model
         'is_active',
         'default_price_tier',
         'delivery_address',
+        'is_internal_account',
     ];
 
     protected $casts = [
         'credit_limit' => 'decimal:2',
         'balance' => 'decimal:2',
         'is_active' => 'boolean',
+        'is_internal_account' => 'boolean',
     ];
 
     /**

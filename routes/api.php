@@ -115,6 +115,7 @@ Route::middleware(['session.validate'])->group(function () {
     Route::post('/sales/{sale}/void', [SalesController::class, 'void']);
     Route::put('/sales/{sale}/pay', [SalesController::class, 'pay']);
     Route::get('/sales/{sale}/ticket-pdf', [SalesController::class, 'ticketPdf']);
+    Route::get('/sales/{sale}', [SalesController::class, 'show']);
 
     // ── Clientes: cuentas corrientes (escritura) ─────────────────────
     Route::apiResource('customers', CustomerController::class)->except(['index', 'show']);
@@ -183,6 +184,7 @@ Route::middleware(['session.validate'])->group(function () {
         Route::get('/reports/sales-by-category/pdf',    [\App\Http\Controllers\Api\ReportController::class, 'exportPdfByCategory']);
         Route::get('/reports/sales-by-category',        [\App\Http\Controllers\Api\ReportController::class, 'profitByCategory']);
         Route::get('/reports/sales-by-brand',            [\App\Http\Controllers\Api\ReportController::class, 'profitByBrand']);
+        Route::get('/reports/internal-consumption',     [\App\Http\Controllers\Api\ReportController::class, 'internalConsumption']);
         Route::get('/reports/monthly-balance/export',   [\App\Http\Controllers\Api\ReportController::class, 'exportMonthlyBalanceExcel']);
         Route::get('/reports/monthly-balance/pdf',      [\App\Http\Controllers\Api\ReportController::class, 'exportMonthlyBalancePdf']);
         Route::get('/reports/monthly-balance',           [\App\Http\Controllers\Api\ReportController::class, 'monthlyBalance']);

@@ -4,6 +4,18 @@ Todos los cambios notables del servidor Laravel (API local On-Premise) están do
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el proyecto adhiere a [Semantic Versioning](https://semver.org/).
 
 ---
+## [1.4.0] - 2026-05-09 - Cuentas de Consumo Interno, Pagos Mixtos y Blindaje de Turnos
+
+### 🚀 Nuevas Funcionalidades (Mejoras en el Servidor)
+- **Motor de Pagos Combinados:** El servidor ahora soporta recibir cobros divididos para Cuentas Corrientes. Esto significa que un cliente puede venir y pagar su deuda usando mitad efectivo y mitad transferencia en un solo paso, de manera 100% segura y automática.
+- **Gestión de Consumo Interno:** El servidor central ahora distingue inteligentemente entre ventas reales y mercadería retirada por los dueños o socios. Estos retiros ya no inflarán falsamente las estadísticas de tus productos más vendidos.
+- **Reporte de Consumo Valorizado:** Se agregó la capacidad matemática al servidor para calcular exactamente cuánta plata (al costo) fue retirada del negocio para uso interno, permitiendo auditar estas salidas en la sección de Reportes.
+- **Precisión en Arqueos de Caja:** Se actualizaron las calculadoras financieras del Cierre de Caja para contabilizar por separado las "Ventas Fiadas" (Cuenta Corriente). ¡Tus números de efectivo y tarjetas ahora serán mucho más exactos!
+
+### 🐛 Correcciones y Estabilidad
+- **Blindaje Total de Cajas (Multi-Terminal):** Reforzamos la seguridad del sistema en redes con múltiples cajas. Se solucionó un defecto técnico donde una caja secundaria que se quedaba sin turno activo intentaba "pedir prestado" el turno de la caja principal para guardar la venta. Ahora, el sistema bloquea esto y obliga a cada venta a registrarse estrictamente en la caja física de donde salió.
+
+---
 ## [1.3.9] - 2026-05-08 - Actualización de Precios Dinámicos y Estabilidad de Cajas
 
 ### 🐛 Mejoras de Estabilidad

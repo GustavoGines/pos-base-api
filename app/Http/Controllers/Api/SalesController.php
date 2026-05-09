@@ -43,12 +43,9 @@ class SalesController extends Controller
             if ($shiftId) {
                 $query->where('cash_shift_id', $shiftId);
             } else {
-                $openShift = CashShift::whereNull('closed_at')->latest()->first();
-                if ($openShift) {
-                    $query->where('cash_shift_id', $openShift->id);
-                } else {
-                    return response()->json([]);
-                }
+                // En un entorno Multi-Caja, si no envían shiftId, significa que la terminal 
+                // actual no tiene un turno abierto. No debemos adivinar usando el último turno global.
+                return response()->json([]);
             }
         }
 
@@ -57,6 +54,22 @@ class SalesController extends Controller
         }
 
         return response()->json($query->get());
+    }
+
+    /**
+     * GET /api/sales/{sale}
+     * Devuelve una venta específica con todos sus ítems, pagos y cliente.
+     */
+    public function show(Sale $sale)
+    {
+        $sale->load([
+            'items.product:id,name,internal_code,is_sold_by_weight',
+            'user:id,name',
+            'customer:id,name,document_number',
+            'payments.paymentMethod:id,name,code,is_cash',
+        ]);
+
+        return response()->json($sale);
     }
 
     /**
@@ -213,13 +226,20 @@ class SalesController extends Controller
                 }
             }
 
-            $currentDue = $sale->amount_due > 0 ? $sale->amount_due : 0; // for cuenta corriente, logic could be more complex, but we assume paid in full for pending recall for now.
+            $currentDue = $sale->amount_due > 0 ? $sale->amount_due : 0;
 
-            $itemsToCount = isset($validated['items']) ? $sale->items : $sale->items;
-            // Actually, if recall happened, the items are already in $sale->items after delete/re-insert above.
-            foreach ($sale->items as $item) {
-                if ($item->product) {
-                    $item->product->increment('sales_count', (int) $item->quantity);
+            // Hotfix: verificar si el cliente es cuenta interna para no inflar sales_count
+            $isInternalSale = $sale->customer_id
+                && \App\Models\Customer::where('id', $sale->customer_id)
+                                       ->where('is_internal_account', true)
+                                       ->exists();
+
+            // Solo incrementamos el contador de ventas para clientes reales (no cuentas internas)
+            if (!$isInternalSale) {
+                foreach ($sale->items as $item) {
+                    if ($item->product) {
+                        $item->product->increment('sales_count', (int) $item->quantity);
+                    }
                 }
             }
 

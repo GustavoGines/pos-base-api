@@ -50,6 +50,12 @@ class ReportController extends Controller
             ')
             ->whereBetween('sales.created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
             ->where('sales.status', 'completed')
+            ->whereNotExists(function ($query) {
+                $query->select(DB::raw(1))
+                      ->from('customers')
+                      ->whereColumn('customers.id', 'sales.customer_id')
+                      ->where('customers.is_internal_account', true);
+            })
             ->groupBy('products.category_id', 'categories.name', 'products.id', 'products.name')
             ->get();
 
@@ -115,6 +121,12 @@ class ReportController extends Controller
             ')
             ->whereBetween('sales.created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
             ->where('sales.status', 'completed')
+            ->whereNotExists(function ($query) {
+                $query->select(DB::raw(1))
+                      ->from('customers')
+                      ->whereColumn('customers.id', 'sales.customer_id')
+                      ->where('customers.is_internal_account', true);
+            })
             ->groupBy('products.brand_id', 'brands.name', 'products.id', 'products.name')
             ->get();
 
@@ -175,11 +187,23 @@ class ReportController extends Controller
             ')
             ->whereBetween('sales.created_at', [$prevStart . ' 00:00:00', $prevEnd . ' 23:59:59'])
             ->where('sales.status', 'completed')
+            ->whereNotExists(function ($query) {
+                $query->select(DB::raw(1))
+                      ->from('customers')
+                      ->whereColumn('customers.id', 'sales.customer_id')
+                      ->where('customers.is_internal_account', true);
+            })
             ->first();
 
         $dailySales = DB::table('sales')
             ->whereBetween('created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
             ->where('status', 'completed')
+            ->whereNotExists(function ($query) {
+                $query->select(DB::raw(1))
+                      ->from('customers')
+                      ->whereColumn('customers.id', 'sales.customer_id')
+                      ->where('customers.is_internal_account', true);
+            })
             ->selectRaw('DATE(created_at) as date, SUM(total) as daily_revenue')
             ->groupByRaw('DATE(created_at)')
             ->orderByRaw('DATE(created_at) ASC')
@@ -229,11 +253,23 @@ class ReportController extends Controller
             ')
             ->whereBetween('sales.created_at', [$prevStart . ' 00:00:00', $prevEnd . ' 23:59:59'])
             ->where('sales.status', 'completed')
+            ->whereNotExists(function ($query) {
+                $query->select(DB::raw(1))
+                      ->from('customers')
+                      ->whereColumn('customers.id', 'sales.customer_id')
+                      ->where('customers.is_internal_account', true);
+            })
             ->first();
 
         $dailySales = DB::table('sales')
             ->whereBetween('created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
             ->where('status', 'completed')
+            ->whereNotExists(function ($query) {
+                $query->select(DB::raw(1))
+                      ->from('customers')
+                      ->whereColumn('customers.id', 'sales.customer_id')
+                      ->where('customers.is_internal_account', true);
+            })
             ->selectRaw('DATE(created_at) as date, SUM(total) as daily_revenue')
             ->groupByRaw('DATE(created_at)')
             ->orderByRaw('DATE(created_at) ASC')
@@ -295,6 +331,12 @@ class ReportController extends Controller
             ->selectRaw('COALESCE(price_list, "base") as plan_name, COUNT(*) as total_tickets, SUM(total) as total_revenue')
             ->whereBetween('created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
             ->where('status', 'completed')
+            ->whereNotExists(function ($query) {
+                $query->select(DB::raw(1))
+                      ->from('customers')
+                      ->whereColumn('customers.id', 'sales.customer_id')
+                      ->where('customers.is_internal_account', true);
+            })
             ->groupByRaw('COALESCE(price_list, "base")')
             ->orderByDesc('total_revenue')
             ->get();
@@ -326,6 +368,12 @@ class ReportController extends Controller
             ->join('sales',    'sales.id',    '=', 'sale_items.sale_id')
             ->join('products', 'products.id', '=', 'sale_items.product_id')
             ->where('sales.status', 'completed')
+            ->whereNotExists(function ($query) {
+                $query->select(DB::raw(1))
+                      ->from('customers')
+                      ->whereColumn('customers.id', 'sales.customer_id')
+                      ->where('customers.is_internal_account', true);
+            })
             ->whereBetween('sales.created_at', [
                 $startDate->toDateTimeString(),
                 $endDate->toDateTimeString(),
@@ -441,4 +489,40 @@ class ReportController extends Controller
         return $pdf->download('balance_mensual_' . $startMonth . '_al_' . $endMonth . '.pdf');
     }
 
+
+    public function internalConsumption(Request $request)
+    {
+        $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
+        $endDate   = $request->query('end_date',   Carbon::now()->endOfMonth()->toDateString());
+
+        $report = SaleItem::join('sales', 'sales.id', '=', 'sale_items.sale_id')
+            ->join('products', 'products.id', '=', 'sale_items.product_id')
+            ->join('customers', 'customers.id', '=', 'sales.customer_id')
+            ->where('customers.is_internal_account', true)
+            ->whereBetween('sales.created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
+            ->where('sales.status', 'completed')
+            ->selectRaw('
+                products.id as product_id, 
+                products.name as product_name, 
+                SUM(sale_items.quantity) as total_quantity, 
+                SUM(
+                    CASE
+                        WHEN sale_items.unit_cost_price IS NOT NULL AND sale_items.unit_cost_price > 0
+                        THEN sale_items.unit_cost_price * sale_items.quantity
+                        WHEN products.cost_price IS NOT NULL AND products.cost_price > 0
+                        THEN products.cost_price * sale_items.quantity
+                        ELSE 0
+                    END
+                ) as total_cost
+            ')
+            ->groupBy('products.id', 'products.name')
+            ->get();
+
+        return response()->json([
+            'start_date' => $startDate,
+            'end_date'   => $endDate,
+            'data'       => $report,
+        ]);
+    }
 }
+

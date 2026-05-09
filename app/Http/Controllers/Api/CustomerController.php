@@ -50,6 +50,7 @@ class CustomerController extends Controller
             'balance'         => 'nullable|numeric',
             'default_price_tier' => 'nullable|string|in:base,wholesale,card',
             'delivery_address' => 'nullable|string|max:500',
+            'is_internal_account' => 'nullable|boolean',
         ], [
             'name.required'            => 'El nombre del cliente es obligatorio.',
             'document_number.required' => 'El número de documento es obligatorio.',
@@ -96,6 +97,7 @@ class CustomerController extends Controller
             'is_active'       => 'sometimes|boolean',
             'default_price_tier' => 'nullable|string|in:base,wholesale,card',
             'delivery_address' => 'nullable|string|max:500',
+            'is_internal_account' => 'sometimes|boolean',
         ], [
             'name.required'            => 'El nombre del cliente es obligatorio.',
             'document_number.required' => 'El número de documento es obligatorio.',
@@ -148,31 +150,42 @@ class CustomerController extends Controller
     public function registerPayment(Request $request, Customer $customer)
     {
         $request->validate([
-            'amount'         => 'required|numeric|gt:0',
-            'payment_method' => 'required|string|in:cash,card,transfer,cheque',
-            'description'    => 'nullable|string|max:255',
-            'sale_ids'       => 'nullable|array',
-            'sale_ids.*'     => 'integer|exists:sales,id',
-            'check_details'  => 'nullable|array|required_if:payment_method,cheque',
+            'payments'          => 'sometimes|array',
+            'payments.*.method' => 'required_with:payments|string|in:cash,card,transfer,cheque',
+            'payments.*.amount' => 'required_with:payments|numeric|gt:0',
+            'payments.*.check_details' => 'nullable|array',
+            'amount'            => 'required_without:payments|numeric|gt:0',
+            'payment_method'    => 'required_without:payments|string|in:cash,card,transfer,cheque',
+            'description'       => 'nullable|string|max:255',
+            'sale_ids'          => 'nullable|array',
+            'sale_ids.*'        => 'integer|exists:sales,id',
+            'check_details'     => 'nullable|array|required_if:payment_method,cheque',
         ]);
 
-        $amount = (float) $request->amount;
-        $paymentMethod = $request->payment_method;
+        $payments = $request->filled('payments') ? $request->payments : [
+            [
+                'method' => $request->payment_method,
+                'amount' => (float) $request->amount,
+                'check_details' => $request->check_details
+            ]
+        ];
+
+        $totalAmount = array_sum(array_column($payments, 'amount'));
 
         try {
-            $transaction = DB::transaction(function () use ($customer, $amount, $paymentMethod, $request) {
+            $transaction = DB::transaction(function () use ($customer, $totalAmount, $payments, $request) {
                 $lockedCustomer = Customer::where('id', $customer->id)->lockForUpdate()->first();
 
-                if ($amount > $lockedCustomer->balance) {
+                if ($totalAmount > $lockedCustomer->balance) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
-                        'amount' => ["El monto del abono (\${$amount}) no puede superar el saldo actual de la deuda (\${$lockedCustomer->balance})."]
+                        'amount' => ["El monto del abono (\${$totalAmount}) no puede superar el saldo actual de la deuda (\${$lockedCustomer->balance})."]
                     ]);
                 }
 
-                $activeShift = CashShift::where('status', 'open')->first();
+                $activeShift = CashShift::where('status', 'open')->latest('id')->first();
 
                 $description = $request->filled('description') ? $request->description : 'Abono en caja';
-                $remainingAmount = $amount;
+                $remainingAmount = $totalAmount;
                 $processedSales = [];
 
                 // ── Distribuir a tickets específicos o a los más antiguos pendientes ──────────────────────
@@ -215,37 +228,43 @@ class CustomerController extends Controller
                 }
 
                 // ── Siempre reducir el balance global del cliente ────────────
-                $lockedCustomer->balance -= $amount;
+                $lockedCustomer->balance -= $totalAmount;
                 $lockedCustomer->save();
 
-                // ── Crear registro inmutable en el Ledger ────────────────────
-                $trx = CustomerTransaction::create([
-                    'customer_id'            => $lockedCustomer->id,
-                    'user_id'                => $request->attributes->get('authenticated_user')?->id ?? 1,
-                    'cash_shift_id'          => $activeShift ? $activeShift->id : null,
-                    'sale_id'                => count($processedSales) === 1 ? $processedSales[0] : null,
-                    'type'                   => 'payment',
-                    'payment_method'         => $paymentMethod,
-                    'amount'                 => $amount,
-                    'balance_after'          => $lockedCustomer->balance,
-                    'description'            => $description,
-                ]);
+                // ── Crear registros inmutables en el Ledger por cada método de pago ──
+                foreach ($payments as $payment) {
+                    $paymentAmount = (float) $payment['amount'];
+                    $paymentMethod = $payment['method'];
 
-                // ── Crear cheque si aplica ───────────────────────────────────
-                if ($paymentMethod === 'cheque' && $request->filled('check_details')) {
-                    ThirdPartyCheck::create([
-                        'cash_shift_id'   => $activeShift ? $activeShift->id : null,
-                        'customer_id'     => $lockedCustomer->id,
-                        'sale_id'         => count($processedSales) === 1 ? $processedSales[0] : null,
-                        'bank_name'       => $request->check_details['bank_name'],
-                        'check_number'    => $request->check_details['check_number'],
-                        'issuer_cuit'     => $request->check_details['issuer_cuit'],
-                        'issuer_name'     => $request->check_details['issuer_name'],
-                        'issue_date'      => $request->check_details['issue_date'],
-                        'payment_date'    => $request->check_details['payment_date'],
-                        'amount'          => $amount,
-                        'status'          => 'in_wallet',
+                    $trx = CustomerTransaction::create([
+                        'customer_id'            => $lockedCustomer->id,
+                        'user_id'                => $request->attributes->get('authenticated_user')?->id ?? 1,
+                        'cash_shift_id'          => $activeShift ? $activeShift->id : null,
+                        'sale_id'                => count($processedSales) === 1 ? $processedSales[0] : null,
+                        'type'                   => 'payment',
+                        'payment_method'         => $paymentMethod,
+                        'amount'                 => $paymentAmount,
+                        'balance_after'          => $lockedCustomer->balance, // Refleja el final
+                        'description'            => $description,
                     ]);
+
+                    // ── Crear cheque si aplica ───────────────────────────────────
+                    if ($paymentMethod === 'cheque' && isset($payment['check_details'])) {
+                        $cd = $payment['check_details'];
+                        ThirdPartyCheck::create([
+                            'cash_shift_id'   => $activeShift ? $activeShift->id : null,
+                            'customer_id'     => $lockedCustomer->id,
+                            'sale_id'         => count($processedSales) === 1 ? $processedSales[0] : null,
+                            'bank_name'       => $cd['bank_name'] ?? '',
+                            'check_number'    => $cd['check_number'] ?? '',
+                            'issuer_cuit'     => $cd['issuer_cuit'] ?? '',
+                            'issuer_name'     => $cd['issuer_name'] ?? '',
+                            'issue_date'      => $cd['issue_date'] ?? now()->toDateString(),
+                            'payment_date'    => $cd['payment_date'] ?? now()->toDateString(),
+                            'amount'          => $paymentAmount,
+                            'status'          => 'in_wallet',
+                        ]);
+                    }
                 }
 
                 return $trx;

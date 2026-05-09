@@ -28,6 +28,8 @@ class CashShift extends Model
         'check_sales',
         'check_count',
         'check_details',
+        'cc_sales',
+        'cc_sales_count',
         'status',
     ];
 
@@ -43,6 +45,7 @@ class CashShift extends Model
         'card_sales'       => 'decimal:2',
         'transfer_sales'   => 'decimal:2',
         'total_surcharge'  => 'decimal:2',
+        'cc_sales'         => 'decimal:2',
     ];
 
     /**

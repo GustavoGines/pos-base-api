@@ -168,6 +168,16 @@ class CashShiftService
                 ->get(['id', 'bank_name', 'check_number', 'amount', 'payment_date', 'issuer_name'])
                 ->toArray();
 
+            // Ventas en Cuenta Corriente (deuda registrada, no flujo de caja inmediato)
+            $ccSales = \App\Models\SalePayment::whereHas('sale', fn($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+                ->whereHas('paymentMethod', fn($q) => $q->where('code', 'cuenta_corriente'))
+                ->sum('total_amount');
+
+            $ccSalesCount = \App\Models\Sale::where('cash_shift_id', $shiftId)
+                ->where('status', 'completed')
+                ->whereHas('payments.paymentMethod', fn($q) => $q->where('code', 'cuenta_corriente'))
+                ->count();
+
             // El efectivo físico esperado en la gaveta = Fondo Inicial + SOLO pagos en métodos is_cash
             $expectedBalance = $shift->opening_balance + $cashSales;
             
@@ -186,6 +196,8 @@ class CashShiftService
                 'check_sales'       => $checkSales,
                 'check_count'       => $checkCount,
                 'check_details'     => json_encode($checkDetails),
+                'cc_sales'          => $ccSales,
+                'cc_sales_count'    => $ccSalesCount,
                 'status'            => 'closed',
                 'closed_by_user_id' => $closerUserId,
             ]);

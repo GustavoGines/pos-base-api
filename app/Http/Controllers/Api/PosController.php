@@ -156,6 +156,12 @@ class PosController extends Controller
             $requiresDispatch = $request->input('requires_dispatch', false);
             $fulfillmentStatus = $request->input('fulfillment_status', 'pending');
 
+            // ── Hotfix: cuentas internas no inflan el sales_count estadístico ──
+            $isInternalAccount = !empty($validated['customer_id'])
+                && \App\Models\Customer::where('id', $validated['customer_id'])
+                                       ->where('is_internal_account', true)
+                                       ->exists();
+
             foreach ($validated['items'] as $itemData) {
                 $product = Product::findOrFail($itemData['product_id']);
 
@@ -212,13 +218,19 @@ class PosController extends Controller
                         }
                         
                         // Al producto Padre/Combo solo le subimos el contador estadístico de ventas
-                        $product->sales_count += (int) $itemData['quantity'];
+                        // (solo si NO es cuenta interna, para no inflar los reportes de popularidad)
+                        if (!$isInternalAccount) {
+                            $product->sales_count += (int) $itemData['quantity'];
+                        }
                         $product->save();
-                        
+
                     } else {
                         // Producto normal unitario
                         $product->stock -= $itemData['quantity'];
-                        $product->sales_count += (int) $itemData['quantity'];
+                        // Solo actualizar el contador si el comprador es un cliente real (no cuenta interna)
+                        if (!$isInternalAccount) {
+                            $product->sales_count += (int) $itemData['quantity'];
+                        }
                         $product->save();
 
                         StockMovement::create([
