@@ -31,7 +31,18 @@ class QuoteController extends Controller
         }
 
         if ($status = $request->query('status')) {
-            $query->where('status', $status);
+            if ($status === 'expired') {
+                $query->where('status', 'pending')
+                      ->where('valid_until', '<', now()->toDateString());
+            } elseif ($status === 'pending') {
+                $query->where('status', 'pending')
+                      ->where(function ($q) {
+                          $q->whereNull('valid_until')
+                            ->orWhere('valid_until', '>=', now()->toDateString());
+                      });
+            } else {
+                $query->where('status', $status);
+            }
         }
 
         return response()->json($query->paginate(50));
