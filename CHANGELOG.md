@@ -12,6 +12,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 - **Motor de Pagos Combinados:** El servidor ahora soporta recibir cobros divididos para Cuentas Corrientes. Esto significa que un cliente puede venir y pagar su deuda usando mitad efectivo y mitad transferencia en un solo paso, de manera 100% segura y automática.
 - **Gestión de Consumo Interno:** El servidor central ahora distingue inteligentemente entre ventas reales y mercadería retirada por los dueños o socios. Estos retiros ya no inflarán falsamente las estadísticas de tus productos más vendidos.
 - **Reporte de Consumo Valorizado:** Se agregó la capacidad matemática al servidor para calcular exactamente cuánta plata (al costo) fue retirada del negocio para uso interno, permitiendo auditar estas salidas en la sección de Reportes.
+- **Filtro de Consumo por Cliente Interno:** La API de reportes ahora es capaz de recibir identificadores individuales para segmentar dinámicamente y con altísima velocidad el consumo interno exclusivo de cada socio, empleado o dueño.
 - **Precisión en Arqueos de Caja:** Se actualizaron las calculadoras financieras del Cierre de Caja para contabilizar por separado las "Ventas Fiadas" (Cuenta Corriente). ¡Tus números de efectivo y tarjetas ahora serán mucho más exactos!
 
 ### 🐛 Correcciones y Estabilidad
