@@ -18,6 +18,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 
 ### 🐛 Correcciones y Estabilidad
 - **Blindaje Total de Cajas (Multi-Terminal):** Reforzamos la seguridad del sistema en redes con múltiples cajas. Se solucionó un defecto técnico donde una caja secundaria que se quedaba sin turno activo intentaba "pedir prestado" el turno de la caja principal para guardar la venta. Ahora, el sistema bloquea esto y obliga a cada venta a registrarse estrictamente en la caja física de donde salió.
+- **Arreglo Crítico: Cálculos de Arqueo y Cuentas Corrientes:** Se corrigió un problema financiero severo donde los Abonos pagados en efectivo y los pagos de tickets en espera no se sumaban al saldo esperado de la gaveta de la caja, generando falsos "sobrantes". Ahora, el motor de arqueos computa a la perfección todas las transacciones físicas vinculadas al turno.
 
 ---
 ## [1.3.9] - 2026-05-08 - Actualización de Precios Dinámicos y Estabilidad de Cajas
