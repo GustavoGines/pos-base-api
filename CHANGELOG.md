@@ -4,16 +4,11 @@ Todos los cambios notables del servidor Laravel (API local On-Premise) están do
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el proyecto adhiere a [Semantic Versioning](https://semver.org/).
 
 ---
-## [1.4.1] - 2026-05-09 - Soporte Masivo de Presupuestos y Enrutamiento
-
-### 🚀 Mejoras en el Servidor
-- **Soporte Masivo Seguro:** El servidor ahora cuenta con rutas y controladores optimizados para manejar solicitudes masivas de rechazo o eliminación provenientes del nuevo Dashboard Enterprise, garantizando la integridad de la base de datos sin generar caídas.
-- **Rutas de Modificación Liberadas:** Se destrabaron cachés internas del motor de rutas para habilitar la edición, eliminación y modificación de estados en presupuestos generados en tiempo real.
-
----
-## [1.4.0] - 2026-05-09 - Cuentas de Consumo Interno, Pagos Mixtos y Blindaje de Turnos
+## [1.4.0] - 2026-05-09 - Cuentas de Consumo Interno, Soporte Masivo y Blindaje de Turnos
 
 ### 🚀 Nuevas Funcionalidades (Mejoras en el Servidor)
+- **Soporte Masivo Seguro:** El servidor ahora cuenta con rutas y controladores optimizados para manejar solicitudes masivas de rechazo o eliminación provenientes del nuevo Dashboard Enterprise, garantizando la integridad de la base de datos sin generar caídas.
+- **Rutas de Modificación Liberadas:** Se destrabaron cachés internas del motor de rutas para habilitar la edición, eliminación y modificación de estados en presupuestos generados en tiempo real.
 - **Motor de Pagos Combinados:** El servidor ahora soporta recibir cobros divididos para Cuentas Corrientes. Esto significa que un cliente puede venir y pagar su deuda usando mitad efectivo y mitad transferencia en un solo paso, de manera 100% segura y automática.
 - **Gestión de Consumo Interno:** El servidor central ahora distingue inteligentemente entre ventas reales y mercadería retirada por los dueños o socios. Estos retiros ya no inflarán falsamente las estadísticas de tus productos más vendidos.
 - **Reporte de Consumo Valorizado:** Se agregó la capacidad matemática al servidor para calcular exactamente cuánta plata (al costo) fue retirada del negocio para uso interno, permitiendo auditar estas salidas en la sección de Reportes.
