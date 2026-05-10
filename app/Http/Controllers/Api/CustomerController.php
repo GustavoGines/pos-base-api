@@ -160,6 +160,7 @@ class CustomerController extends Controller
             'sale_ids'          => 'nullable|array',
             'sale_ids.*'        => 'integer|exists:sales,id',
             'check_details'     => 'nullable|array|required_if:payment_method,cheque',
+            'cash_shift_id'     => 'nullable|integer|exists:cash_shifts,id',
         ]);
 
         $payments = $request->filled('payments') ? $request->payments : [
@@ -182,7 +183,11 @@ class CustomerController extends Controller
                     ]);
                 }
 
-                $activeShift = CashShift::where('status', 'open')->latest('id')->first();
+                if ($request->filled('cash_shift_id')) {
+                    $activeShift = CashShift::where('id', $request->cash_shift_id)->where('status', 'open')->first();
+                } else {
+                    $activeShift = CashShift::where('status', 'open')->latest('id')->first();
+                }
 
                 $description = $request->filled('description') ? $request->description : 'Abono en caja';
                 $remainingAmount = $totalAmount;

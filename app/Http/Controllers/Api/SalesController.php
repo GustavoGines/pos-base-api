@@ -117,6 +117,7 @@ class SalesController extends Controller
             'items.*.unit_price'     => 'required_with:items|numeric',
             'items.*.subtotal'       => 'required_with:items|numeric',
             'user_id'                => 'nullable|integer|exists:users,id',
+            'cash_shift_id'          => 'nullable|integer|exists:cash_shifts,id',
         ]);
 
         DB::transaction(function () use ($validated, $sale, $request) {
@@ -219,7 +220,7 @@ class SalesController extends Controller
                         'issuer_cuit'  => $cd['issuer_cuit'],
                         'customer_id'  => $sale->customer_id,
                         'sale_id'      => $sale->id,
-                        'cash_shift_id'=> \App\Models\CashShift::where('status', 'open')->latest('id')->value('id'),
+                        'cash_shift_id'=> $validated['cash_shift_id'] ?? $sale->cash_shift_id,
                         'supplier_id'  => null,
                         'status'       => 'in_wallet',
                     ]);
@@ -249,6 +250,7 @@ class SalesController extends Controller
                 'change_amount'   => $validated['change_amount'] ?? 0,
                 'total_surcharge' => $validated['total_surcharge'] ?? 0,
                 'shipping_cost'   => $validated['shipping_cost'] ?? $sale->shipping_cost,
+                'cash_shift_id'   => $validated['cash_shift_id'] ?? $sale->cash_shift_id,
                 'cashier_id'      => $userId,
                 'payment_status'  => (isset($validated['payments']) && current($validated['payments'])['payment_method_id'] === 5) ? 'pending' : 'paid', // 5 = cuenta corriente
             ]);

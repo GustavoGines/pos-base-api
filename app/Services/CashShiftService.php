@@ -148,14 +148,17 @@ class CashShiftService
             $cashSales = \App\Models\SalePayment::whereHas('sale', fn($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
                 ->whereHas('paymentMethod', fn($q) => $q->where('is_cash', true))
                 ->sum('total_amount');
+            $cashSales += \App\Models\CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'cash')->sum('amount');
 
             $cardSales = \App\Models\SalePayment::whereHas('sale', fn($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
                 ->whereHas('paymentMethod', fn($q) => $q->where('code', 'like', 'card_%'))
                 ->sum('total_amount');
+            $cardSales += \App\Models\CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'card')->sum('amount');
 
             $transferSales = \App\Models\SalePayment::whereHas('sale', fn($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
                 ->whereHas('paymentMethod', fn($q) => $q->where('code', 'transfer'))
                 ->sum('total_amount');
+            $transferSales += \App\Models\CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'transfer')->sum('amount');
 
             $totalSurcharge = \App\Models\Sale::where('cash_shift_id', $shiftId)
                 ->where('status', 'completed')

@@ -106,7 +106,7 @@ class PosController extends Controller
             $sale = Sale::create([
                 'total'                  => $total,
                 'total_surcharge'        => $totalSurcharge,
-                'payment_status'         => $isPendingSale ? 'pending' : ($isCuentaCorriente && $ccPaymentTotal >= ($total + $totalSurcharge) ? 'pending' : 'paid'),
+                'payment_status'         => $isPendingSale ? 'pending' : ($isCuentaCorriente ? ($ccPaymentTotal >= ($total + $totalSurcharge) ? 'pending' : 'partial') : 'paid'),
                 'amount_due'             => $isCuentaCorriente ? $ccPaymentTotal : ($isPendingSale ? $total : 0),
                 'tendered_amount'        => $validated['tendered_amount'] ?? null,
                 'change_amount'          => $validated['change_amount'] ?? null,

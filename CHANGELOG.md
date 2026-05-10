@@ -119,6 +119,9 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 
 ---
 
+[1.4.0]: https://github.com/GustavoGines/pos-base-api/compare/v1.3.9...v1.4.0
+[1.3.9]: https://github.com/GustavoGines/pos-base-api/compare/v1.3.8...v1.3.9
+[1.3.8]: https://github.com/GustavoGines/pos-base-api/compare/v1.3.0...v1.3.8
 [1.3.0]: https://github.com/GustavoGines/pos-base-api/compare/v1.2.4...v1.3.0
 [1.2.4]: https://github.com/GustavoGines/pos-base-api/compare/v1.1.0...v1.2.4
 [1.1.0]: https://github.com/GustavoGines/pos-base-api/releases/tag/v1.1.0
