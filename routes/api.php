@@ -176,6 +176,8 @@ Route::middleware(['session.validate'])->group(function () {
         Route::get('/number/{number}', [QuoteController::class, 'showByNumber']);
         Route::get('/{quote}', [QuoteController::class, 'show']);
         Route::patch('/{quote}/status', [QuoteController::class, 'updateStatus']);
+        Route::put('/{quote}', [QuoteController::class, 'update']);
+        Route::delete('/{quote}', [QuoteController::class, 'destroy']);
     });
 
     // ── Módulo de Reportes Gerenciales (ADMIN) ───────────────────────

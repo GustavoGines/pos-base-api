@@ -53,7 +53,7 @@ class QuoteController extends Controller
      */
     public function show(Quote $quote)
     {
-        return response()->json($quote->load('items'));
+        return response()->json($quote->load('items.product'));
     }
 
     /**
@@ -150,5 +150,43 @@ class QuoteController extends Controller
         $quote->update(['status' => $validated['status']]);
 
         return response()->json($quote->fresh());
+    }
+
+    /**
+     * Edita los datos del encabezado de un presupuesto (cliente, notas, validez).
+     * Solo se permite si el presupuesto no está cobrado. No modifica ítems ni totales.
+     */
+    public function update(Request $request, Quote $quote)
+    {
+        if ($quote->status === 'approved') {
+            return response()->json(['message' => 'No se puede editar un presupuesto ya cobrado.'], 422);
+        }
+
+        $validated = $request->validate([
+            'customer_name'  => 'nullable|string|max:255',
+            'customer_phone' => 'nullable|string|max:50',
+            'notes'          => 'nullable|string|max:1000',
+            'valid_until'    => 'nullable|date',
+        ]);
+
+        $quote->update($validated);
+
+        return response()->json($quote->fresh()->load('items'));
+    }
+
+    /**
+     * Elimina un presupuesto.
+     * Protegido: no se pueden borrar presupuestos ya cobrados (approved)
+     * para preservar la trazabilidad contable.
+     */
+    public function destroy(Quote $quote)
+    {
+        if ($quote->status === 'approved') {
+            return response()->json(['message' => 'No se puede eliminar un presupuesto ya cobrado.'], 422);
+        }
+
+        $quote->delete();
+
+        return response()->json(['message' => 'Presupuesto eliminado correctamente.']);
     }
 }
