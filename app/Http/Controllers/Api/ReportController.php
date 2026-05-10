@@ -495,13 +495,20 @@ class ReportController extends Controller
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
         $endDate   = $request->query('end_date',   Carbon::now()->endOfMonth()->toDateString());
 
-        $report = SaleItem::join('sales', 'sales.id', '=', 'sale_items.sale_id')
+        $customerId = $request->query('customer_id');
+
+        $query = SaleItem::join('sales', 'sales.id', '=', 'sale_items.sale_id')
             ->join('products', 'products.id', '=', 'sale_items.product_id')
             ->join('customers', 'customers.id', '=', 'sales.customer_id')
             ->where('customers.is_internal_account', true)
             ->whereBetween('sales.created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
-            ->where('sales.status', 'completed')
-            ->selectRaw('
+            ->where('sales.status', 'completed');
+
+        if ($customerId) {
+            $query->where('sales.customer_id', $customerId);
+        }
+
+        $report = $query->selectRaw('
                 products.id as product_id, 
                 products.name as product_name, 
                 SUM(sale_items.quantity) as total_quantity, 
