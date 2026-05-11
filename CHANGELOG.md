@@ -4,6 +4,12 @@ Todos los cambios notables del servidor Laravel (API local On-Premise) están do
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el proyecto adhiere a [Semantic Versioning](https://semver.org/).
 
 ---
+## [1.4.1] - 2026-05-11 - Parche de Concurrencia Multi-Caja
+
+### 🐛 Correcciones y Estabilidad
+- **Blindaje Transaccional de Órdenes en Espera:** Se implementó un bloqueo de base de datos pesimista (`lockForUpdate`) dentro de una transacción segura para las rutas de cobro y anulación de ventas en espera. Esto previene un error crítico de "doble cobro" (*Race Condition*) en entornos con múltiples terminales si dos cajeros intentaban procesar la misma orden al mismo tiempo exacto.
+
+---
 ## [1.4.0] - 2026-05-09 - Cuentas de Consumo Interno, Soporte Masivo y Blindaje de Turnos
 
 ### 🚀 Nuevas Funcionalidades (Mejoras en el Servidor)

@@ -97,10 +97,6 @@ class SalesController extends Controller
      */
     public function pay(Request $request, Sale $sale)
     {
-        if ($sale->status !== 'pending') {
-            return response()->json(['message' => 'Esta venta no está en estado pendiente.'], 422);
-        }
-
         $validated = $request->validate([
             'payments'               => 'required|array|min:1',
             'payments.*.payment_method_id' => 'required|integer|exists:payment_methods,id',
@@ -120,13 +116,20 @@ class SalesController extends Controller
             'cash_shift_id'          => 'nullable|integer|exists:cash_shifts,id',
         ]);
 
-        DB::transaction(function () use ($validated, $sale, $request) {
+        $response = DB::transaction(function () use ($validated, $sale, $request) {
+            // Recargar el modelo bloqueando la fila para evitar cobros dobles simultáneos (Multi-Caja)
+            $lockedSale = Sale::lockForUpdate()->find($sale->id);
+
+            if ($lockedSale->status !== 'pending') {
+                return ['error' => true, 'message' => 'Esta venta ya no está en estado pendiente. Es posible que haya sido cobrada o anulada desde otra terminal.'];
+            }
+
             $userId = $validated['user_id'] ?? $request->input('user_id') ?? $request->attributes->get('authenticated_user')?->id;
 
             // Si el cliente envía 'items', hubo Order Recall y modificaciones
             if (isset($validated['items'])) {
                 $originalQuantities = [];
-                foreach ($sale->items as $oldItem) {
+                foreach ($lockedSale->items as $oldItem) {
                     $originalQuantities[$oldItem->product_id] = ($originalQuantities[$oldItem->product_id] ?? 0) + $oldItem->quantity;
                 }
 
@@ -157,7 +160,7 @@ class SalesController extends Controller
                                 'quantity'   => $diff > 0 ? -$diff : abs($diff),
                                 'notes'      => sprintf(
                                     "Ajuste Recall Venta #%d (Modificó de %g a %g)", 
-                                    $sale->id, $oldQty, $newQty
+                                    $lockedSale->id, $oldQty, $newQty
                                 ),
                             ]);
                         }
@@ -165,7 +168,7 @@ class SalesController extends Controller
                 }
 
                 // Borrar items viejos y reinsertar los nuevos
-                $sale->items()->delete();
+                $lockedSale->items()->delete();
                 foreach ($validated['items'] as $itemData) {
                     $product = \App\Models\Product::find($itemData['product_id']);
                     if ($product) {
@@ -183,7 +186,7 @@ class SalesController extends Controller
                             $currentCostPrice = (float) $product->cost_price;
                         }
 
-                        $sale->items()->create([
+                        $lockedSale->items()->create([
                             'product_id'      => $product->id,
                             'product_name'    => $product->name,
                             'quantity'        => $itemData['quantity'],
@@ -194,13 +197,13 @@ class SalesController extends Controller
                     }
                 }
 
-                $sale->setAttribute('total', $newTotal);
+                $lockedSale->setAttribute('total', $newTotal);
             }
 
             foreach ($validated['payments'] as $payment) {
                 $paymentMethod = \App\Models\PaymentMethod::find($payment['payment_method_id']);
 
-                $sale->payments()->create([
+                $lockedSale->payments()->create([
                     'payment_method_id' => $payment['payment_method_id'],
                     'base_amount'       => $payment['base_amount'],
                     'surcharge_amount'  => $payment['surcharge_amount'],
@@ -218,47 +221,55 @@ class SalesController extends Controller
                         'payment_date' => $cd['payment_date'],
                         'issuer_name'  => $cd['issuer_name'],
                         'issuer_cuit'  => $cd['issuer_cuit'],
-                        'customer_id'  => $sale->customer_id,
-                        'sale_id'      => $sale->id,
-                        'cash_shift_id'=> $validated['cash_shift_id'] ?? $sale->cash_shift_id,
+                        'customer_id'  => $lockedSale->customer_id,
+                        'sale_id'      => $lockedSale->id,
+                        'cash_shift_id'=> $validated['cash_shift_id'] ?? $lockedSale->cash_shift_id,
                         'supplier_id'  => null,
                         'status'       => 'in_wallet',
                     ]);
                 }
             }
 
-            $currentDue = $sale->amount_due > 0 ? $sale->amount_due : 0;
+            $currentDue = $lockedSale->amount_due > 0 ? $lockedSale->amount_due : 0;
 
             // Hotfix: verificar si el cliente es cuenta interna para no inflar sales_count
-            $isInternalSale = $sale->customer_id
-                && \App\Models\Customer::where('id', $sale->customer_id)
+            $isInternalSale = $lockedSale->customer_id
+                && \App\Models\Customer::where('id', $lockedSale->customer_id)
                                        ->where('is_internal_account', true)
                                        ->exists();
 
             // Solo incrementamos el contador de ventas para clientes reales (no cuentas internas)
             if (!$isInternalSale) {
-                foreach ($sale->items as $item) {
+                foreach ($lockedSale->items as $item) {
                     if ($item->product) {
                         $item->product->increment('sales_count', (int) $item->quantity);
                     }
                 }
             }
 
-            $sale->update([
+            $lockedSale->update([
                 'status'          => 'completed',
-                'tendered_amount' => $validated['tendered_amount'] ?? $sale->total,
+                'tendered_amount' => $validated['tendered_amount'] ?? $lockedSale->total,
                 'change_amount'   => $validated['change_amount'] ?? 0,
                 'total_surcharge' => $validated['total_surcharge'] ?? 0,
-                'shipping_cost'   => $validated['shipping_cost'] ?? $sale->shipping_cost,
-                'cash_shift_id'   => $validated['cash_shift_id'] ?? $sale->cash_shift_id,
+                'shipping_cost'   => $validated['shipping_cost'] ?? $lockedSale->shipping_cost,
+                'cash_shift_id'   => $validated['cash_shift_id'] ?? $lockedSale->cash_shift_id,
                 'cashier_id'      => $userId,
                 'payment_status'  => (isset($validated['payments']) && current($validated['payments'])['payment_method_id'] === 5) ? 'pending' : 'paid', // 5 = cuenta corriente
             ]);
+            
+            return ['error' => false, 'sale' => $lockedSale];
         });
 
+        if (isset($response['error']) && $response['error'] === true) {
+            return response()->json(['message' => $response['message']], 422);
+        }
+
+        $completedSale = $response['sale'];
+
         return response()->json([
-            'message' => "Venta #{$sale->id} cobrada correctamente.",
-            'sale'    => $sale->fresh()->load('items.product', 'user:id,name', 'cashier:id,name'),
+            'message' => "Venta #{$completedSale->id} cobrada correctamente.",
+            'sale'    => $completedSale->fresh()->load('items.product', 'user:id,name', 'cashier:id,name'),
         ]);
     }
 
@@ -268,18 +279,23 @@ class SalesController extends Controller
      */
     public function void(Request $request, Sale $sale)
     {
-        if ($sale->status === 'voided') {
-            return response()->json(['message' => 'Esta venta ya está anulada.'], 422);
-        }
-
         $userId = $request->input('user_id') ?? $request->attributes->get('authenticated_user')?->id;
 
-        DB::transaction(function () use ($sale, $userId) {
+        $response = DB::transaction(function () use ($sale, $userId) {
+            $lockedSale = Sale::lockForUpdate()->find($sale->id);
+
+            if ($lockedSale->status === 'voided') {
+                return ['error' => true, 'message' => 'Esta venta ya está anulada.'];
+            }
+            if ($lockedSale->status !== 'pending' && $lockedSale->status !== 'completed') {
+                return ['error' => true, 'message' => 'No se puede anular una venta en este estado.'];
+            }
+
             // Buscar si hay remito
-            $deliveryNote = \App\Models\DeliveryNote::with('items')->where('sale_id', $sale->id)->first();
+            $deliveryNote = \App\Models\DeliveryNote::with('items')->where('sale_id', $lockedSale->id)->first();
 
             // Devolver stock de cada ítem al producto
-            foreach ($sale->items as $item) {
+            foreach ($lockedSale->items as $item) {
                 if ($item->product) {
                     // Calcular cuánto stock hay que devolver realmente
                     $qtyToRestore = $item->quantity;
@@ -304,7 +320,7 @@ class SalesController extends Controller
                                         'user_id'    => $userId,
                                         'type'       => 'in',
                                         'quantity'   => $qtyRestored,
-                                        'notes'      => "Reversión (Combo Hijo) Venta #{$sale->id}",
+                                        'notes'      => "Reversión (Combo Hijo) Venta #{$lockedSale->id}",
                                     ]);
                                 }
                             }
@@ -316,7 +332,7 @@ class SalesController extends Controller
                                 'user_id'    => $userId,
                                 'type'       => 'in',
                                 'quantity'   => $qtyToRestore,
-                                'notes'      => "Reversión por anulación de Venta #{$sale->id}",
+                                'notes'      => "Reversión por anulación de Venta #{$lockedSale->id}",
                             ]);
                         }
                     }
@@ -333,7 +349,7 @@ class SalesController extends Controller
             }
 
             // Revertir transacciones de Cuenta Corriente si existen
-            $customerTransactions = \App\Models\CustomerTransaction::where('sale_id', $sale->id)->get();
+            $customerTransactions = \App\Models\CustomerTransaction::where('sale_id', $lockedSale->id)->get();
             foreach ($customerTransactions as $tx) {
                 if ($tx->type === 'charge') {
                     $customer = \App\Models\Customer::lockForUpdate()->find($tx->customer_id);
@@ -344,23 +360,31 @@ class SalesController extends Controller
                         \App\Models\CustomerTransaction::create([
                             'customer_id'   => $customer->id,
                             'user_id'       => $userId ?? 1,
-                            'sale_id'       => $sale->id,
+                            'sale_id'       => $lockedSale->id,
                             'type'          => 'payment', // payment cancels out the charge
                             'amount'        => $tx->amount,
                             'balance_after' => $customer->balance,
-                            'description'   => "Reversión por anulación de Venta #{$sale->id}",
+                            'description'   => "Reversión por anulación de Venta #{$lockedSale->id}",
                         ]);
                     }
                 }
             }
 
             // Marcar la venta como anulada
-            $sale->update(['status' => 'voided']);
+            $lockedSale->update(['status' => 'voided']);
+            
+            return ['error' => false, 'sale' => $lockedSale];
         });
 
+        if (isset($response['error']) && $response['error'] === true) {
+            return response()->json(['message' => $response['message']], 422);
+        }
+
+        $voidedSale = $response['sale'];
+
         return response()->json([
-            'message' => "Venta #{$sale->id} anulada correctamente. El stock fue restaurado.",
-            'sale'    => $sale->fresh()->load('items.product', 'user:id,name', 'payments.paymentMethod:id,name,code,is_cash'),
+            'message' => "Venta #{$voidedSale->id} anulada correctamente. El stock fue restaurado.",
+            'sale'    => $voidedSale->fresh()->load('items.product', 'user:id,name', 'payments.paymentMethod:id,name,code,is_cash'),
         ]);
     }
 
