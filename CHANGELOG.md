@@ -4,6 +4,10 @@ Todos los cambios notables del servidor Laravel (API local On-Premise) están do
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el proyecto adhiere a [Semantic Versioning](https://semver.org/).
 
 ---
+## [1.4.2] - 2026-05-11 - Sincronización OTA v1.4.2
+
+### 🚀 Mejoras
+- **Sincronización con Frontend:** Incremento de versión a v1.4.2 para acompañar la liberación final del cliente de escritorio y garantizar que el actualizador OTA del frontend pueda confirmar la correcta versión del servidor. No hay cambios estructurales en la API.
 ## [1.4.1] - 2026-05-11 - Parche de Concurrencia Multi-Caja
 
 ### 🐛 Correcciones y Estabilidad
