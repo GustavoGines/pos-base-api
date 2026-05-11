@@ -4,17 +4,7 @@ Todos los cambios notables del servidor Laravel (API local On-Premise) están do
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el proyecto adhiere a [Semantic Versioning](https://semver.org/).
 
 ---
-## [1.4.2] - 2026-05-11 - Sincronización OTA v1.4.2
-
-### 🚀 Mejoras
-- **Sincronización con Frontend:** Incremento de versión a v1.4.2 para acompañar la liberación final del cliente de escritorio y garantizar que el actualizador OTA del frontend pueda confirmar la correcta versión del servidor. No hay cambios estructurales en la API.
-## [1.4.1] - 2026-05-11 - Parche de Concurrencia Multi-Caja
-
-### 🐛 Correcciones y Estabilidad
-- **Blindaje Transaccional de Órdenes en Espera:** Se implementó un bloqueo de base de datos pesimista (`lockForUpdate`) dentro de una transacción segura para las rutas de cobro y anulación de ventas en espera. Esto previene un error crítico de "doble cobro" (*Race Condition*) en entornos con múltiples terminales si dos cajeros intentaban procesar la misma orden al mismo tiempo exacto.
-
----
-## [1.4.0] - 2026-05-09 - Cuentas de Consumo Interno, Soporte Masivo y Blindaje de Turnos
+## [1.4.0] - 2026-05-11 - Consumo Interno, Soporte Masivo y Blindaje de Turnos
 
 ### 🚀 Nuevas Funcionalidades (Mejoras en el Servidor)
 - **Soporte Masivo Seguro:** El servidor ahora cuenta con rutas y controladores optimizados para manejar solicitudes masivas de rechazo o eliminación provenientes del nuevo Dashboard Enterprise, garantizando la integridad de la base de datos sin generar caídas.
@@ -28,6 +18,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 
 ### 🐛 Correcciones y Estabilidad
 - **Blindaje Total de Cajas (Multi-Terminal):** Reforzamos la seguridad del sistema en redes con múltiples cajas. Se solucionó un defecto técnico donde una caja secundaria que se quedaba sin turno activo intentaba "pedir prestado" el turno de la caja principal para guardar la venta. Ahora, el sistema bloquea esto y obliga a cada venta a registrarse estrictamente en la caja física de donde salió.
+- **Blindaje Transaccional de Órdenes en Espera:** Se implementó un bloqueo de base de datos pesimista (`lockForUpdate`) dentro de una transacción segura para las rutas de cobro y anulación de ventas en espera. Esto previene un error crítico de "doble cobro" (*Race Condition*) en entornos con múltiples terminales si dos cajeros intentaban procesar la misma orden al mismo tiempo exacto.
 - **Arreglo Crítico: Cálculos de Arqueo y Cuentas Corrientes:** Se corrigió un problema financiero severo donde los Abonos pagados en efectivo y los pagos de tickets en espera no se sumaban al saldo esperado de la gaveta de la caja, generando falsos "sobrantes". Ahora, el motor de arqueos computa a la perfección todas las transacciones físicas vinculadas al turno.
 
 ---
