@@ -4,6 +4,12 @@ Todos los cambios notables del servidor Laravel (API local On-Premise) están do
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el proyecto adhiere a [Semantic Versioning](https://semver.org/).
 
 ---
+## [1.4.2] - 2026-05-13 - Estabilidad de Red y Optimización TCP
+
+### 🚀 Mejoras de Estabilidad
+- **Sincronización de Versión y Estabilidad:** El servidor se actualiza a v1.4.2 para emparejarse con el cliente de escritorio. Se preparó la arquitectura base para soportar la desactivación del Keep-Alive TCP proveniente de las PCs secundarias, mejorando drásticamente el rendimiento de red en entornos con conexiones intermitentes o Wi-Fi inestable. Las anulaciones de ventas ahora operan bajo un margen de tolerancia a bloqueos de tabla (lock-wait) más extenso y seguro.
+
+---
 ## [1.4.1] - 2026-05-11 - Sincronización con Frontend v1.4.1
 
 ### 🚀 Mejoras
