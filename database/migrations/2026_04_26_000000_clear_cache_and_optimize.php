@@ -14,7 +14,15 @@ return new class extends Migration
         // Como los clientes actuales tienen el updater viejo (que solo hace migrate --force),
         // usamos esta migración para forzar la limpieza de caché al momento de actualizar.
         // Las futuras actualizaciones ya usarán el nuevo updater.
-        
+
+        // IMPORTANTE: Saltear completamente en SQLite (entorno de testing).
+        // `optimize:clear` y `optimize` vacían el config cache, lo que resetea
+        // todas las conexiones de BD al .env real (MySQL), rompiendo el entorno
+        // in-memory de los tests. En SQLite de testing esta migración es un no-op.
+        if (\Illuminate\Support\Facades\DB::getDriverName() === 'sqlite') {
+            return;
+        }
+
         Artisan::call('optimize:clear');
         Artisan::call('optimize');
     }

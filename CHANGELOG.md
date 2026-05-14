@@ -4,6 +4,16 @@ Todos los cambios notables del servidor Laravel (API local On-Premise) están do
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el proyecto adhiere a [Semantic Versioning](https://semver.org/).
 
 ---
+## [1.4.5] - 2026-05-14 - QA Testing Suite y Soporte Universal de Base de Datos
+
+### 🚀 Nuevas Funcionalidades
+- **Suite de Testing Automatizada:** Implementación completa de un entorno de pruebas con 100% de cobertura en las rutas críticas del sistema (Ventas, Turnos, Cuentas Corrientes, Presupuestos y Autenticación). El entorno utiliza SQLite *in-memory* para permitir despliegues y pruebas en integración continua (CI/CD) sin afectar los datos en producción.
+
+### 🐛 Correcciones y Ajustes Técnicos
+- **Compatibilidad de Migraciones (MySQL / SQLite):** Se refactorizaron las migraciones del sistema para soportar de manera universal tanto MySQL como SQLite. Específicamente, se cambió el casteo de variables tipo `enum` a `string` y se blindó la ejecución de comandos `Artisan::call('optimize')` y métodos exclusivos como `MODIFY COLUMN` para evitar crasheos durante los tests.
+- **Validaciones Rigurosas:** Ajustes de validación de entradas HTTP y tipos de datos para robustecer la API ante escenarios de testing exhaustivos.
+
+---
 ## [1.4.4] - 2026-05-13 - Sincronización con Frontend v1.4.4
 
 ### 🚀 Mejoras

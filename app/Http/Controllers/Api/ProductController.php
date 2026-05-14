@@ -399,13 +399,21 @@ class ProductController extends Controller
 
     private function generateUniqueInternalCode(): string
     {
-        // Obtener el último código interno numérico (incluso si fue borrado)
-        $lastCode = Product::withTrashed()
-            ->whereRaw('internal_code REGEXP "^[0-9]+$"')
-            ->orderByRaw('CAST(internal_code AS UNSIGNED) DESC')
-            ->first();
-
-        $nextNumber = $lastCode ? (int)$lastCode->internal_code + 1 : 1;
+        if (\Illuminate\Support\Facades\DB::getDriverName() === 'sqlite') {
+            // Fallback para SQLite en entorno de testing (evita REGEXP y CAST AS UNSIGNED)
+            $lastCode = Product::withTrashed()
+                ->get(['internal_code'])
+                ->filter(fn($p) => ctype_digit($p->internal_code))
+                ->max(fn($p) => (int)$p->internal_code);
+            $nextNumber = $lastCode ? $lastCode + 1 : 1;
+        } else {
+            // Obtener el último código interno numérico (incluso si fue borrado)
+            $lastCode = Product::withTrashed()
+                ->whereRaw('internal_code REGEXP "^[0-9]+$"')
+                ->orderByRaw('CAST(internal_code AS UNSIGNED) DESC')
+                ->first();
+            $nextNumber = $lastCode ? (int)$lastCode->internal_code + 1 : 1;
+        }
         
         // Si por alguna razón el número ya existe, buscamos el siguiente disponible
         while (Product::withTrashed()->where('internal_code', str_pad($nextNumber, 5, '0', STR_PAD_LEFT))->exists()) {

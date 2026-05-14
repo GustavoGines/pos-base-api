@@ -12,8 +12,11 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Alter the ENUM to include 'cancelled'
-        DB::statement("ALTER TABLE delivery_notes MODIFY COLUMN status ENUM('pending', 'partial', 'delivered', 'cancelled') DEFAULT 'pending'");
+        // MODIFY COLUMN is MySQL-only syntax. SQLite stores ENUMs as strings
+        // and already accepts any value, so the column change is a no-op there.
+        if (DB::getDriverName() !== 'sqlite') {
+            DB::statement("ALTER TABLE delivery_notes MODIFY COLUMN status ENUM('pending', 'partial', 'delivered', 'cancelled') DEFAULT 'pending'");
+        }
     }
 
     /**
@@ -21,7 +24,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        // Revert back the ENUM to exclude 'cancelled'
-        DB::statement("ALTER TABLE delivery_notes MODIFY COLUMN status ENUM('pending', 'partial', 'delivered') DEFAULT 'pending'");
+        if (DB::getDriverName() !== 'sqlite') {
+            DB::statement("ALTER TABLE delivery_notes MODIFY COLUMN status ENUM('pending', 'partial', 'delivered') DEFAULT 'pending'");
+        }
     }
 };
