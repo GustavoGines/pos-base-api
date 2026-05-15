@@ -13,6 +13,8 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el p
 ### 🐛 Correcciones y Ajustes Técnicos
 - **Compatibilidad de Migraciones (MySQL / SQLite):** Se refactorizaron las migraciones del sistema para soportar de manera universal tanto MySQL como SQLite. Específicamente, se cambió el casteo de variables tipo `enum` a `string` y se blindó la ejecución de comandos `Artisan::call('optimize')` y métodos exclusivos como `MODIFY COLUMN` para evitar crasheos durante los tests.
 - **Validaciones Rigurosas:** Ajustes de validación de entradas HTTP y tipos de datos para robustecer la API ante escenarios de testing exhaustivos.
+- **Linter y Código Limpio:** Resolución de advertencias estáticas (PHP0416 Intelephense) declarando propiedades protegidas explícitas en las suites de prueba para mantener un estándar de calidad impecable.
+- **Respuestas HTTP Estándar:** Estandarización de respuestas `200 OK` vs `204 No Content` para asegurar la compatibilidad estricta con clientes JSON en endpoints de eliminación definitiva (Trash Management).
 
 ---
 ## [1.4.4] - 2026-05-13 - Sincronización con Frontend v1.4.4
