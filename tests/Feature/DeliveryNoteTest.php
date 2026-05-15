@@ -15,6 +15,10 @@ class DeliveryNoteTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected $admin;
+    protected $register;
+    protected $shift;
+
     protected function setUp(): void
     {
         parent::setUp();

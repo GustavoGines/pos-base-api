@@ -14,6 +14,8 @@ class AbmTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected $admin;
+
     protected function setUp(): void
     {
         parent::setUp();
