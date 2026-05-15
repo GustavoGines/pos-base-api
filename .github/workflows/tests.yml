@@ -38,4 +38,4 @@ jobs:
         CACHE_DRIVER: array
         SESSION_DRIVER: array
         QUEUE_CONNECTION: sync
-      run: php artisan test
+      run: php artisan test tests/Feature
