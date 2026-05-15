@@ -364,6 +364,9 @@ class ReportController extends Controller
         $startDate = Carbon::parse($startMonth . '-01')->startOfMonth();
         $endDate   = Carbon::parse($endMonth   . '-01')->endOfMonth();
 
+        $isSqlite = DB::connection()->getDriverName() === 'sqlite';
+        $periodSql = $isSqlite ? "strftime('%Y-%m', sales.created_at)" : "DATE_FORMAT(sales.created_at, '%Y-%m')";
+
         $rows = DB::table('sale_items')
             ->join('sales',    'sales.id',    '=', 'sale_items.sale_id')
             ->join('products', 'products.id', '=', 'sale_items.product_id')
@@ -379,7 +382,7 @@ class ReportController extends Controller
                 $endDate->toDateTimeString(),
             ])
             ->selectRaw("
-                DATE_FORMAT(sales.created_at, '%Y-%m') as period,
+                {$periodSql} as period,
                 SUM(sale_items.subtotal)               as total_revenue,
                 SUM(
                     CASE
@@ -409,7 +412,7 @@ class ReportController extends Controller
                 )                                       as revenue_with_cost,
                 COUNT(DISTINCT sales.id)               as transactions
             ")
-            ->groupByRaw("DATE_FORMAT(sales.created_at, '%Y-%m')")
+            ->groupByRaw($periodSql)
             ->orderByRaw("period ASC")
             ->get();
 
