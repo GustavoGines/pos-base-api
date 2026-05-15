@@ -73,6 +73,6 @@ class TrashController extends Controller
 
         return response()->json([
             'message' => 'Elemento destruido permanentemente.'
-        ], 204);
+        ], 200);
     }
 }

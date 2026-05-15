@@ -51,7 +51,7 @@ class TrashTest extends TestCase
         $product->delete();
 
         $response = $this->deleteJson("/api/trash/products/{$product->id}/force");
-        $response->assertStatus(204);
+        $response->assertStatus(200);
 
         $this->assertDatabaseMissing('products', ['id' => $product->id]);
     }
