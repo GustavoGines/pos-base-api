@@ -15,6 +15,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Setup PHP
+      # Se requiere PHP 8.2 o superior para compatibilidad del sistema
       uses: shivammathur/setup-php@v2
       with:
         php-version: '8.2'
