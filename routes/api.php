@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
@@ -200,5 +200,11 @@ Route::middleware(['session.validate'])->group(function () {
         Route::get('/', [DeliveryNoteController::class, 'index']);
         Route::post('/from-sale/{saleId}', [DeliveryNoteController::class, 'generateFromSale']);
         Route::put('/{id}/deliver', [DeliveryNoteController::class, 'updateDelivery']);
+    });
+    // Mobile Scanner Module
+    Route::post('/mobile/scan', function (\Illuminate\Http\Request $request) {
+        $request->validate(['barcode' => 'required|string']);
+        broadcast(new \App\Events\MobileScanned($request->barcode, $request->target_pc ?? 'caja-1'));
+        return response()->json(['status' => 'ok']);
     });
 });
