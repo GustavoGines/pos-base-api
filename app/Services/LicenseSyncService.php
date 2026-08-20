@@ -317,7 +317,8 @@ class LicenseSyncService
                 throw new \Exception('La clave de licencia es inválida o está en uso en otra sucursal.');
             }
 
-            throw new \Exception('Error del servidor de licencias. Intente más tarde.');
+            file_put_contents('C:\laragon\www\error_body.html', $response->body());
+            throw new \Exception('URL: ' . $url . ' | Status: ' . $response->status() . ' | Body: ' . substr($response->body(), 0, 100));
         } catch (\Illuminate\Http\Client\ConnectionException $e) {
             throw new \Exception('No hay conexión a internet para validar la licencia.');
         }
