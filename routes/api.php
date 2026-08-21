@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
@@ -205,6 +205,13 @@ Route::middleware(['session.validate'])->group(function () {
     Route::post('/mobile/scan', function (\Illuminate\Http\Request $request) {
         $request->validate(['barcode' => 'required|string']);
         broadcast(new \App\Events\MobileScanned($request->barcode, $request->target_pc ?? 'caja-1'));
-        return response()->json(['status' => 'ok']);
+        return response()->json(['status' => 'Scanned event sent']);
+    });
+
+    // Mobile Print Label Module
+    Route::post('/mobile/print-label', function (\Illuminate\Http\Request $request) {
+        $request->validate(['product_id' => 'required|integer']);
+        broadcast(new \App\Events\PrintLabelRequested($request->product_id, $request->target_pc ?? 'caja-1'));
+        return response()->json(['status' => 'Print label event sent']);
     });
 });

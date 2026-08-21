@@ -212,6 +212,7 @@ class ProductController extends Controller
             'price_tiers'                => 'nullable|array',
             'price_tiers.*.min_quantity' => 'required_with:price_tiers|numeric|min:1',
             'price_tiers.*.unit_price'   => 'required_with:price_tiers|numeric|min:0',
+            'add_stock'                  => 'nullable|numeric|min:0.001',
         ]);
         // Flujo de Código Interno (PLU) en actualización
         if (empty($request->internal_code)) {
@@ -228,10 +229,26 @@ class ProductController extends Controller
         // Auditoría de Stock: Guardar valor previo antes de actualizar
         $oldStock = (float) $product->stock;
         
+        // Si usamos add_stock, no pisamos el stock absoluto
+        if (!empty($validated['add_stock'])) {
+            unset($validated['stock']);
+        }
+        
         $product->update($validated);
 
-        // Si el stock cambió en la edición de la ficha, registrar el movimiento
-        if (array_key_exists('stock', $validated) && (float) $validated['stock'] !== $oldStock) {
+        // Modificación aditiva (Sin race condition)
+        if (!empty($request->add_stock)) {
+            $product->increment('stock', $request->add_stock);
+            
+            $product->stockMovements()->create([
+                'user_id'  => $request->attributes->get('authenticated_user')?->id,
+                'type'     => 'in',
+                'quantity' => $request->add_stock,
+                'notes'    => "Ingreso rápido de mercadería (Mobile)",
+            ]);
+        }
+        // Modificación absoluta (Puede tener race conditions si no se usa con cuidado)
+        else if (array_key_exists('stock', $validated) && (float) $validated['stock'] !== $oldStock) {
             $newStock = (float) $validated['stock'];
             $diff = $newStock - $oldStock;
             
