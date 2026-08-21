@@ -32,6 +32,10 @@ class SalesController extends Controller
 
         if ($period === 'today') {
             $query->whereBetween('created_at', [now()->startOfDay(), now()->endOfDay()]);
+        } elseif ($period === 'yesterday') {
+            $query->whereBetween('created_at', [now()->subDay()->startOfDay(), now()->subDay()->endOfDay()]);
+        } elseif ($period === 'week') {
+            $query->whereBetween('created_at', [now()->startOfWeek(), now()->endOfWeek()]);
         } elseif ($period === 'month') {
             $query->whereBetween('created_at', [now()->startOfMonth(), now()->endOfMonth()]);
         } elseif ($period === 'year') {
@@ -267,6 +271,8 @@ class SalesController extends Controller
 
         $completedSale = $response['sale'];
 
+        try { broadcast(new \App\Events\DashboardUpdated()); } catch (\Throwable $e) { \Illuminate\Support\Facades\Log::error("Broadcast failed: " . $e->getMessage()); }
+
         return response()->json([
             'message' => "Venta #{$completedSale->id} cobrada correctamente.",
             'sale'    => $completedSale->fresh()->load('items.product', 'user:id,name', 'cashier:id,name'),
@@ -382,6 +388,8 @@ class SalesController extends Controller
 
         $voidedSale = $response['sale'];
 
+        try { broadcast(new \App\Events\DashboardUpdated()); } catch (\Throwable $e) { \Illuminate\Support\Facades\Log::error("Broadcast failed: " . $e->getMessage()); }
+
         return response()->json([
             'message' => "Venta #{$voidedSale->id} anulada correctamente. El stock fue restaurado.",
             'sale'    => $voidedSale->fresh()->load('items.product', 'user:id,name', 'payments.paymentMethod:id,name,code,is_cash'),
@@ -407,3 +415,4 @@ class SalesController extends Controller
             ->header('Content-Disposition', 'inline; filename="ticket-'.$sale->id.'.pdf"');
     }
 }
+
