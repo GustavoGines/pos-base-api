@@ -34,7 +34,7 @@ class CashShiftController extends Controller
             return response()->json(['message' => 'No hay caja abierta.'], 404);
         }
 
-        return response()->json($shift->load('cashRegister'));
+        return response()->json($shift->load('cashRegister', 'user'));
     }
 
     public function open(Request $request)
@@ -54,7 +54,7 @@ class CashShiftController extends Controller
 
             return response()->json([
                 'message' => 'Turno abierto correctamente.',
-                'shift'   => $shift->load('cashRegister'),
+                'shift'   => $shift->load('cashRegister', 'user'),
             ]);
         } catch (Exception $e) {
             $status = $e->getCode() === 403 ? 403 : 500;

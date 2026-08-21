@@ -76,4 +76,26 @@ class CashShift extends Model
     {
         return $this->hasMany(Sale::class);
     }
+
+    public function getExpectedBalanceAttribute($value)
+    {
+        if ($this->status === 'closed') {
+            return $value;
+        }
+
+        $cashSales = \App\Models\SalePayment::whereHas('sale', function($q) {
+                $q->where('cash_shift_id', $this->id)->where('status', 'completed');
+            })
+            ->whereHas('paymentMethod', function($q) {
+                $q->where('is_cash', true);
+            })
+            ->sum('total_amount');
+            
+        $cashSales += \App\Models\CustomerTransaction::where('cash_shift_id', $this->id)
+            ->where('type', 'payment')
+            ->where('payment_method', 'cash')
+            ->sum('amount');
+
+        return $this->opening_balance + $cashSales;
+    }
 }

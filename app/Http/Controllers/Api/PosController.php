@@ -36,7 +36,7 @@ class PosController extends Controller
                     $q->orWhere('id', $query);
                 }
             })
-            ->with(['children', 'priceTiers'])
+            ->with(['children', 'priceTiers', 'category', 'brand'])
             ->get();
 
         return response()->json($products);
@@ -287,6 +287,8 @@ class PosController extends Controller
                 }
             }
 
+            try { broadcast(new \App\Events\DashboardUpdated()); } catch (\Throwable $e) { \Illuminate\Support\Facades\Log::error("Broadcast failed: " . $e->getMessage()); }
+
             return response()->json([
                 'message' => 'Sale processed successfully',
                 'sale'    => $sale->load('items', 'payments.paymentMethod', 'deliveryNote', 'deliveryNote.items', 'deliveryNote.items.product'),
@@ -294,3 +296,4 @@ class PosController extends Controller
         });
     }
 }
+
