@@ -25,6 +25,11 @@ jobs:
       - name: Install dependencies
         run: composer install --optimize-autoloader --no-dev
         
+      - name: Write version.txt
+        run: |
+          echo "${{ github.ref_name }}" | sed 's/^v//' > public/version.txt
+          echo "✅ version.txt escrito: $(cat public/version.txt)"
+
       - name: Package Release
         run: |
           zip -r update_backend_${{ github.ref_name }}.zip . \
