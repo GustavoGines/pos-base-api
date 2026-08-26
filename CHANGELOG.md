@@ -2,14 +2,12 @@
 Todos los cambios del servidor API están documentados aquí.
 
 ## [1.6.6] - 2026-08-26
-### Correcciones
-- **Sincronización de Versión:** Actualización para mantener compatibilidad estricta con el cliente v1.6.6.
-## [1.6.5] - 2026-08-26
-### Novedades
+### Novedades de esta Gran Actualización (desde v1.4.4)
 - **Soporte Oficial para la App Móvil:** El sistema ahora cuenta con todo el motor interno preparado para comunicarse en tiempo real con nuestra nueva Aplicación Móvil.
 - **Actualizaciones 100% Automáticas:** Rediseñamos por completo el sistema de actualización. Ahora, cuando haya mejoras tanto para la caja como para el servidor, el proceso será continuo, inteligente y completamente automático, sin requerir clics innecesarios.
 - **Mayor Estabilidad y Resiliencia:** Mejoramos la conexión de red y le dimos al sistema la capacidad de manejar grandes volúmenes de datos durante las actualizaciones sin interrumpir tu trabajo.
 - **Limpieza y Pulido Visual:** Eliminamos textos innecesarios y pulimos las pantallas para que tu experiencia de uso sea más limpia y profesional.
+- **Validación Estricta de Actualización:** El actualizador ahora garantiza de forma estricta que la memoria del servidor se purgue completamente para eliminar los "falsos avisos" de actualización pendiente.
 ## [1.6.4] - 2026-08-26
 ### Mejoras
 - Sincronización de versión con el cliente de escritorio (Mejora UX sin clics intermedios).
