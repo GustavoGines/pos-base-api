@@ -2,13 +2,21 @@
 Todos los cambios del servidor API están documentados aquí.
 
 ## [1.6.4] - 2026-08-26
-### Changed
+### Mejoras
 - Sincronización de versión con el cliente de escritorio (Mejora UX sin clics intermedios).
+
 ## [1.6.3] - 2026-08-26
-### Changed
+### Mejoras
 - Sincronización de versión con el cliente de escritorio (mejoras de UX en el actualizador).
-Todos los cambios notables del servidor Laravel (API local On-Premise) estÃ¡n documentados aquÃ­.
-El formato sigue [Keep a Changelog](https://keepachangelog.com/es/1.0.0/) y el proyecto adhiere a [Semantic Versioning](https://semver.org/).
+
+## [1.6.2] - 2026-08-26
+### Correcciones
+- Compatibilidad de versión con el frontend.
+
+## [1.6.0] - 2026-08-26
+### Mejoras
+- Actualización mayor para dar soporte completo a la App Móvil.
+
 
 ---
 ## [1.4.5] - 2026-05-14 - QA Testing Suite y Soporte Universal de Base de Datos
