@@ -1,6 +1,9 @@
 ﻿# Changelog — Sistema POS (Backend)
 Todos los cambios del servidor API están documentados aquí.
 
+## [1.6.4] - 2026-08-26
+### Changed
+- Sincronización de versión con el cliente de escritorio (Mejora UX sin clics intermedios).
 ## [1.6.3] - 2026-08-26
 ### Changed
 - Sincronización de versión con el cliente de escritorio (mejoras de UX en el actualizador).
