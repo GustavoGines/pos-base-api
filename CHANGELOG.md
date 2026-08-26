@@ -1,6 +1,9 @@
 ﻿# Changelog — Sistema POS (Backend)
 Todos los cambios del servidor API están documentados aquí.
 
+## [1.6.6] - 2026-08-26
+### Correcciones
+- **Sincronización de Versión:** Actualización para mantener compatibilidad estricta con el cliente v1.6.6.
 ## [1.6.5] - 2026-08-26
 ### Novedades
 - **Soporte Oficial para la App Móvil:** El sistema ahora cuenta con todo el motor interno preparado para comunicarse en tiempo real con nuestra nueva Aplicación Móvil.
