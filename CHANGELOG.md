@@ -1,30 +1,34 @@
-# Changelog â€” Sistema POS (Backend)
-Todos los cambios del servidor API estÃ¡n documentados aquÃ­.
+﻿# Changelog 📝 Sistema POS (Backend)
+Todos los cambios notables del servidor web y base de datos (Laravel/PHP) están documentados aquí.
 
-## [1.6.8] - 2026-08-26
-### Novedades de esta Gran ActualizaciÃ³n (desde v1.4.4)
-- **Soporte Oficial para la App MÃ³vil:** El sistema ahora cuenta con todo el motor interno preparado para comunicarse en tiempo real con nuestra nueva AplicaciÃ³n MÃ³vil.
-- **Actualizaciones 100% AutomÃ¡ticas:** RediseÃ±amos por completo el sistema de actualizaciÃ³n. Ahora, cuando haya mejoras tanto para la caja como para el servidor, el proceso serÃ¡ continuo, inteligente y completamente automÃ¡tico, sin requerir clics innecesarios.
-- **Mayor Estabilidad y Resiliencia:** Mejoramos la conexiÃ³n de red y le dimos al sistema la capacidad de manejar grandes volÃºmenes de datos durante las actualizaciones sin interrumpir tu trabajo.
-- **Limpieza y Pulido Visual:** Eliminamos textos innecesarios y pulimos las pantallas para que tu experiencia de uso sea mÃ¡s limpia y profesional. Corregido un pequeÃ±o error visual donde el botÃ³n de actualizaciÃ³n persistÃ­a en el menÃº principal.
-- **ValidaciÃ³n Estricta de ActualizaciÃ³n:** El actualizador ahora garantiza de forma estricta que la memoria del servidor se purgue completamente para eliminar los falsos avisos de actualizaciÃ³n pendiente.
+## [1.7.0] - 2026-08-26
+### Novedades de esta Gran Actualización (desde v1.4.4)
+- **Soporte Oficial para la App Móvil:** El sistema ahora cuenta con todo el motor interno preparado para comunicarse en tiempo real con nuestra nueva Aplicación Móvil.
+- **Actualizaciones 100% Automáticas:** Rediseñamos por completo el sistema de actualización. Ahora, cuando haya mejoras tanto para la caja como para el servidor, el proceso será continuo, inteligente y completamente automático, sin requerir clics innecesarios.
+- **Personalización Extrema del Terminal:** Agregamos 4 nuevos modos de vista para los productos de Acceso Rápido (Tarjetas grandes, medianas, lista clásica y modo 'supermercado' ultra compacto) para adaptarse perfectamente a tu forma de vender. Además, podés ajustar libremente qué porción de la pantalla ocupa el carrito y qué porción ocupan los productos.
+- **Mayor Estabilidad y Resiliencia:** Mejoramos la conexión de red y le dimos al sistema la capacidad de manejar grandes volúmenes de datos durante las actualizaciones sin interrumpir tu trabajo.
+- **Limpieza y Pulido Visual:** Eliminamos textos innecesarios y pulimos las pantallas para que tu experiencia de uso sea más limpia y profesional. Corregido un pequeño error visual donde el botón de actualización persistía en el menú principal.
+
 ## [1.6.4] - 2026-08-26
 ### Mejoras
-- SincronizaciÃƒÂ³n de versiÃƒÂ³n con el cliente de escritorio (Mejora UX sin clics intermedios).
+- Preparado el backend para soportar la actualización silenciosa sin interrumpir al frontend prematuramente.
 
 ## [1.6.3] - 2026-08-26
-### Mejoras
-- SincronizaciÃƒÂ³n de versiÃƒÂ³n con el cliente de escritorio (mejoras de UX en el actualizador).
+### Bugs Arreglados
+- Solucionado el reinicio de conexión prematuro en Laravel durante despliegues pesados.
 
 ## [1.6.2] - 2026-08-26
-### Correcciones
-- Compatibilidad de versiÃƒÂ³n con el frontend.
+### Bugs Arreglados
+- Solucionado el parseo de changelogs en scripts de GitHub Actions (awk) garantizando codificación UTF-8 pura sin BOM.
 
-## [1.6.0] - 2026-08-26
+## [1.6.1] - 2026-08-25
+### Bugs Arreglados
+- Corregido el Endpoint de Version para evitar retornos cacheados erróneos del OPcache de PHP al finalizar una actualización.
+
+## [1.5.0] - 2026-08-25
+### Características Nuevas
+- Script automático para disparar git pull, composer install, y limpiezas de caché de forma unificada para actualizaciones de backend.
+
+## [1.4.4] - 2026-08-25
 ### Mejoras
-- ActualizaciÃƒÂ³n mayor para dar soporte completo a la App MÃƒÂ³vil.
-
----
-## [1.4.5] - 2026-05-14 - QA Testing Suite y Soporte Universal de Base de Datos
-### Nuevas Funcionalidades
-- Suite de Testing Automatizada implementada en memoria.
+- Versión base estable.
