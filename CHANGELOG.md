@@ -1,5 +1,14 @@
-﻿# Changelog 📝 Sistema POS (Backend)
+# Changelog 📝 Sistema POS (Backend)
 Todos los cambios notables del servidor web y base de datos (Laravel/PHP) están documentados aquí.
+
+## [1.7.2] - 2026-08-29
+### Correcciones
+- Corrección crítica en el actualizador: el proceso PHP ahora se localiza con ruta absoluta para garantizar la ejecución correcta de las migraciones y optimizaciones en todos los entornos.
+- Corrección de codificación de texto en la interfaz de inicio: caracteres especiales como tildes y eñes ahora se muestran correctamente.
+- Mejora en la app móvil: la barra de "Producto no encontrado" ahora desaparece correctamente al escanear el siguiente código.
+- Corrección en el formulario de productos: las marcas y categorías recién creadas ahora se seleccionan automáticamente en el desplegable.
+
+---
 
 ## [1.7.0] - 2026-08-26
 ### Novedades de esta Gran Actualización (desde v1.4.4)
