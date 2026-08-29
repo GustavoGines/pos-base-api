@@ -31,4 +31,4 @@ echo Procesos PHP corriendo:
 tasklist /fi "IMAGENAME eq php.exe" /fo table
 echo.
 echo Listo. Las tareas se iniciaran automaticamente con cada inicio de sesion.
-pause
+

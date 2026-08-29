@@ -1,7 +1,7 @@
 # Changelog 📝 Sistema POS (Backend)
 Todos los cambios notables del servidor web y base de datos (Laravel/PHP) están documentados aquí.
 
-## [1.7.2] - 2026-08-29
+## [1.7.3] - 2026-08-29
 ### Correcciones
 - Corrección crítica en el actualizador: el proceso PHP ahora se localiza con ruta absoluta para garantizar la ejecución correcta de las migraciones y optimizaciones en todos los entornos.
 - Corrección de codificación de texto en la interfaz de inicio: caracteres especiales como tildes y eñes ahora se muestran correctamente.

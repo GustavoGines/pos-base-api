@@ -320,7 +320,8 @@ class LicenseSyncService
             file_put_contents('C:\laragon\www\error_body.html', $response->body());
             throw new \Exception('URL: ' . $url . ' | Status: ' . $response->status() . ' | Body: ' . substr($response->body(), 0, 100));
         } catch (\Illuminate\Http\Client\ConnectionException $e) {
-            throw new \Exception('No hay conexión a internet para validar la licencia.');
+            \Illuminate\Support\Facades\Log::error('Error de red al validar licencia: ' . $e->getMessage());
+            throw new \Exception('No se pudo conectar con el servidor de licencias. Detalle: ' . $e->getMessage());
         }
     }
 }
