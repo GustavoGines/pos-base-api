@@ -1,43 +1,17 @@
-# Changelog 📝 Sistema POS (Backend)
-Todos los cambios notables del servidor web y base de datos (Laravel/PHP) están documentados aquí.
+﻿# Changelog 📝 Sistema POS (Backend)
+Todos los cambios notables del servidor de base de datos y API están documentados aquí.
 
-## [1.7.3] - 2026-08-29
-### Correcciones
-- Corrección crítica en el actualizador: el proceso PHP ahora se localiza con ruta absoluta para garantizar la ejecución correcta de las migraciones y optimizaciones en todos los entornos.
-- Corrección de codificación de texto en la interfaz de inicio: caracteres especiales como tildes y eñes ahora se muestran correctamente.
-- Mejora en la app móvil: la barra de "Producto no encontrado" ahora desaparece correctamente al escanear el siguiente código.
-- Corrección en el formulario de productos: las marcas y categorías recién creadas ahora se seleccionan automáticamente en el desplegable.
+## [1.7.4] - 2026-08-29
+### Novedades de esta Gran Actualización (desde v1.4.4)
+- **Soporte Oficial para App Móvil:** Lanzamiento del nuevo módulo de API para soporte de lectura y escritura desde la aplicación Android. 
+- **Nuevo Perfil de Usuario:** Se añadió el perfil predeterminado "Admin Móvil" con clave de acceso rápido 5678 para usar exclusivamente desde la app.
+- **Canal de WebSocket Integrado:** Soporte completo de sincronización de eventos en tiempo real usando Laravel Reverb, garantizando que cuando vendes desde la caja, la app móvil se actualice en un segundo.
+- **Soporte de Cloudflare Tunnels (Acceso Remoto):** Nueva arquitectura de ruteo para permitir conectar el celular al sistema de tu negocio usando datos móviles o 4G desde cualquier lugar del mundo.
+- **Correcciones Críticas de Base de Datos:** Los comandos de emergencia del sistema ahora están configurados silenciosamente para reparar las tablas tras una actualización masiva.
+- **Estabilidad de Validaciones:** El servicio de validación de licencias ya no arrojará errores de conexión genéricos en pantalla cuando el servidor principal demore en responder (Cold Start timeout fijo a 120s).
 
 ---
 
-## [1.7.0] - 2026-08-26
-### Novedades de esta Gran Actualización (desde v1.4.4)
-- **Soporte Oficial para la App Móvil:** El sistema ahora cuenta con todo el motor interno preparado para comunicarse en tiempo real con nuestra nueva Aplicación Móvil.
-- **Actualizaciones 100% Automáticas:** Rediseñamos por completo el sistema de actualización. Ahora, cuando haya mejoras tanto para la caja como para el servidor, el proceso será continuo, inteligente y completamente automático, sin requerir clics innecesarios.
-- **Personalización Extrema del Terminal:** Agregamos 4 nuevos modos de vista para los productos de Acceso Rápido (Tarjetas grandes, medianas, lista clásica y modo 'supermercado' ultra compacto) para adaptarse perfectamente a tu forma de vender. Además, podés ajustar libremente qué porción de la pantalla ocupa el carrito y qué porción ocupan los productos.
-- **Mayor Estabilidad y Resiliencia:** Mejoramos la conexión de red y le dimos al sistema la capacidad de manejar grandes volúmenes de datos durante las actualizaciones sin interrumpir tu trabajo.
-- **Limpieza y Pulido Visual:** Eliminamos textos innecesarios y pulimos las pantallas para que tu experiencia de uso sea más limpia y profesional. Corregido un pequeño error visual donde el botón de actualización persistía en el menú principal.
-
-## [1.6.4] - 2026-08-26
-### Mejoras
-- Preparado el backend para soportar la actualización silenciosa sin interrumpir al frontend prematuramente.
-
-## [1.6.3] - 2026-08-26
-### Bugs Arreglados
-- Solucionado el reinicio de conexión prematuro en Laravel durante despliegues pesados.
-
-## [1.6.2] - 2026-08-26
-### Bugs Arreglados
-- Solucionado el parseo de changelogs en scripts de GitHub Actions (awk) garantizando codificación UTF-8 pura sin BOM.
-
-## [1.6.1] - 2026-08-25
-### Bugs Arreglados
-- Corregido el Endpoint de Version para evitar retornos cacheados erróneos del OPcache de PHP al finalizar una actualización.
-
-## [1.5.0] - 2026-08-25
-### Características Nuevas
-- Script automático para disparar git pull, composer install, y limpiezas de caché de forma unificada para actualizaciones de backend.
-
 ## [1.4.4] - 2026-08-25
 ### Mejoras
-- Versión base estable.
+- Versión inicial estable del servidor de infraestructura POS.

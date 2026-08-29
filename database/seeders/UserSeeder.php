@@ -26,5 +26,18 @@ class UserSeeder extends Seeder
                 'permissions' => ['void_sales', 'manage_catalog', 'adjust_stock', 'view_global_history'],
             ]
         );
+
+        // Administrador Móvil para App (solicitado por cliente)
+        // PIN: 5678 | Password: adminmovil5678
+        User::updateOrCreate(
+            ['email' => 'adminmovil@pos.com'],
+            [
+                'name'        => 'Admin Movil',
+                'role'        => 'admin',
+                'pin'         => Hash::make('5678'),
+                'password'    => Hash::make('adminmovil5678'),
+                'permissions' => ['void_sales', 'manage_catalog', 'adjust_stock', 'view_global_history'],
+            ]
+        );
     }
 }
