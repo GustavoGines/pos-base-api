@@ -18,8 +18,8 @@ schtasks /delete /tn "SistemaPOS_Schedule" /f >nul 2>&1
 schtasks /create /tn "SistemaPOS_Reverb" /tr "\"%PHP_EXE%\" \"%ARTISAN%\" reverb:start --no-interaction" /sc ONLOGON /delay 0000:30 /ru "%USERDOMAIN%\%USERNAME%" /f
 if %errorlevel%==0 (echo [OK] Tarea SistemaPOS_Reverb creada.) else (echo [ERROR] Fallo SistemaPOS_Reverb - Correr como Admin)
 
-schtasks /create /tn "SistemaPOS_Schedule" /tr "\"%PHP_EXE%\" \"%ARTISAN%\" schedule:work --no-interaction" /sc ONLOGON /delay 0000:45 /ru "%USERDOMAIN%\%USERNAME%" /f
-if %errorlevel%==0 (echo [OK] Tarea SistemaPOS_Schedule creada.) else (echo [ERROR] Fallo SistemaPOS_Schedule - Correr como Admin)
+schtasks /create /tn "SistemaPOS_Schedule" /tr "\"%PHP_EXE%\" \"%ARTISAN%\" schedule:run --no-interaction" /sc MINUTE /mo 1 /ru "%USERDOMAIN%\%USERNAME%" /f
+if %errorlevel%==0 (echo [OK] Tarea SistemaPOS_Schedule creada para correr cada minuto.) else (echo [ERROR] Fallo SistemaPOS_Schedule - Correr como Admin)
 
 echo.
 echo Iniciando tareas ahora mismo...
