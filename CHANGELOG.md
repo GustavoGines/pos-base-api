@@ -1,6 +1,10 @@
 ﻿# Changelog 📝 Sistema POS (Backend)
 Todos los cambios notables del servidor de base de datos y API están documentados aquí.
 
+## [1.7.5] - 2026-08-29
+### Correcciones
+- Optimización interna para acompañar las correcciones de conexión y codificación de la v1.7.5.
+
 ## [1.7.4] - 2026-08-29
 ### Novedades de esta Gran Actualización (desde v1.4.4)
 - **Soporte Oficial para App Móvil:** Lanzamiento del nuevo módulo de API para soporte de lectura y escritura desde la aplicación Android. 

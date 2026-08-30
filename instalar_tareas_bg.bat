@@ -5,7 +5,8 @@
 :: ============================================================
 setlocal
 
-set PHP_EXE=C:\laragon\bin\php\php-8.3.30-Win32-vs16-x64\php.exe
+:: USAR php-win.exe PARA EVITAR PANTALLAS NEGRAS DE CMD
+set PHP_EXE=C:\laragon\bin\php\php-8.3.30-Win32-vs16-x64\php-win.exe
 set BACKEND_DIR=C:\laragon\www\Sistema_POS\pos-backend
 set ARTISAN=%BACKEND_DIR%\artisan
 
@@ -27,8 +28,7 @@ timeout /t 5 /nobreak >nul
 schtasks /run /tn "SistemaPOS_Schedule" >nul 2>&1
 
 echo.
-echo Procesos PHP corriendo:
-tasklist /fi "IMAGENAME eq php.exe" /fo table
+echo Procesos PHP corriendo en segundo plano:
+tasklist /fi "IMAGENAME eq php-win.exe" /fo table
 echo.
-echo Listo. Las tareas se iniciaran automaticamente con cada inicio de sesion.
-
+echo Listo. Las tareas se iniciaran de forma 100% invisible en cada inicio de sesion.
