@@ -44,7 +44,21 @@ Route::post('/settings/license', [SettingController::class, 'updateLicense']);
 Route::post('/settings/license/sync', [SettingController::class, 'syncLicense']);
 
 // Endpoint de rescate de migraciones OTA (silencioso)
-Route::get('/system/rescue-migrate', function () {
+// Protegido por token secreto si RESCUE_MIGRATE_SECRET está definido en .env.
+// Si no está definido (instalaciones antiguas), funciona sin autenticación
+// para garantizar retrocompatibilidad con clientes en producción.
+Route::get('/system/rescue-migrate', function (\Illuminate\Http\Request $request) {
+    $secret = config('app.rescue_migrate_secret');
+
+    // Solo exigir token si el secreto está configurado en .env.
+    // Instalaciones antiguas (sin RESCUE_MIGRATE_SECRET) continúan funcionando.
+    if (!empty($secret)) {
+        $token = $request->header('X-Rescue-Token');
+        if ($token !== $secret) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+    }
+
     \Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
     return response()->json(['success' => true, 'output' => \Illuminate\Support\Facades\Artisan::output()]);
 });

@@ -120,7 +120,20 @@ return [
 
     'maintenance' => [
         'driver' => env('APP_MAINTENANCE_DRIVER', 'file'),
-        'store' => env('APP_MAINTENANCE_STORE', 'database'),
+        'store'  => env('APP_MAINTENANCE_STORE', 'database'),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Rescue Migrate Secret
+    |--------------------------------------------------------------------------
+    |
+    | Token secreto usado para proteger el endpoint /system/rescue-migrate.
+    | Debe coincidir con el valor enviado desde la app móvil en el header
+    | X-Rescue-Token. Definir en .env como RESCUE_MIGRATE_SECRET.
+    | Si no está definido, el endpoint devolverá 403 (fail-secure).
+    |
+    */
+    'rescue_migrate_secret' => env('RESCUE_MIGRATE_SECRET', ''),
 
 ];
