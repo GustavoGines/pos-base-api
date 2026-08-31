@@ -1,5 +1,12 @@
-﻿# Changelog 📝 Sistema POS (Backend)
+# Changelog 📝 Sistema POS (Backend)
 Todos los cambios notables del servidor de base de datos y API están documentados aquí.
+
+## [1.8.0] - 2026-08-31
+### Seguridad
+- Endpoint `/system/rescue-migrate` protegido con token secreto configurable (RESCUE_MIGRATE_SECRET).
+- Instalaciones existentes sin el secreto configurado mantienen retrocompatibilidad.
+### Mejorado
+- Pipeline CI/CD: cada release ahora genera un GitHub Release con el artefacto ZIP adjunto como respaldo histórico.
 
 ## [1.7.5] - 2026-08-29
 ### Correcciones
