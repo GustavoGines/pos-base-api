@@ -33,6 +33,9 @@ schtasks /create /tn "SistemaPOS_Queue" /tr "\"%PHP_EXE%\" \"%ARTISAN%\" queue:w
 if %errorlevel%==0 (echo [OK] Tarea SistemaPOS_Queue creada.) else (echo [ERROR] Fallo SistemaPOS_Queue)
 
 echo.
+echo Limpiando basura de cache...
+del /q /f "%BACKEND_DIR%\bootstrap\cache\*.tmp" >nul 2>&1
+
 echo Iniciando tareas ahora mismo...
 schtasks /run /tn "SistemaPOS_Reverb" >nul 2>&1
 timeout /t 5 /nobreak >nul
@@ -44,4 +47,5 @@ echo Procesos PHP corriendo en segundo plano:
 tasklist /fi "IMAGENAME eq php-win.exe" /fo table
 echo.
 echo Listo. Las tareas se iniciaran de forma 100% invisible en cada inicio de sesion.
+
 
