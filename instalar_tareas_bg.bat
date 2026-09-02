@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 :: ============================================================
 :: SISTEMA POS - Registrador de Tareas en Segundo Plano
 :: Ejecutar COMO ADMINISTRADOR una sola vez
@@ -31,6 +31,12 @@ if %errorlevel%==0 (echo [OK] Tarea SistemaPOS_Schedule creada para correr cada 
 
 schtasks /create /tn "SistemaPOS_Queue" /tr "\"%PHP_EXE%\" \"%ARTISAN%\" queue:work --no-interaction" /sc ONLOGON /delay 0000:30 /ru "SYSTEM" /f
 if %errorlevel%==0 (echo [OK] Tarea SistemaPOS_Queue creada.) else (echo [ERROR] Fallo SistemaPOS_Queue)
+
+echo.
+echo Abriendo puerto 8080 en el Firewall de Windows para WebSockets locales...
+netsh advfirewall firewall delete rule name="Sistema POS - WebSockets" >nul 2>&1
+netsh advfirewall firewall add rule name="Sistema POS - WebSockets" dir=in action=allow protocol=TCP localport=8080 >nul 2>&1
+if %errorlevel%==0 (echo [OK] Puerto 8080 abierto en el Firewall.) else (echo [ERROR] Fallo al abrir puerto 8080)
 
 echo.
 echo Limpiando basura de cache...
