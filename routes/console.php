@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
@@ -10,4 +10,4 @@ Artisan::command('inspire', function () {
 
 // SincronizaciÃ³n diaria del estado de la licencia con el servidor remoto.
 // Si no hay internet, el comando falla silenciosamente sin afectar la operaria.
-Schedule::command('license:sync')->everyFiveMinutes()->withoutOverlapping();
+Schedule::command('license:sync')->everyThreeMinutes()->withoutOverlapping();
