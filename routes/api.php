@@ -44,6 +44,14 @@ Route::post('/settings/license', [SettingController::class, 'updateLicense']);
 Route::post('/settings/license/sync', [SettingController::class, 'syncLicense']);
 
 // Endpoint de rescate de migraciones OTA (silencioso)
+// Ruta para consultar donde esta instalado fisicamente el servidor
+Route::get('/system/install-path', function () {
+    return response()->json([
+        'backend_path' => base_path(),
+        'base_path' => dirname(base_path())
+    ]);
+});
+
 // Protegido por token secreto si RESCUE_MIGRATE_SECRET está definido en .env.
 // Si no está definido (instalaciones antiguas), funciona sin autenticación
 // para garantizar retrocompatibilidad con clientes en producción.
