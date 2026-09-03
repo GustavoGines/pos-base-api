@@ -1,6 +1,10 @@
 # Changelog - Sistema POS (Backend API)
 Todos los cambios notables del servidor base estan documentados aqui.
 
+## [1.8.4] - 2026-09-02
+### Novedades
+- Parche de compatibilidad para actualizador OTA.
+
 ## [1.8.3] - 2026-09-02
 ### Novedades
 - Nueva API /api/system/install-path para obtener la ruta de instalacion local del sistema.
