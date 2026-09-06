@@ -1,6 +1,11 @@
 # Changelog - Sistema POS (Backend API)
 Todos los cambios notables del servidor base estan documentados aqui.
 
+
+## [1.8.5] - 2026-09-06
+### Agregado
+- Limpieza del repositorio para la nueva distribución y paridad de payloads con las apps de frontend.
+
 ## [1.8.4] - 2026-09-02
 ### Novedades
 - Parche de compatibilidad para actualizador OTA.
