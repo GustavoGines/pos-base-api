@@ -226,8 +226,14 @@ Route::middleware(['session.validate'])->group(function () {
     // Mobile Scanner Module
     Route::post('/mobile/scan', function (\Illuminate\Http\Request $request) {
         $request->validate(['barcode' => 'required|string']);
-        broadcast(new \App\Events\MobileScanned($request->barcode, $request->target_pc ?? 'caja-1'));
-        return response()->json(['status' => 'Scanned event sent']);
+        try {
+            broadcast(new \App\Events\MobileScanned($request->barcode, $request->target_pc ?? 'caja-1'));
+            return response()->json(['status' => 'Scanned event sent']);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Broadcast error in /mobile/scan: ' . $e->getMessage());
+            // Return 200 so the mobile app doesn't crash, but return the error in the body
+            return response()->json(['status' => 'Event queued, but Reverb might be down', 'error' => $e->getMessage()]);
+        }
     });
 
     // Mobile Print Label Module
