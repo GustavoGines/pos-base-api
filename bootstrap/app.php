@@ -18,6 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'feature'          => \App\Http\Middleware\CheckFeatureAccess::class,   // [feature-flags] Seguridad modular
             'session.validate' => \App\Http\Middleware\ValidateSessionToken::class, // [single-session] Sesión única por usuario
             'role.admin'       => \App\Http\Middleware\EnsureUserIsAdmin::class,
+            'role.or.pin'      => \App\Http\Middleware\EnsureRoleOrPin::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

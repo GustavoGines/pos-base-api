@@ -181,8 +181,24 @@ class CashShiftService
                 ->whereHas('payments.paymentMethod', fn($q) => $q->where('code', 'cuenta_corriente'))
                 ->count();
 
-            // El efectivo físico esperado en la gaveta = Fondo Inicial + SOLO pagos en métodos is_cash
-            $expectedBalance = $shift->opening_balance + $cashSales;
+            // Movimientos manuales de caja (Gastos, Retiros, Ingresos extra)
+            $cashDeposits = \App\Models\CashMovement::where('cash_shift_id', $shiftId)
+                ->where('payment_method', 'cash')
+                ->where('type', 'deposit')
+                ->sum('amount');
+                
+            $cashExpenses = \App\Models\CashMovement::where('cash_shift_id', $shiftId)
+                ->where('payment_method', 'cash')
+                ->where('type', 'expense')
+                ->sum('amount');
+                
+            $cashWithdrawals = \App\Models\CashMovement::where('cash_shift_id', $shiftId)
+                ->where('payment_method', 'cash')
+                ->where('type', 'withdrawal')
+                ->sum('amount');
+
+            // El efectivo físico esperado en la gaveta = Fondo Inicial + Ventas Efectivo + Ingresos Extra - Gastos - Retiros
+            $expectedBalance = $shift->opening_balance + $cashSales + $cashDeposits - $cashExpenses - $cashWithdrawals;
             
             // Desfase (Sobrante/Faltante) comparado contra lo físico contado
             $difference = $actualBalance - $expectedBalance;
@@ -201,6 +217,9 @@ class CashShiftService
                 'check_details'     => json_encode($checkDetails),
                 'cc_sales'          => $ccSales,
                 'cc_sales_count'    => $ccSalesCount,
+                'total_expenses'    => $cashExpenses,
+                'total_withdrawals' => $cashWithdrawals,
+                'total_deposits'    => $cashDeposits,
                 'status'            => 'closed',
                 'closed_by_user_id' => $closerUserId,
             ]);

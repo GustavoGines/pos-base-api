@@ -416,17 +416,30 @@ class ReportController extends Controller
             ->orderByRaw("period ASC")
             ->get();
 
-        $months = $rows->map(function ($row) {
+        $months = $rows->map(function ($row) use ($isSqlite, $startDate, $endDate) {
             $date         = Carbon::parse($row->period . '-01');
+            
+            // Buscar gastos (expenses) para este mes
+            $expenses = DB::table('cash_movements')
+                ->where('type', 'expense')
+                ->whereNull('deleted_at')
+                ->whereBetween('created_at', [
+                    $date->copy()->startOfMonth()->toDateTimeString(),
+                    $date->copy()->endOfMonth()->toDateTimeString()
+                ])->sum('amount');
+            
+            // Restamos los gastos a la ganancia bruta para obtener la ganancia neta
+            $netProfit = $row->total_profit - $expenses;
+            
             $marginPct    = $row->revenue_with_cost > 0
-                            ? round(($row->total_profit / $row->revenue_with_cost) * 100, 1)
+                            ? round(($netProfit / $row->revenue_with_cost) * 100, 1)
                             : 0.0;
             return [
                 'period'       => $row->period,
                 'label'        => $date->translatedFormat('M Y'),   // "Abr 2026"
                 'total_revenue'=> round((float) $row->total_revenue, 2),
                 'total_cost'   => round((float) $row->total_cost,    2),
-                'total_profit' => round((float) $row->total_profit,  2),
+                'total_profit' => round((float) $netProfit,  2),
                 'transactions' => (int) $row->transactions,
                 'margin_pct'   => $marginPct,
             ];

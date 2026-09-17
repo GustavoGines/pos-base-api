@@ -144,6 +144,12 @@ Route::middleware(['session.validate'])->group(function () {
     Route::post('/customers/{customer}/payments', [CustomerController::class, 'registerPayment']);
     Route::get('/customers/{customer}/pending-sales', [CustomerController::class, 'getPendingSales']);
 
+    // ── Módulo Movimientos de Caja y Gastos ─────────────────────────────
+    Route::apiResource('cash-movements', \App\Http\Controllers\Api\CashMovementController::class)->only(['index', 'store']);
+    Route::middleware(['role.or.pin'])->group(function () {
+        Route::delete('/cash-movements/{cash_movement}', [\App\Http\Controllers\Api\CashMovementController::class, 'destroy']);
+    });
+
     // ── Módulo Cartera de Cheques ────────────────────────────────────
     Route::middleware(['feature:checks'])->group(function () {
         Route::get('/third-party-checks', [\App\Http\Controllers\Api\ThirdPartyCheckController::class, 'index']);
@@ -152,7 +158,7 @@ Route::middleware(['session.validate'])->group(function () {
 
     // ── Módulo Proveedores ───────────────────────────────────────────
     Route::apiResource('suppliers', \App\Http\Controllers\Api\SupplierController::class)->only(['index', 'show']);
-    Route::middleware(['role.admin'])->group(function () {
+    Route::middleware(['role.or.pin'])->group(function () {
         Route::apiResource('suppliers', \App\Http\Controllers\Api\SupplierController::class)->except(['index', 'show']);
     });
 
@@ -186,7 +192,7 @@ Route::middleware(['session.validate'])->group(function () {
 
     // ── Métodos de pago y papelera (admin) ───────────────────────────
     Route::apiResource('payment-methods', \App\Http\Controllers\Api\PaymentMethodController::class)->except(['index']);
-    Route::middleware(['role.admin'])->prefix('trash')->group(function () {
+    Route::middleware(['role.or.pin'])->prefix('trash')->group(function () {
         Route::get('/{model}', [TrashController::class, 'index']);
         Route::post('/{model}/{id}/restore', [TrashController::class, 'restore']);
         Route::delete('/{model}/{id}/force', [TrashController::class, 'forceDelete']);

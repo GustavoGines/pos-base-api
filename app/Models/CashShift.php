@@ -31,6 +31,9 @@ class CashShift extends Model
         'cc_sales',
         'cc_sales_count',
         'status',
+        'total_expenses',
+        'total_withdrawals',
+        'total_deposits',
     ];
 
     protected $casts = [
@@ -46,6 +49,9 @@ class CashShift extends Model
         'transfer_sales'   => 'decimal:2',
         'total_surcharge'  => 'decimal:2',
         'cc_sales'         => 'decimal:2',
+        'total_expenses'    => 'decimal:2',
+        'total_withdrawals' => 'decimal:2',
+        'total_deposits'    => 'decimal:2',
     ];
 
     /**
@@ -77,6 +83,11 @@ class CashShift extends Model
         return $this->hasMany(Sale::class);
     }
 
+    public function cashMovements(): HasMany
+    {
+        return $this->hasMany(CashMovement::class);
+    }
+
     public function getExpectedBalanceAttribute($value)
     {
         if ($this->status === 'closed') {
@@ -95,7 +106,22 @@ class CashShift extends Model
             ->where('type', 'payment')
             ->where('payment_method', 'cash')
             ->sum('amount');
+            
+        $cashDeposits = \App\Models\CashMovement::where('cash_shift_id', $this->id)
+            ->where('payment_method', 'cash')
+            ->where('type', 'deposit')
+            ->sum('amount');
+            
+        $cashExpenses = \App\Models\CashMovement::where('cash_shift_id', $this->id)
+            ->where('payment_method', 'cash')
+            ->where('type', 'expense')
+            ->sum('amount');
+            
+        $cashWithdrawals = \App\Models\CashMovement::where('cash_shift_id', $this->id)
+            ->where('payment_method', 'cash')
+            ->where('type', 'withdrawal')
+            ->sum('amount');
 
-        return $this->opening_balance + $cashSales;
+        return $this->opening_balance + $cashSales + $cashDeposits - $cashExpenses - $cashWithdrawals;
     }
 }

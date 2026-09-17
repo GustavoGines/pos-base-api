@@ -21,6 +21,8 @@ class TrashController extends Controller
                 return Product::onlyTrashed();
             case 'suppliers':
                 return \App\Models\Supplier::onlyTrashed();
+            case 'cash_movements':
+                return \App\Models\CashMovement::with(['user', 'authorizer', 'deletedBy', 'supplier', 'check'])->onlyTrashed();
             default:
                 abort(404, 'Modelo no soportado para la papelera de reciclaje.');
         }
@@ -37,15 +39,20 @@ class TrashController extends Controller
         if ($search = $request->query('search')) {
             $like = '%' . $search . '%';
             $query->where(function ($q) use ($like, $model) {
-                $q->where('name', 'like', $like);
                 if ($model === 'customers') {
-                    $q->orWhere('document_number', 'like', $like);
+                    $q->where('name', 'like', $like)->orWhere('document_number', 'like', $like);
                 } elseif ($model === 'products') {
-                    $q->orWhere('barcode', 'like', $like)
+                    $q->where('name', 'like', $like)
+                      ->orWhere('barcode', 'like', $like)
                       ->orWhere('internal_code', 'like', $like);
                 } elseif ($model === 'suppliers') {
-                    $q->orWhere('cuit', 'like', $like)
+                    $q->where('name', 'like', $like)
+                      ->orWhere('cuit', 'like', $like)
                       ->orWhere('contact_name', 'like', $like);
+                } elseif ($model === 'cash_movements') {
+                    $q->where('category', 'like', $like)
+                      ->orWhere('description', 'like', $like)
+                      ->orWhere('receipt_number', 'like', $like);
                 }
             });
         }
@@ -60,7 +67,32 @@ class TrashController extends Controller
     public function restore($model, $id)
     {
         $item = $this->getModelQuery($model)->findOrFail($id);
-        $item->restore();
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($model, $item) {
+            $item->restore();
+
+            // Si es un movimiento de caja, re-aplicar su efecto financiero
+            if ($model === 'cash_movements') {
+                $item->deleted_by = null;
+                $item->save();
+                
+                // Re-descontar deuda de proveedor
+                if ($item->supplier_id && $item->type === 'expense') {
+                    $supplier = \App\Models\Supplier::find($item->supplier_id);
+                    if ($supplier) {
+                        $supplier->decrement('balance', $item->amount);
+                    }
+                }
+
+                // Re-endosar estado del cheque
+                if ($item->payment_method === 'check' && $item->check_id) {
+                    $check = \App\Models\ThirdPartyCheck::find($item->check_id);
+                    if ($check) {
+                        $check->update(['status' => 'endorsed']);
+                    }
+                }
+            }
+        });
 
         return response()->json([
             'message' => 'Elemento restaurado exitosamente.',
