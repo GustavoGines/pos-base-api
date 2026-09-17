@@ -32,12 +32,16 @@ class CatalogController extends Controller
             'product_ids' => 'required|array',
             'product_ids.*' => 'integer|exists:products,id',
             'category_id' => 'nullable|exists:categories,id',
+            'supplier_id' => ['nullable', \Illuminate\Validation\Rule::exists('suppliers', 'id')->whereNull('deleted_at')],
             'active' => 'nullable|boolean'
         ]);
 
         $updates = [];
         if (array_key_exists('category_id', $validated)) {
             $updates['category_id'] = $validated['category_id'];
+        }
+        if (array_key_exists('supplier_id', $validated)) {
+            $updates['supplier_id'] = $validated['supplier_id'];
         }
         if (array_key_exists('active', $validated)) {
             $updates['active'] = $validated['active'];

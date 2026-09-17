@@ -26,16 +26,24 @@ class ProductController extends Controller
 
         $allowedSorts = [
             'id', 'name', 'selling_price', 'cost_price', 'stock',
-            'barcode', 'internal_code', 'category_id', 'brand_id', 'is_sold_by_weight', 'active', 'sales_count', 'vencimiento_dias'
+            'barcode', 'internal_code', 'category_id', 'brand_id', 'supplier_id', 'is_sold_by_weight', 'active', 'sales_count', 'vencimiento_dias'
         ];
         $sortBy = $request->query('sort_by');
         $sortDir = $request->query('sort_direction') === 'desc' ? 'desc' : 'asc';
 
         if ($sortBy && in_array($sortBy, $allowedSorts)) {
-            // Ordenar por nombre de marca (no por ID numérico) para que sea intuitivo
+            // Ordenar por nombre de la relación (no por ID numérico) para que sea intuitivo
             if ($sortBy === 'brand_id') {
                 $query->leftJoin('brands', 'brands.id', '=', 'products.brand_id')
                       ->orderBy('brands.name', $sortDir)
+                      ->select('products.*');
+            } elseif ($sortBy === 'category_id') {
+                $query->leftJoin('categories', 'categories.id', '=', 'products.category_id')
+                      ->orderBy('categories.name', $sortDir)
+                      ->select('products.*');
+            } elseif ($sortBy === 'supplier_id') {
+                $query->leftJoin('suppliers', 'suppliers.id', '=', 'products.supplier_id')
+                      ->orderBy('suppliers.name', $sortDir)
                       ->select('products.*');
             } else {
                 $column = $sortBy === 'name' ? 'products.name' : $sortBy;
@@ -79,7 +87,7 @@ class ProductController extends Controller
             'vencimiento_dias' => 'nullable|integer|min:1|max:3650',
             'category_id' => 'nullable|exists:categories,id',
             'brand_id' => 'nullable|exists:brands,id',
-            'supplier_id' => 'nullable|exists:suppliers,id',
+            'supplier_id' => ['nullable', \Illuminate\Validation\Rule::exists('suppliers', 'id')->whereNull('deleted_at')],
             'is_combo' => 'boolean',
             'combo_ingredients' => 'nullable|array|required_if:is_combo,true',
             'combo_ingredients.*.id' => 'required_with:combo_ingredients|exists:products,id',

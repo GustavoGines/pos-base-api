@@ -150,6 +150,12 @@ Route::middleware(['session.validate'])->group(function () {
         Route::patch('/third-party-checks/{check}/status', [\App\Http\Controllers\Api\ThirdPartyCheckController::class, 'updateStatus']);
     });
 
+    // ── Módulo Proveedores ───────────────────────────────────────────
+    Route::apiResource('suppliers', \App\Http\Controllers\Api\SupplierController::class)->only(['index', 'show']);
+    Route::middleware(['role.admin'])->group(function () {
+        Route::apiResource('suppliers', \App\Http\Controllers\Api\SupplierController::class)->except(['index', 'show']);
+    });
+
     // ── Catálogo: escritura (crear, editar, borrar productos) ────────
     Route::post('/catalog/products/bulk-delete', [CatalogController::class, 'bulkDelete']);
     Route::put('/catalog/products/bulk-update', [CatalogController::class, 'bulkUpdate']);

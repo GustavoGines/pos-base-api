@@ -19,6 +19,8 @@ class TrashController extends Controller
                 return Customer::onlyTrashed();
             case 'products':
                 return Product::onlyTrashed();
+            case 'suppliers':
+                return \App\Models\Supplier::onlyTrashed();
             default:
                 abort(404, 'Modelo no soportado para la papelera de reciclaje.');
         }
@@ -41,6 +43,9 @@ class TrashController extends Controller
                 } elseif ($model === 'products') {
                     $q->orWhere('barcode', 'like', $like)
                       ->orWhere('internal_code', 'like', $like);
+                } elseif ($model === 'suppliers') {
+                    $q->orWhere('cuit', 'like', $like)
+                      ->orWhere('contact_name', 'like', $like);
                 }
             });
         }

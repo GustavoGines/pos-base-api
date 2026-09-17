@@ -31,6 +31,7 @@ class BigCatalogSeeder extends Seeder
             ['Dietética / Granel','Harinas, azúcares, semillas y frutos secos al peso'],
             ['Limpieza',         'Artículos de limpieza del hogar'],
             ['Perfumería',       'Higiene personal y cosmética'],
+            ['Carnicería',       'Cortes de carne vacuna, cerdo, pollo y achuras'],
         ];
 
         foreach ($catDefs as [$name, $desc]) {
@@ -166,25 +167,25 @@ class BigCatalogSeeder extends Seeder
         // ── DIETÉTICA / GRANEL — por peso (14) ──────────────────
         $d = $cats['Dietética / Granel']->id;
         $granel = [
-            ['Harina 0000 (Granel)',        450,  700, 80.0],
-            ['Harina 000 Leudante (Granel)', 500,  780, 60.0],
-            ['Harina de Maíz (Granel)',     550,  850, 50.0],
-            ['Azúcar Mascabo (Granel)',      900, 1400, 30.0],
-            ['Azúcar Impalpable (Granel)',   700, 1100, 40.0],
-            ['Cacao en Polvo (Granel)',      900, 1400, 25.0],
-            ['Arroz Integral (Granel)',      700, 1100, 45.0],
-            ['Avena Arrollada (Granel)',     600,  950, 50.0],
-            ['Maní Pelado (Granel)',        1100, 1700, 20.0],
-            ['Almendras Enteras (Granel)',  3500, 5500, 10.0],
-            ['Nueces Peladas (Granel)',     3000, 4800, 12.0],
-            ['Semillas de Chía (Granel)',   900, 1400, 15.0],
-            ['Semillas de Lino (Granel)',   700, 1100, 18.0],
-            ['Coco Rallado (Granel)',       1200, 1900, 10.0],
+            ['Harina 0000',        450,  700, 80.0],
+            ['Harina 000 Leudante', 500,  780, 60.0],
+            ['Harina de Maíz',     550,  850, 50.0],
+            ['Azúcar Mascabo',      900, 1400, 30.0],
+            ['Azúcar Impalpable',   700, 1100, 40.0],
+            ['Cacao en Polvo',      900, 1400, 25.0],
+            ['Arroz Integral',      700, 1100, 45.0],
+            ['Avena Arrollada',     600,  950, 50.0],
+            ['Maní Pelado',        1100, 1700, 20.0],
+            ['Almendras Enteras',  3500, 5500, 10.0],
+            ['Nueces Peladas',     3000, 4800, 12.0],
+            ['Semillas de Chía',   900, 1400, 15.0],
+            ['Semillas de Lino',   700, 1100, 18.0],
+            ['Coco Rallado',       1200, 1900, 10.0],
         ];
         foreach ($granel as [$name,$cost,$sell,$stock]) {
             Product::create(['name'=>$name,'barcode'=>null,'internal_code'=>$next(),
                 'cost_price'=>$cost,'selling_price'=>$sell,'stock'=>$stock,
-                'active'=>true,'is_sold_by_weight'=>true,'category_id'=>$d]);
+                'active'=>true,'is_sold_by_weight'=>true,'unit_type'=>'kg','category_id'=>$d]);
         }
 
         // ── LIMPIEZA (12) ────────────────────────────────────────
@@ -227,6 +228,33 @@ class BigCatalogSeeder extends Seeder
             Product::create(['name'=>$name,'barcode'=>$bar,'internal_code'=>$next(),
                 'cost_price'=>$cost,'selling_price'=>$sell,'stock'=>$stock,
                 'active'=>true,'is_sold_by_weight'=>false,'category_id'=>$per]);
+        }
+
+        // ── CARNICERÍA — por peso (17) ──────────────────────────
+        $carni = $cats['Carnicería']->id;
+        $carnes = [
+            ['Asado de Novillo', 4500, 6800, 50.0],
+            ['Vacío de Novillo', 5200, 7500, 30.0],
+            ['Matambre de Novillo', 4800, 7200, 20.0],
+            ['Nalga para Milanesas', 5500, 8000, 40.0],
+            ['Carne Picada Especial', 4000, 6000, 25.0],
+            ['Carne Picada Común', 2500, 4500, 30.0],
+            ['Entraña Fina', 6500, 9500, 15.0],
+            ['Bife de Chorizo', 6000, 9000, 20.0],
+            ['Pollo Entero Fresco', 1800, 2800, 80.0],
+            ['Pechuga de Pollo Deshuesada', 3500, 5500, 40.0],
+            ['Pechito de Cerdo', 3200, 5000, 25.0],
+            ['Bondiola de Cerdo Fresca', 4500, 6500, 20.0],
+            ['Chorizo Puro Cerdo', 3800, 5800, 30.0],
+            ['Morcilla Bombón', 2500, 4000, 20.0],
+            ['Chinchulín de Ternera', 2000, 3500, 15.0],
+            ['Milanesas de Carne Preparadas', 4200, 6500, 25.0],
+            ['Milanesas de Pollo Preparadas', 3500, 5200, 30.0],
+        ];
+        foreach ($carnes as [$name, $cost, $sell, $stock]) {
+            Product::create(['name'=>$name,'barcode'=>null,'internal_code'=>$next(),
+                'cost_price'=>$cost,'selling_price'=>$sell,'stock'=>$stock,
+                'active'=>true,'is_sold_by_weight'=>true,'unit_type'=>'kg','category_id'=>$carni]);
         }
 
         $this->command->info('✅ BigCatalogSeeder: ' . Product::count() . ' productos creados en ' . Category::count() . ' categorías.');
