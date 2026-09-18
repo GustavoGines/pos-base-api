@@ -14,6 +14,7 @@ class SupplierInvoiceController extends Controller
     public function store(Request $request, Supplier $supplier)
     {
         $validated = $request->validate([
+            'type' => 'required|string|in:invoice,credit_note',
             'amount' => 'required|numeric|min:0.01',
             'invoice_number' => 'nullable|string|max:255',
             'description' => 'nullable|string',
@@ -22,8 +23,9 @@ class SupplierInvoiceController extends Controller
 
         try {
             DB::transaction(function () use ($validated, $supplier, $request) {
-                // Crear la factura
+                // Crear la factura o nota de crédito
                 $supplier->invoices()->create([
+                    'type' => $validated['type'],
                     'amount' => $validated['amount'],
                     'invoice_number' => $validated['invoice_number'],
                     'description' => $validated['description'],
@@ -31,8 +33,12 @@ class SupplierInvoiceController extends Controller
                     'user_id' => $request->attributes->get('authenticated_user')->id ?? null,
                 ]);
 
-                // Aumentar la deuda del proveedor (supplier balance goes UP)
-                $supplier->increment('balance', $validated['amount']);
+                // Factura aumenta la deuda, Nota de Crédito la disminuye (Saldo a favor)
+                if ($validated['type'] === 'credit_note') {
+                    $supplier->decrement('balance', $validated['amount']);
+                } else {
+                    $supplier->increment('balance', $validated['amount']);
+                }
             });
 
             return response()->json([
