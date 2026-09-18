@@ -160,6 +160,7 @@ Route::middleware(['session.validate'])->group(function () {
     Route::apiResource('suppliers', \App\Http\Controllers\Api\SupplierController::class)->only(['index', 'show']);
     Route::middleware(['role.or.pin'])->group(function () {
         Route::apiResource('suppliers', \App\Http\Controllers\Api\SupplierController::class)->except(['index', 'show']);
+        Route::post('suppliers/{supplier}/invoices', [\App\Http\Controllers\Api\SupplierInvoiceController::class, 'store']);
     });
 
     // ── Catálogo: escritura (crear, editar, borrar productos) ────────
