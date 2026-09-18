@@ -36,7 +36,7 @@ class StoreCashMovementRequest extends FormRequest
                 'nullable', 
                 'integer',
                 'exists:suppliers,id', 
-                'required_if:category,Pago a Proveedor'
+                'required_if:category,Pago a Proveedor,Reembolso de Proveedor'
             ],
             
             // Array de pagos (para pagos mixtos)

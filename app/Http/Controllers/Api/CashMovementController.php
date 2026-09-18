@@ -107,11 +107,15 @@ class CashMovementController extends Controller
                     }
                 }
 
-                // Si es pago a proveedor, descontar deuda total
-                if (!empty($validated['supplier_id']) && $validated['type'] === 'expense') {
+                // Si es pago o reembolso de proveedor, actualizar deuda total
+                if (!empty($validated['supplier_id'])) {
                     $supplier = Supplier::find($validated['supplier_id']);
                     if ($supplier) {
-                        $supplier->decrement('balance', $totalAmountPaid);
+                        if ($validated['type'] === 'expense') {
+                            $supplier->decrement('balance', $totalAmountPaid);
+                        } elseif ($validated['type'] === 'deposit') {
+                            $supplier->increment('balance', $totalAmountPaid);
+                        }
                     }
                 }
             });
@@ -132,11 +136,15 @@ class CashMovementController extends Controller
 
         try {
             DB::transaction(function () use ($movement, $user) {
-                // Revertir deuda de proveedor
-                if ($movement->supplier_id && $movement->type === 'expense') {
+                // Revertir balance de proveedor
+                if ($movement->supplier_id) {
                     $supplier = Supplier::find($movement->supplier_id);
                     if ($supplier) {
-                        $supplier->increment('balance', $movement->amount);
+                        if ($movement->type === 'expense') {
+                            $supplier->increment('balance', $movement->amount);
+                        } elseif ($movement->type === 'deposit') {
+                            $supplier->decrement('balance', $movement->amount);
+                        }
                     }
                 }
 
