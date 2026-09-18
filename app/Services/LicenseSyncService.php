@@ -112,6 +112,8 @@ class LicenseSyncService
                 $planLower = strtolower($data['plan'] ?? $data['plan_type'] ?? 'basic');
                 if (in_array($planLower, ['premium', 'pro'])) {
                     $features['multi_caja'] = $features['multi_caja'] ?? true;
+                    $features['current_accounts'] = $features['current_accounts'] ?? true;
+                    $features['suppliers'] = $features['suppliers'] ?? true;
                     $features['advanced_reports'] = $features['advanced_reports'] ?? true;
                     
                     $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store' || !empty($features['quotes']);
@@ -214,6 +216,8 @@ class LicenseSyncService
                 $planLower = strtolower($data['plan'] ?? $data['plan_type'] ?? 'basic');
                 if (in_array($planLower, ['premium', 'pro'])) {
                     $features['multi_caja'] = $features['multi_caja'] ?? true;
+                    $features['current_accounts'] = $features['current_accounts'] ?? true;
+                    $features['suppliers'] = $features['suppliers'] ?? true;
                     $features['advanced_reports'] = $features['advanced_reports'] ?? true;
                     $features['multiple_prices'] = $features['multiple_prices'] ?? true;
                     $features['cheques'] = $features['cheques'] ?? true;
