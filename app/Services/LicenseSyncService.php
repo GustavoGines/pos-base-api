@@ -111,17 +111,18 @@ class LicenseSyncService
                 // las nuevas llaves, pero el plan es Premium/Pro, forzamos la habilitación local.
                 $planLower = strtolower($data['plan'] ?? $data['plan_type'] ?? 'basic');
                 if (in_array($planLower, ['premium', 'pro'])) {
-                    $features['multi_caja'] = $features['multi_caja'] ?? true;
-                    $features['current_accounts'] = $features['current_accounts'] ?? true;
-                    $features['suppliers'] = $features['suppliers'] ?? true;
-                    $features['advanced_reports'] = $features['advanced_reports'] ?? true;
+                    $features['multi_caja'] = true;
+                    $features['current_accounts'] = true;
+                    $features['suppliers'] = true;
+                    $features['expenses'] = true;
+                    $features['advanced_reports'] = true;
                     
                     $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store' || !empty($features['quotes']);
                     if ($isHardwareStore) {
-                        $features['multiple_prices'] = $features['multiple_prices'] ?? true;
-                        $features['logistics'] = $features['logistics'] ?? true;
-                        $features['cheques'] = $features['cheques'] ?? true;
-                        $features['predictive_alerts'] = $features['predictive_alerts'] ?? true;
+                        $features['multiple_prices'] = true;
+                        $features['logistics'] = true;
+                        $features['cheques'] = true;
+                        $features['predictive_alerts'] = true;
                     }
                 }
                 $this->setSetting('license_features_dict', json_encode($features));
@@ -215,19 +216,20 @@ class LicenseSyncService
                 // las nuevas llaves, pero el plan es Premium/Pro, forzamos la habilitación local.
                 $planLower = strtolower($data['plan'] ?? $data['plan_type'] ?? 'basic');
                 if (in_array($planLower, ['premium', 'pro'])) {
-                    $features['multi_caja'] = $features['multi_caja'] ?? true;
-                    $features['current_accounts'] = $features['current_accounts'] ?? true;
-                    $features['suppliers'] = $features['suppliers'] ?? true;
-                    $features['advanced_reports'] = $features['advanced_reports'] ?? true;
-                    $features['multiple_prices'] = $features['multiple_prices'] ?? true;
-                    $features['cheques'] = $features['cheques'] ?? true;
-                    $features['predictive_alerts'] = $features['predictive_alerts'] ?? true;
+                    $features['multi_caja'] = true;
+                    $features['current_accounts'] = true;
+                    $features['suppliers'] = true;
+                    $features['expenses'] = true;
+                    $features['advanced_reports'] = true;
+                    $features['multiple_prices'] = true;
+                    $features['cheques'] = true;
+                    $features['predictive_alerts'] = true;
                     
                     $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store';
                     
                     if ($isHardwareStore) {
-                        $features['quotes'] = $features['quotes'] ?? true;
-                        $features['logistics'] = $features['logistics'] ?? true;
+                        $features['quotes'] = true;
+                        $features['logistics'] = true;
                     } else {
                         // Si se cambió a Retail, forzamos a desactivar los módulos exclusivos de Ferretería
                         // para que no queden "pegados" en caso de que el JSON del servidor remoto no esté limpio.
