@@ -66,32 +66,16 @@ class TrashController extends Controller
      */
     public function restore($model, $id)
     {
+        if ($model === 'cash_movements') {
+            return response()->json([
+                'message' => 'Por seguridad contable, los movimientos de dinero anulados no se pueden restaurar. Debe registrar un movimiento nuevo.'
+            ], 422);
+        }
+
         $item = $this->getModelQuery($model)->findOrFail($id);
 
-        \Illuminate\Support\Facades\DB::transaction(function () use ($model, $item) {
+        \Illuminate\Support\Facades\DB::transaction(function () use ($item) {
             $item->restore();
-
-            // Si es un movimiento de caja, re-aplicar su efecto financiero
-            if ($model === 'cash_movements') {
-                $item->deleted_by = null;
-                $item->save();
-                
-                // Re-descontar deuda de proveedor
-                if ($item->supplier_id && $item->type === 'expense') {
-                    $supplier = \App\Models\Supplier::find($item->supplier_id);
-                    if ($supplier) {
-                        $supplier->decrement('balance', $item->amount);
-                    }
-                }
-
-                // Re-endosar estado del cheque
-                if ($item->payment_method === 'check' && $item->check_id) {
-                    $check = \App\Models\ThirdPartyCheck::find($item->check_id);
-                    if ($check) {
-                        $check->update(['status' => 'endorsed']);
-                    }
-                }
-            }
         });
 
         return response()->json([
@@ -106,10 +90,22 @@ class TrashController extends Controller
     public function forceDelete($model, $id)
     {
         $item = $this->getModelQuery($model)->findOrFail($id);
-        $item->forceDelete();
-
-        return response()->json([
-            'message' => 'Elemento destruido permanentemente.'
-        ], 200);
+        
+        try {
+            $item->forceDelete();
+            return response()->json([
+                'message' => 'Elemento destruido permanentemente.'
+            ], 200);
+        } catch (\Illuminate\Database\QueryException $e) {
+            if ($e->getCode() == 23000) {
+                return response()->json([
+                    'message' => 'No se puede destruir permanentemente porque tiene historial u otros registros asociados en el sistema (por ej. pagos o facturas). Manténgalo en la papelera por seguridad contable.'
+                ], 422);
+            }
+            return response()->json([
+                'message' => 'Error al intentar destruir el elemento.',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 }
