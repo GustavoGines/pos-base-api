@@ -97,7 +97,8 @@ class CashMovementController extends Controller
                         'amount'         => $amount,
                         'payment_method' => $method,
                         'type'           => $validated['type'],
-                        'category'       => $validated['category'],
+                        'category'       => $validated['category'] ?? null,
+                        'expense_category_id' => $validated['expense_category_id'] ?? null,
                         'description'    => $validated['description'] ?? null,
                         'receipt_number' => $validated['receipt_number'] ?? null,
                     ]);
@@ -115,7 +116,7 @@ class CashMovementController extends Controller
                 if (!empty($validated['supplier_id'])) {
                     $supplier = Supplier::find($validated['supplier_id']);
                     if ($supplier) {
-                        if ($validated['type'] === 'expense') {
+                        if ($validated['type'] === 'supplier_payment' || $validated['type'] === 'expense') {
                             $supplier->decrement('balance', $totalAmountPaid);
                         } elseif ($validated['type'] === 'deposit') {
                             $supplier->increment('balance', $totalAmountPaid);
@@ -154,7 +155,7 @@ class CashMovementController extends Controller
                 if ($movement->supplier_id) {
                     $supplier = Supplier::find($movement->supplier_id);
                     if ($supplier) {
-                        if ($movement->type === 'expense') {
+                        if ($movement->type === 'supplier_payment' || $movement->type === 'expense') {
                             $supplier->increment('balance', $movement->amount);
                         } elseif ($movement->type === 'deposit') {
                             $supplier->decrement('balance', $movement->amount);

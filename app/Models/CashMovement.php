@@ -20,6 +20,8 @@ class CashMovement extends Model
         'payment_method',
         'type',
         'category',
+        'expense_category_id',
+        'receipt_file_url',
         'description',
         'receipt_number',
     ];
@@ -56,5 +58,10 @@ class CashMovement extends Model
     public function check()
     {
         return $this->belongsTo(ThirdPartyCheck::class, 'check_id');
+    }
+
+    public function expenseCategory()
+    {
+        return $this->belongsTo(ExpenseCategory::class, 'expense_category_id');
     }
 }

@@ -13,10 +13,13 @@ class SupplierInvoice extends Model
     protected $fillable = [
         'supplier_id',
         'type',
+        'status',
         'amount',
         'invoice_number',
         'description',
+        'receipt_file_url',
         'issue_date',
+        'due_date',
         'user_id'
     ];
 
@@ -28,5 +31,10 @@ class SupplierInvoice extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function items()
+    {
+        return $this->hasMany(SupplierInvoiceItem::class);
     }
 }

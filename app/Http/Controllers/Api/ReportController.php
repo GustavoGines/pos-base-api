@@ -547,5 +547,40 @@ class ReportController extends Controller
             'data'       => $report,
         ]);
     }
+    public function expensesAnalysis(Request $request)
+    {
+        $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
+        $endDate   = $request->query('end_date',   Carbon::now()->endOfMonth()->toDateString());
+
+        $expenses = DB::table('cash_movements')
+            ->leftJoin('expense_categories', 'cash_movements.expense_category_id', '=', 'expense_categories.id')
+            ->where('cash_movements.type', 'expense')
+            ->whereNull('cash_movements.deleted_at')
+            ->whereBetween('cash_movements.created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
+            ->selectRaw('
+                COALESCE(expense_categories.name, "Sin Categoría") as category_name,
+                SUM(cash_movements.amount) as total_amount,
+                COUNT(*) as transactions
+            ')
+            ->groupBy('category_name')
+            ->orderByDesc('total_amount')
+            ->get();
+
+        $totalExpenses = $expenses->sum('total_amount');
+
+        return response()->json([
+            'start_date' => $startDate,
+            'end_date'   => $endDate,
+            'total_expenses' => round($totalExpenses, 2),
+            'by_category' => $expenses->map(function ($row) use ($totalExpenses) {
+                return [
+                    'category' => $row->category_name,
+                    'amount' => round((float) $row->total_amount, 2),
+                    'transactions' => (int) $row->transactions,
+                    'percentage' => $totalExpenses > 0 ? round(($row->total_amount / $totalExpenses) * 100, 1) : 0
+                ];
+            })
+        ]);
+    }
 }
 

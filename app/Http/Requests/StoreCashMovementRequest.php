@@ -26,9 +26,10 @@ class StoreCashMovementRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'type' => ['required', 'string', 'in:expense,withdrawal,deposit'],
-            'category' => ['required', 'string', 'max:100'],
-            'description' => ['required_if:category,Otros', 'nullable', 'string', 'max:500'],
+            'type' => ['required', 'string', 'in:expense,withdrawal,deposit,supplier_payment'],
+            'expense_category_id' => ['nullable', 'integer', 'exists:expense_categories,id'],
+            'category' => ['nullable', 'string', 'max:100'],
+            'description' => ['nullable', 'string', 'max:500'],
             'receipt_number' => ['nullable', 'string', 'max:100'],
             
             // Proveedor
@@ -36,7 +37,7 @@ class StoreCashMovementRequest extends FormRequest
                 'nullable', 
                 'integer',
                 'exists:suppliers,id', 
-                'required_if:category,Pago a Proveedor,Cobro de Saldo a Favor'
+                'required_if:type,supplier_payment'
             ],
             
             // Array de pagos (para pagos mixtos)

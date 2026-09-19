@@ -149,6 +149,9 @@ Route::middleware(['session.validate'])->group(function () {
     Route::middleware(['role.or.pin'])->group(function () {
         Route::delete('/cash-movements/{cash_movement}', [\App\Http\Controllers\Api\CashMovementController::class, 'destroy']);
     });
+    Route::middleware(['feature:expenses', 'role.admin'])->group(function () {
+        Route::apiResource('expense-categories', \App\Http\Controllers\Api\ExpenseCategoryController::class);
+    });
 
     // ── Módulo Cartera de Cheques ────────────────────────────────────
     Route::middleware(['feature:checks'])->group(function () {
@@ -157,10 +160,13 @@ Route::middleware(['session.validate'])->group(function () {
     });
 
     // ── Módulo Proveedores ───────────────────────────────────────────
-    Route::apiResource('suppliers', \App\Http\Controllers\Api\SupplierController::class)->only(['index', 'show']);
-    Route::middleware(['role.or.pin'])->group(function () {
-        Route::apiResource('suppliers', \App\Http\Controllers\Api\SupplierController::class)->except(['index', 'show']);
-        Route::post('suppliers/{supplier}/invoices', [\App\Http\Controllers\Api\SupplierInvoiceController::class, 'store']);
+    Route::middleware(['feature:suppliers'])->group(function () {
+        Route::apiResource('suppliers', \App\Http\Controllers\Api\SupplierController::class)->only(['index', 'show']);
+        Route::middleware(['role.or.pin'])->group(function () {
+            Route::apiResource('suppliers', \App\Http\Controllers\Api\SupplierController::class)->except(['index', 'show']);
+            Route::get('suppliers/{supplier}/current-account', [\App\Http\Controllers\Api\SupplierController::class, 'currentAccount']);
+            Route::post('suppliers/{supplier}/invoices', [\App\Http\Controllers\Api\SupplierInvoiceController::class, 'store']);
+        });
     });
 
     // ── Catálogo: escritura (crear, editar, borrar productos) ────────
@@ -225,6 +231,10 @@ Route::middleware(['session.validate'])->group(function () {
         Route::get('/reports/monthly-balance/export',   [\App\Http\Controllers\Api\ReportController::class, 'exportMonthlyBalanceExcel']);
         Route::get('/reports/monthly-balance/pdf',      [\App\Http\Controllers\Api\ReportController::class, 'exportMonthlyBalancePdf']);
         Route::get('/reports/monthly-balance',           [\App\Http\Controllers\Api\ReportController::class, 'monthlyBalance']);
+        
+        Route::middleware(['feature:expenses'])->group(function () {
+            Route::get('/reports/expenses-analysis', [\App\Http\Controllers\Api\ReportController::class, 'expensesAnalysis']);
+        });
     });
 
     // ── Módulo de Inteligencia de Inventario ──────────────────────────

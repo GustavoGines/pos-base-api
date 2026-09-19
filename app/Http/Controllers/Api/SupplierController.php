@@ -91,4 +91,37 @@ class SupplierController extends Controller
         $supplier->delete();
         return response()->json(['message' => 'Proveedor eliminado con éxito'], 200);
     }
+    public function currentAccount(Supplier $supplier)
+    {
+        $invoices = \App\Models\SupplierInvoice::where('supplier_id', $supplier->id)
+            ->select('id', 'amount', 'type', 'issue_date as date', 'invoice_number', \DB::raw("'invoice' as source"))
+            ->get();
+
+        $payments = \App\Models\CashMovement::where('supplier_id', $supplier->id)
+            ->whereIn('type', ['expense', 'supplier_payment', 'deposit'])
+            ->select('id', 'amount', 'type', 'created_at as date', 'receipt_number as invoice_number', \DB::raw("'payment' as source"))
+            ->get();
+
+        $combined = $invoices->concat($payments)->sortBy('date')->values();
+
+        $runningBalance = 0;
+        $history = $combined->map(function ($item) use (&$runningBalance) {
+            $isIncrease = ($item->source === 'invoice' && $item->type === 'invoice') || 
+                          ($item->source === 'payment' && $item->type === 'deposit');
+            
+            $isDecrease = ($item->source === 'invoice' && $item->type === 'credit_note') || 
+                          ($item->source === 'payment' && in_array($item->type, ['expense', 'supplier_payment']));
+
+            if ($isIncrease) $runningBalance += $item->amount;
+            if ($isDecrease) $runningBalance -= $item->amount;
+
+            $item->running_balance = $runningBalance;
+            return $item;
+        });
+
+        return response()->json([
+            'supplier' => $supplier,
+            'history' => $history->reverse()->values() // Más recientes primero
+        ], 200);
+    }
 }
