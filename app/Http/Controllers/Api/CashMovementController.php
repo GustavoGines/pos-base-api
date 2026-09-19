@@ -76,7 +76,9 @@ class CashMovementController extends Controller
         }
 
         try {
-            DB::transaction(function () use ($validated, $shift, $user, $authorizedBy) {
+            $createdMovements = [];
+
+            DB::transaction(function () use ($validated, $shift, $user, $authorizedBy, &$createdMovements) {
                 $totalAmountPaid = 0;
 
                 foreach ($validated['payments'] as $payment) {
@@ -86,7 +88,7 @@ class CashMovementController extends Controller
                     
                     $totalAmountPaid += $amount;
 
-                    CashMovement::create([
+                    $movement = CashMovement::create([
                         'cash_shift_id'  => $shift->id,
                         'user_id'        => $user->id,
                         'authorized_by'  => $authorizedBy,
@@ -99,6 +101,8 @@ class CashMovementController extends Controller
                         'description'    => $validated['description'] ?? null,
                         'receipt_number' => $validated['receipt_number'] ?? null,
                     ]);
+
+                    $createdMovements[] = $movement;
 
                     // Si se usó un cheque, endosarlo
                     if ($method === 'check' && $checkId) {
@@ -120,7 +124,17 @@ class CashMovementController extends Controller
                 }
             });
 
-            return response()->json(['message' => 'Movimientos registrados exitosamente.'], 201);
+            return response()->json([
+                'message'   => 'Movimientos registrados exitosamente.',
+                'movements' => collect($createdMovements)->map(fn ($m) => [
+                    'id'             => $m->id,
+                    'amount'         => $m->amount,
+                    'payment_method' => $m->payment_method,
+                    'type'           => $m->type,
+                    'category'       => $m->category,
+                    'created_at'     => $m->created_at->toIso8601String(),
+                ])->values(),
+            ], 201);
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Error crítico al procesar el movimiento.',
