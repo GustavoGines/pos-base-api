@@ -8,12 +8,21 @@ use App\Models\SaleItem;
 use Carbon\Carbon;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 
 class ReportController extends Controller
 {
     // ─── Método Privado: Motor de la Mega-Query (DRY) ────────────────────────
 
     private function getProfitDataArray(string $startDate, string $endDate): \Illuminate\Support\Collection
+    {
+        $cacheKey = "profit_data_{$startDate}_{$endDate}";
+        return Cache::remember($cacheKey, 900, function () use ($startDate, $endDate) {
+            return $this->getProfitDataArrayUncached($startDate, $endDate);
+        });
+    }
+
+    private function getProfitDataArrayUncached(string $startDate, string $endDate): \Illuminate\Support\Collection
     {
         $productStats = SaleItem::join('sales', 'sales.id', '=', 'sale_items.sale_id')
             ->join('products', 'products.id', '=', 'sale_items.product_id')
@@ -85,6 +94,14 @@ class ReportController extends Controller
     }
 
     private function getProfitByBrandDataArray(string $startDate, string $endDate): \Illuminate\Support\Collection
+    {
+        $cacheKey = "profit_brand_{$startDate}_{$endDate}";
+        return Cache::remember($cacheKey, 900, function () use ($startDate, $endDate) {
+            return $this->getProfitByBrandDataArrayUncached($startDate, $endDate);
+        });
+    }
+
+    private function getProfitByBrandDataArrayUncached(string $startDate, string $endDate): \Illuminate\Support\Collection
     {
         $productStats = SaleItem::join('sales', 'sales.id', '=', 'sale_items.sale_id')
             ->join('products', 'products.id', '=', 'sale_items.product_id')
@@ -360,6 +377,14 @@ class ReportController extends Controller
     // ─── Endpoint: Balance Mensual Flexible ──────────────────────────────────
 
     private function getMonthlyBalanceData(string $startMonth, string $endMonth)
+    {
+        $cacheKey = "balance_monthly_{$startMonth}_{$endMonth}";
+        return Cache::remember($cacheKey, 900, function () use ($startMonth, $endMonth) {
+            return $this->getMonthlyBalanceDataUncached($startMonth, $endMonth);
+        });
+    }
+
+    private function getMonthlyBalanceDataUncached(string $startMonth, string $endMonth)
     {
         $startDate = Carbon::parse($startMonth . '-01')->startOfMonth();
         $endDate   = Carbon::parse($endMonth   . '-01')->endOfMonth();
