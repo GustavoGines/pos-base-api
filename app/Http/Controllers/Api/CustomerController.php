@@ -161,7 +161,10 @@ class CustomerController extends Controller
             'sale_ids.*'        => 'integer|exists:sales,id',
             'check_details'     => 'nullable|array|required_if:payment_method,cheque',
             'cash_shift_id'     => 'nullable|integer|exists:cash_shifts,id',
+            'is_refund'         => 'nullable|boolean',
         ]);
+
+        $isRefund = $request->input('is_refund', false);
 
         $payments = $request->filled('payments') ? $request->payments : [
             [
@@ -174,13 +177,26 @@ class CustomerController extends Controller
         $totalAmount = array_sum(array_column($payments, 'amount'));
 
         try {
-            $transaction = DB::transaction(function () use ($customer, $totalAmount, $payments, $request) {
+            $transaction = DB::transaction(function () use ($customer, $totalAmount, $payments, $request, $isRefund) {
                 $lockedCustomer = Customer::where('id', $customer->id)->lockForUpdate()->first();
 
-                if ($totalAmount > $lockedCustomer->balance) {
-                    throw \Illuminate\Validation\ValidationException::withMessages([
-                        'amount' => ["El monto del abono (\${$totalAmount}) no puede superar el saldo actual de la deuda (\${$lockedCustomer->balance})."]
-                    ]);
+                if ($isRefund) {
+                    if ($lockedCustomer->balance >= 0) {
+                        throw \Illuminate\Validation\ValidationException::withMessages([
+                            'amount' => ["No se puede procesar un reintegro porque el cliente no tiene saldo a favor."]
+                        ]);
+                    }
+                    if ($totalAmount > abs($lockedCustomer->balance)) {
+                        throw \Illuminate\Validation\ValidationException::withMessages([
+                            'amount' => ["El monto del reintegro (\${$totalAmount}) no puede superar el saldo a favor actual (\$" . abs($lockedCustomer->balance) . ")."]
+                        ]);
+                    }
+                } else {
+                    if ($totalAmount > $lockedCustomer->balance) {
+                        throw \Illuminate\Validation\ValidationException::withMessages([
+                            'amount' => ["El monto del abono (\${$totalAmount}) no puede superar el saldo actual de la deuda (\${$lockedCustomer->balance})."]
+                        ]);
+                    }
                 }
 
                 if ($request->filled('cash_shift_id')) {
@@ -189,51 +205,57 @@ class CustomerController extends Controller
                     $activeShift = CashShift::where('status', 'open')->latest('id')->first();
                 }
 
-                $description = $request->filled('description') ? $request->description : 'Abono en caja';
+                $description = $request->filled('description') ? $request->description : ($isRefund ? 'Devolución de saldo a favor' : 'Abono en caja');
                 $remainingAmount = $totalAmount;
                 $processedSales = [];
 
-                // ── Distribuir a tickets específicos o a los más antiguos pendientes ──────────────────────
-                if ($request->filled('sale_ids')) {
-                    $sales = Sale::whereIn('id', $request->sale_ids)
-                                 ->where('customer_id', $lockedCustomer->id)
-                                 ->lockForUpdate()
-                                 ->orderBy('created_at', 'asc')
-                                 ->get();
-                } else {
-                    $sales = Sale::where('customer_id', $lockedCustomer->id)
-                                 ->whereIn('payment_status', ['pending', 'partial'])
-                                 ->lockForUpdate()
-                                 ->orderBy('created_at', 'asc')
-                                 ->get();
-                }
-
-                /** @var \Illuminate\Database\Eloquent\Collection<int, Sale> $sales */
-                foreach ($sales as $sale) {
-                    if ($remainingAmount <= 0) break;
-
-                    $payForThisSale = min((float)$sale->amount_due, $remainingAmount);
-                    
-                    if ($payForThisSale > 0) {
-                        $sale->amount_due -= $payForThisSale;
-                        $sale->payment_status = $sale->amount_due <= 0 ? 'paid' : 'partial';
-                        $sale->save();
-                        
-                        $remainingAmount -= $payForThisSale;
-                        $processedSales[] = $sale->id;
-                    }
-                }
-
-                if (!empty($processedSales) && !$request->filled('description')) {
+                if (!$isRefund) {
+                    // ── Distribuir a tickets específicos o a los más antiguos pendientes ──────────────────────
                     if ($request->filled('sale_ids')) {
-                        $description = "Pago de Tickets: #" . implode(', #', $processedSales);
+                        $sales = Sale::whereIn('id', $request->sale_ids)
+                                     ->where('customer_id', $lockedCustomer->id)
+                                     ->lockForUpdate()
+                                     ->orderBy('created_at', 'asc')
+                                     ->get();
                     } else {
-                        $description = "Abono Global aplicado a Tickets: #" . implode(', #', $processedSales);
+                        $sales = Sale::where('customer_id', $lockedCustomer->id)
+                                     ->whereIn('payment_status', ['pending', 'partial'])
+                                     ->lockForUpdate()
+                                     ->orderBy('created_at', 'asc')
+                                     ->get();
+                    }
+
+                    /** @var \Illuminate\Database\Eloquent\Collection<int, Sale> $sales */
+                    foreach ($sales as $sale) {
+                        if ($remainingAmount <= 0) break;
+
+                        $payForThisSale = min((float)$sale->amount_due, $remainingAmount);
+                        
+                        if ($payForThisSale > 0) {
+                            $sale->amount_due -= $payForThisSale;
+                            $sale->payment_status = $sale->amount_due <= 0 ? 'paid' : 'partial';
+                            $sale->save();
+                            
+                            $remainingAmount -= $payForThisSale;
+                            $processedSales[] = $sale->id;
+                        }
+                    }
+
+                    if (!empty($processedSales) && !$request->filled('description')) {
+                        if ($request->filled('sale_ids')) {
+                            $description = "Pago de Tickets: #" . implode(', #', $processedSales);
+                        } else {
+                            $description = "Abono Global aplicado a Tickets: #" . implode(', #', $processedSales);
+                        }
                     }
                 }
 
-                // ── Siempre reducir el balance global del cliente ────────────
-                $lockedCustomer->balance -= $totalAmount;
+                // ── Siempre reducir el balance global del cliente (o aumentarlo si es refund) ────────────
+                if ($isRefund) {
+                    $lockedCustomer->balance += $totalAmount;
+                } else {
+                    $lockedCustomer->balance -= $totalAmount;
+                }
                 $lockedCustomer->save();
 
                 // ── Crear registros inmutables en el Ledger por cada método de pago ──
@@ -246,7 +268,7 @@ class CustomerController extends Controller
                         'user_id'                => $request->attributes->get('authenticated_user')?->id ?? 1,
                         'cash_shift_id'          => $activeShift ? $activeShift->id : null,
                         'sale_id'                => count($processedSales) === 1 ? $processedSales[0] : null,
-                        'type'                   => 'payment',
+                        'type'                   => $isRefund ? 'refund' : 'payment',
                         'payment_method'         => $paymentMethod,
                         'amount'                 => $paymentAmount,
                         'balance_after'          => $lockedCustomer->balance, // Refleja el final
