@@ -25,15 +25,47 @@ class CashMovementController extends Controller
     {
         $shift = $this->shiftService->getCurrentShift();
         if (!$shift) {
-            return response()->json([]);
+            return response()->json([
+                'data' => [],
+                'current_page' => 1,
+                'last_page' => 1,
+                'total' => 0
+            ]);
         }
 
-        $movements = CashMovement::with(['user', 'authorizer', 'supplier', 'check'])
+        $query = CashMovement::with(['user', 'authorizer', 'supplier', 'check'])
             ->where('cash_shift_id', $shift->id)
-            ->latest()
-            ->get();
+            ->latest();
+
+        // Optional filtering by category
+        if ($request->has('category')) {
+            $query->where('category', $request->query('category'));
+        }
+        
+        // Optional filtering by expense_category_id
+        if ($request->has('expense_category_id')) {
+            $query->where('expense_category_id', $request->query('expense_category_id'));
+        }
+
+        $movements = $query->paginate(50);
 
         return response()->json($movements);
+    }
+
+    public function export(Request $request)
+    {
+        $shift = $this->shiftService->getCurrentShift();
+        if (!$shift) {
+            return response()->json(['message' => 'No hay turno abierto para exportar.'], 400);
+        }
+
+        $category = $request->query('category');
+        $expenseCategoryId = $request->query('expense_category_id');
+
+        return \Maatwebsite\Excel\Facades\Excel::download(
+            new \App\Exports\CashMovementsExport($shift->id, $category, $expenseCategoryId), 
+            'cash_movements_' . now()->format('Ymd_His') . '.xlsx'
+        );
     }
 
     public function store(StoreCashMovementRequest $request)

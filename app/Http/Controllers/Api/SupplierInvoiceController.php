@@ -18,12 +18,15 @@ class SupplierInvoiceController extends Controller
         $validated = $request->validate([
             'type' => 'required|string|in:invoice,credit_note',
             'status' => 'nullable|string|in:pending,partial,paid',
-            'amount' => 'required|numeric|min:0.01',
+            'amount' => 'nullable|numeric|min:0',
             'invoice_number' => 'nullable|string|max:255',
             'description' => 'nullable|string',
             'issue_date' => 'nullable|date',
             'due_date' => 'nullable|date',
             'receipt_file_url' => 'nullable|string',
+            'tax_amount' => 'nullable|numeric|min:0',
+            'freight_amount' => 'nullable|numeric|min:0',
+            'discount_amount' => 'nullable|numeric|min:0',
             // Arrays para ítems
             'items' => 'nullable|array',
             'items.*.product_id' => 'required_with:items|exists:products,id',
@@ -34,15 +37,42 @@ class SupplierInvoiceController extends Controller
             'items.*.new_selling_price' => 'nullable|numeric|min:0',
         ]);
 
+        if ($request->filled('invoice_number')) {
+            $exists = SupplierInvoice::where('supplier_id', $supplier->id)
+                ->where('invoice_number', $request->invoice_number)
+                ->exists();
+            if ($exists) {
+                return response()->json([
+                    'message' => 'El número de comprobante ya existe para este proveedor.'
+                ], 422);
+            }
+        }
+
         try {
             DB::transaction(function () use ($validated, $supplier, $request) {
                 $user = $request->attributes->get('authenticated_user');
                 
+                $tax = $validated['tax_amount'] ?? 0;
+                $freight = $validated['freight_amount'] ?? 0;
+                $discount = $validated['discount_amount'] ?? 0;
+                
+                $subtotal = 0;
+                if (!empty($validated['items'])) {
+                    $subtotal = array_sum(array_column($validated['items'], 'subtotal'));
+                } else {
+                    $subtotal = $validated['amount'] ?? 0;
+                }
+
+                $totalAmount = $subtotal + $freight + $tax - $discount;
+
                 // 1. Crear la cabecera de la factura
                 $invoice = $supplier->invoices()->create([
                     'type' => $validated['type'],
                     'status' => $validated['status'] ?? 'paid',
-                    'amount' => $validated['amount'],
+                    'amount' => $totalAmount,
+                    'tax_amount' => $tax,
+                    'freight_amount' => $freight,
+                    'discount_amount' => $discount,
                     'invoice_number' => $validated['invoice_number'],
                     'description' => $validated['description'],
                     'receipt_file_url' => $validated['receipt_file_url'] ?? null,
@@ -91,9 +121,9 @@ class SupplierInvoiceController extends Controller
 
                 // 3. Aumentar o disminuir deuda global del proveedor
                 if ($validated['type'] === 'credit_note') {
-                    $supplier->decrement('balance', $validated['amount']);
+                    $supplier->decrement('balance', $totalAmount);
                 } else {
-                    $supplier->increment('balance', $validated['amount']);
+                    $supplier->increment('balance', $totalAmount);
                 }
             });
 
@@ -104,5 +134,22 @@ class SupplierInvoiceController extends Controller
         } catch (\Exception $e) {
             return response()->json(['message' => 'Error al registrar la factura: ' . $e->getMessage()], 500);
         }
+    }
+
+    public function uploadAttachment(Request $request)
+    {
+        $request->validate([
+            'file' => 'required|file|max:10240', // Max 10MB
+        ]);
+
+        if ($request->hasFile('file')) {
+            $path = $request->file('file')->store('supplier_invoices', 'public');
+            return response()->json([
+                'message' => 'Archivo subido correctamente',
+                'file_url' => '/storage/' . $path
+            ]);
+        }
+
+        return response()->json(['message' => 'No se recibió ningún archivo.'], 400);
     }
 }

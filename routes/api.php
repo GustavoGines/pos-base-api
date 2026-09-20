@@ -144,7 +144,8 @@ Route::middleware(['session.validate'])->group(function () {
     Route::post('/customers/{customer}/payments', [CustomerController::class, 'registerPayment']);
     Route::get('/customers/{customer}/pending-sales', [CustomerController::class, 'getPendingSales']);
 
-    // ── Módulo Movimientos de Caja y Gastos ─────────────────────────────
+    // 💸 Módulo Movimientos de Caja y Gastos 💸
+    Route::get('cash-movements/export', [\App\Http\Controllers\Api\CashMovementController::class, 'export']);
     Route::apiResource('cash-movements', \App\Http\Controllers\Api\CashMovementController::class)->only(['index', 'store']);
     Route::middleware(['role.or.pin'])->group(function () {
         Route::delete('/cash-movements/{cash_movement}', [\App\Http\Controllers\Api\CashMovementController::class, 'destroy']);
@@ -166,6 +167,7 @@ Route::middleware(['session.validate'])->group(function () {
             Route::apiResource('suppliers', \App\Http\Controllers\Api\SupplierController::class)->except(['index', 'show']);
             Route::get('suppliers/{supplier}/current-account', [\App\Http\Controllers\Api\SupplierController::class, 'currentAccount']);
             Route::post('suppliers/{supplier}/invoices', [\App\Http\Controllers\Api\SupplierInvoiceController::class, 'store']);
+            Route::post('supplier-invoices/upload', [\App\Http\Controllers\Api\SupplierInvoiceController::class, 'uploadAttachment']);
         });
     });
 
