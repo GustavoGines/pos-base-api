@@ -197,31 +197,43 @@ class CashShiftService
                 ->where('type', 'withdrawal')
                 ->sum('amount');
 
-            // El efectivo físico esperado en la gaveta = Fondo Inicial + Ventas Efectivo + Ingresos Extra - Gastos - Retiros
-            $expectedBalance = $shift->opening_balance + $cashSales + $cashDeposits - $cashExpenses - $cashWithdrawals;
+            $cashSupplierPayments = \App\Models\CashMovement::where('cash_shift_id', $shiftId)
+                ->where('payment_method', 'cash')
+                ->where('type', 'supplier_payment')
+                ->sum('amount');
+
+            $cashRefunds = \App\Models\CustomerTransaction::where('cash_shift_id', $shiftId)
+                ->where('type', 'refund')
+                ->where('payment_method', 'cash')
+                ->sum('amount');
+
+            // El efectivo físico esperado en la gaveta = Fondo Inicial + Ventas Efectivo + Ingresos Extra - Gastos - Retiros - Pagos Proveedor - Reintegros
+            $expectedBalance = $shift->opening_balance + $cashSales + $cashDeposits - $cashExpenses - $cashWithdrawals - $cashSupplierPayments - $cashRefunds;
             
             // Desfase (Sobrante/Faltante) comparado contra lo físico contado
             $difference = $actualBalance - $expectedBalance;
 
             $shift->update([
-                'closed_at'         => now(),
-                'expected_balance'  => $expectedBalance,
-                'actual_balance'    => $actualBalance,
-                'difference'        => $difference,
-                'cash_sales'        => $cashSales,
-                'card_sales'        => $cardSales,
-                'transfer_sales'    => $transferSales,
-                'total_surcharge'   => $totalSurcharge,
-                'check_sales'       => $checkSales,
-                'check_count'       => $checkCount,
-                'check_details'     => json_encode($checkDetails),
-                'cc_sales'          => $ccSales,
-                'cc_sales_count'    => $ccSalesCount,
-                'total_expenses'    => $cashExpenses,
-                'total_withdrawals' => $cashWithdrawals,
-                'total_deposits'    => $cashDeposits,
-                'status'            => 'closed',
-                'closed_by_user_id' => $closerUserId,
+                'closed_at'               => now(),
+                'expected_balance'        => $expectedBalance,
+                'actual_balance'          => $actualBalance,
+                'difference'              => $difference,
+                'cash_sales'              => $cashSales,
+                'card_sales'              => $cardSales,
+                'transfer_sales'          => $transferSales,
+                'total_surcharge'         => $totalSurcharge,
+                'check_sales'             => $checkSales,
+                'check_count'             => $checkCount,
+                'check_details'           => json_encode($checkDetails),
+                'cc_sales'                => $ccSales,
+                'cc_sales_count'          => $ccSalesCount,
+                'total_expenses'          => $cashExpenses,
+                'total_withdrawals'       => $cashWithdrawals,
+                'total_deposits'          => $cashDeposits,
+                'total_supplier_payments' => $cashSupplierPayments,
+                'total_refunds'           => $cashRefunds,
+                'status'                  => 'closed',
+                'closed_by_user_id'       => $closerUserId,
             ]);
 
             return $shift;

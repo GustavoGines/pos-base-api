@@ -82,7 +82,7 @@ class SupplierInvoiceController extends Controller
                 ]);
 
                 // 2. Procesar ítems si existen
-                if (!empty($validated['items']) && $validated['type'] === 'invoice') {
+                if (!empty($validated['items'])) {
                     foreach ($validated['items'] as $itemData) {
                         // Crear el detalle
                         $invoice->items()->create([
@@ -93,29 +93,33 @@ class SupplierInvoiceController extends Controller
                         ]);
 
                         $product = Product::find($itemData['product_id']);
+                        $isCreditNote = $validated['type'] === 'credit_note';
+                        $quantityModifier = $isCreditNote ? -$itemData['quantity'] : $itemData['quantity'];
                         
                         // Generar movimiento de stock
                         StockMovement::create([
                             'product_id' => $product->id,
                             'user_id'    => $user->id ?? null,
                             'supplier_invoice_id' => $invoice->id,
-                            'type'       => 'purchase',
-                            'quantity'   => $itemData['quantity'],
-                            'notes'      => 'Ingreso por Compra: Factura ' . ($validated['invoice_number'] ?? 'S/N'),
+                            'type'       => $isCreditNote ? 'out' : 'purchase',
+                            'quantity'   => $quantityModifier,
+                            'notes'      => ($isCreditNote ? 'Devolución: Nota de Crédito ' : 'Ingreso por Compra: Factura ') . ($validated['invoice_number'] ?? 'S/N'),
                         ]);
 
-                        // Incrementar stock físico
-                        $product->increment('stock', $itemData['quantity']);
+                        // Incrementar o decrementar stock físico
+                        $product->increment('stock', $quantityModifier);
 
-                        // Actualizar precio de costo SIEMPRE a la última factura (decisión de negocio minorista)
-                        $updateData = ['cost_price' => $itemData['unit_cost']];
+                        // Si es factura (compra), actualizamos el costo
+                        if (!$isCreditNote) {
+                            $updateData = ['cost_price' => $itemData['unit_cost']];
 
-                        // Si el usuario decidió cambiar el PVP en el modal de alertas, actualizarlo
-                        if (isset($itemData['new_selling_price'])) {
-                            $updateData['selling_price'] = $itemData['new_selling_price'];
+                            // Si el usuario decidió cambiar el PVP en el modal de alertas, actualizarlo
+                            if (isset($itemData['new_selling_price'])) {
+                                $updateData['selling_price'] = $itemData['new_selling_price'];
+                            }
+
+                            $product->update($updateData);
                         }
-
-                        $product->update($updateData);
                     }
                 }
 

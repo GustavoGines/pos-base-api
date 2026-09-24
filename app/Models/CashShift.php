@@ -34,6 +34,8 @@ class CashShift extends Model
         'total_expenses',
         'total_withdrawals',
         'total_deposits',
+        'total_supplier_payments',
+        'total_refunds',
     ];
 
     protected $casts = [
@@ -52,6 +54,8 @@ class CashShift extends Model
         'total_expenses'    => 'decimal:2',
         'total_withdrawals' => 'decimal:2',
         'total_deposits'    => 'decimal:2',
+        'total_supplier_payments' => 'decimal:2',
+        'total_refunds'     => 'decimal:2',
     ];
 
     /**
@@ -122,6 +126,16 @@ class CashShift extends Model
             ->where('type', 'withdrawal')
             ->sum('amount');
 
-        return $this->opening_balance + $cashSales + $cashDeposits - $cashExpenses - $cashWithdrawals;
+        $cashSupplierPayments = \App\Models\CashMovement::where('cash_shift_id', $this->id)
+            ->where('payment_method', 'cash')
+            ->where('type', 'supplier_payment')
+            ->sum('amount');
+
+        $cashRefunds = \App\Models\CustomerTransaction::where('cash_shift_id', $this->id)
+            ->where('type', 'refund')
+            ->where('payment_method', 'cash')
+            ->sum('amount');
+
+        return $this->opening_balance + $cashSales + $cashDeposits - $cashExpenses - $cashWithdrawals - $cashSupplierPayments - $cashRefunds;
     }
 }

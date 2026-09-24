@@ -146,6 +146,7 @@ Route::middleware(['session.validate'])->group(function () {
 
     // 💸 Módulo Movimientos de Caja y Gastos 💸
     Route::get('cash-movements/export', [\App\Http\Controllers\Api\CashMovementController::class, 'export']);
+    Route::post('cash-movements/upload', [\App\Http\Controllers\Api\CashMovementController::class, 'uploadAttachment']);
     Route::apiResource('cash-movements', \App\Http\Controllers\Api\CashMovementController::class)->only(['index', 'store']);
     Route::middleware(['role.or.pin'])->group(function () {
         Route::delete('/cash-movements/{cash_movement}', [\App\Http\Controllers\Api\CashMovementController::class, 'destroy']);
@@ -232,10 +233,12 @@ Route::middleware(['session.validate'])->group(function () {
         Route::get('/reports/internal-consumption',     [\App\Http\Controllers\Api\ReportController::class, 'internalConsumption']);
         Route::get('/reports/monthly-balance/export',   [\App\Http\Controllers\Api\ReportController::class, 'exportMonthlyBalanceExcel']);
         Route::get('/reports/monthly-balance/pdf',      [\App\Http\Controllers\Api\ReportController::class, 'exportMonthlyBalancePdf']);
-        Route::get('/reports/monthly-balance',           [\App\Http\Controllers\Api\ReportController::class, 'monthlyBalance']);
+        Route::get('/reports/monthly-balance',          [\App\Http\Controllers\Api\ReportController::class, 'monthlyBalance']);
         
         Route::middleware(['feature:expenses'])->group(function () {
-            Route::get('/reports/expenses-analysis', [\App\Http\Controllers\Api\ReportController::class, 'expensesAnalysis']);
+            Route::get('/reports/expenses-analysis/export', [\App\Http\Controllers\Api\ReportController::class, 'exportExpensesAnalysisExcel']);
+            Route::get('/reports/expenses-analysis/pdf',    [\App\Http\Controllers\Api\ReportController::class, 'exportExpensesAnalysisPdf']);
+            Route::get('/reports/expenses-analysis',        [\App\Http\Controllers\Api\ReportController::class, 'expensesAnalysis']);
         });
     });
 

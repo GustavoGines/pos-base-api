@@ -15,18 +15,24 @@ class CashMovementsExport implements FromQuery, WithHeadings, WithMapping
     protected $shiftId;
     protected $category;
     protected $expenseCategoryId;
+    protected $startDate;
+    protected $endDate;
 
-    public function __construct($shiftId, $category = null, $expenseCategoryId = null)
+    public function __construct($shiftId, $category = null, $expenseCategoryId = null, $startDate = null, $endDate = null)
     {
         $this->shiftId = $shiftId;
         $this->category = $category;
         $this->expenseCategoryId = $expenseCategoryId;
+        $this->startDate = $startDate;
+        $this->endDate = $endDate;
     }
 
     public function query()
     {
-        $query = CashMovement::with(['user', 'supplier'])
-            ->where('cash_shift_id', $this->shiftId);
+        $query = CashMovement::with(['user', 'supplier']);
+        if ($this->shiftId) {
+            $query->where('cash_shift_id', $this->shiftId);
+        }
             
         if ($this->category) {
             $query->where('category', $this->category);
@@ -34,6 +40,10 @@ class CashMovementsExport implements FromQuery, WithHeadings, WithMapping
         
         if ($this->expenseCategoryId) {
             $query->where('expense_category_id', $this->expenseCategoryId);
+        }
+        
+        if ($this->startDate && $this->endDate) {
+            $query->whereBetween('created_at', [$this->startDate . ' 00:00:00', $this->endDate . ' 23:59:59']);
         }
 
         return $query->latest();

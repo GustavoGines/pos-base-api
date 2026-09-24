@@ -57,7 +57,7 @@ class ReportController extends Controller
                 END) as items_with_cost,
                 COUNT(*) as total_items
             ')
-            ->whereBetween('sales.created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
+            ->whereBetween('sales.created_at', [\Carbon\Carbon::parse($startDate)->startOfDay(), \Carbon\Carbon::parse($endDate)->endOfDay()])
             ->where('sales.status', 'completed')
             ->whereNotExists(function ($query) {
                 $query->select(DB::raw(1))
@@ -136,7 +136,7 @@ class ReportController extends Controller
                 END) as items_with_cost,
                 COUNT(*) as total_items
             ')
-            ->whereBetween('sales.created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
+            ->whereBetween('sales.created_at', [\Carbon\Carbon::parse($startDate)->startOfDay(), \Carbon\Carbon::parse($endDate)->endOfDay()])
             ->where('sales.status', 'completed')
             ->whereNotExists(function ($query) {
                 $query->select(DB::raw(1))
@@ -202,7 +202,7 @@ class ReportController extends Controller
                     END
                 ) as total_profit
             ')
-            ->whereBetween('sales.created_at', [$prevStart . ' 00:00:00', $prevEnd . ' 23:59:59'])
+            ->whereBetween('sales.created_at', [\Carbon\Carbon::parse($prevStart)->startOfDay(), \Carbon\Carbon::parse($prevEnd)->endOfDay()])
             ->where('sales.status', 'completed')
             ->whereNotExists(function ($query) {
                 $query->select(DB::raw(1))
@@ -213,7 +213,7 @@ class ReportController extends Controller
             ->first();
 
         $dailySales = DB::table('sales')
-            ->whereBetween('created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
+            ->whereBetween('created_at', [\Carbon\Carbon::parse($startDate)->startOfDay(), \Carbon\Carbon::parse($endDate)->endOfDay()])
             ->where('status', 'completed')
             ->whereNotExists(function ($query) {
                 $query->select(DB::raw(1))
@@ -268,7 +268,7 @@ class ReportController extends Controller
                     END
                 ) as total_profit
             ')
-            ->whereBetween('sales.created_at', [$prevStart . ' 00:00:00', $prevEnd . ' 23:59:59'])
+            ->whereBetween('sales.created_at', [\Carbon\Carbon::parse($prevStart)->startOfDay(), \Carbon\Carbon::parse($prevEnd)->endOfDay()])
             ->where('sales.status', 'completed')
             ->whereNotExists(function ($query) {
                 $query->select(DB::raw(1))
@@ -279,7 +279,7 @@ class ReportController extends Controller
             ->first();
 
         $dailySales = DB::table('sales')
-            ->whereBetween('created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
+            ->whereBetween('created_at', [\Carbon\Carbon::parse($startDate)->startOfDay(), \Carbon\Carbon::parse($endDate)->endOfDay()])
             ->where('status', 'completed')
             ->whereNotExists(function ($query) {
                 $query->select(DB::raw(1))
@@ -346,7 +346,7 @@ class ReportController extends Controller
 
         $salesByPlan = DB::table('sales')
             ->selectRaw('COALESCE(price_list, "base") as plan_name, COUNT(*) as total_tickets, SUM(total) as total_revenue')
-            ->whereBetween('created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
+            ->whereBetween('created_at', [\Carbon\Carbon::parse($startDate)->startOfDay(), \Carbon\Carbon::parse($endDate)->endOfDay()])
             ->where('status', 'completed')
             ->whereNotExists(function ($query) {
                 $query->select(DB::raw(1))
@@ -542,7 +542,7 @@ class ReportController extends Controller
             ->join('products', 'products.id', '=', 'sale_items.product_id')
             ->join('customers', 'customers.id', '=', 'sales.customer_id')
             ->where('customers.is_internal_account', true)
-            ->whereBetween('sales.created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
+            ->whereBetween('sales.created_at', [\Carbon\Carbon::parse($startDate)->startOfDay(), \Carbon\Carbon::parse($endDate)->endOfDay()])
             ->where('sales.status', 'completed');
 
         if ($customerId) {
@@ -577,21 +577,51 @@ class ReportController extends Controller
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
         $endDate   = $request->query('end_date',   Carbon::now()->endOfMonth()->toDateString());
 
-        $expenses = DB::table('cash_movements')
+        $movements = DB::table('cash_movements')
             ->leftJoin('expense_categories', 'cash_movements.expense_category_id', '=', 'expense_categories.id')
             ->where('cash_movements.type', 'expense')
             ->whereNull('cash_movements.deleted_at')
-            ->whereBetween('cash_movements.created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
-            ->selectRaw('
-                COALESCE(expense_categories.name, "Sin Categoría") as category_name,
-                SUM(cash_movements.amount) as total_amount,
-                COUNT(*) as transactions
-            ')
-            ->groupBy('category_name')
-            ->orderByDesc('total_amount')
+            ->whereBetween('cash_movements.created_at', [\Carbon\Carbon::parse($startDate)->startOfDay(), \Carbon\Carbon::parse($endDate)->endOfDay()])
+            ->select(
+                'cash_movements.id',
+                'cash_movements.amount',
+                'cash_movements.description',
+                'cash_movements.created_at',
+                DB::raw("COALESCE(expense_categories.name, 'Sin Categoría') as category_name")
+            )
+            ->orderByDesc('cash_movements.created_at')
             ->get();
 
-        $totalExpenses = $expenses->sum('total_amount');
+        $grouped = $movements->groupBy('category_name');
+        
+        $expenses = [];
+        $totalExpenses = 0;
+
+        foreach ($grouped as $categoryName => $items) {
+            $sum = $items->sum('amount');
+            $totalExpenses += $sum;
+            
+            $expenses[] = [
+                'category_name' => $categoryName,
+                'total_amount' => $sum,
+                'transactions' => $items->count(),
+                'movements' => $items->map(function($m) {
+                    return [
+                        'id' => $m->id,
+                        'amount' => (float)$m->amount,
+                        'description' => $m->description,
+                        'date' => $m->created_at,
+                    ];
+                })->values()->all(),
+            ];
+        }
+
+        // Sort by total amount desc
+        usort($expenses, function($a, $b) {
+            return $b['total_amount'] <=> $a['total_amount'];
+        });
+
+        $expenses = collect($expenses);
 
         return response()->json([
             'start_date' => $startDate,
@@ -599,13 +629,50 @@ class ReportController extends Controller
             'total_expenses' => round($totalExpenses, 2),
             'by_category' => $expenses->map(function ($row) use ($totalExpenses) {
                 return [
-                    'category' => $row->category_name,
-                    'amount' => round((float) $row->total_amount, 2),
-                    'transactions' => (int) $row->transactions,
-                    'percentage' => $totalExpenses > 0 ? round(($row->total_amount / $totalExpenses) * 100, 1) : 0
+                    'category' => $row['category_name'],
+                    'amount' => round((float) $row['total_amount'], 2),
+                    'transactions' => (int) $row['transactions'],
+                    'percentage' => $totalExpenses > 0 ? round(($row['total_amount'] / $totalExpenses) * 100, 1) : 0,
+                    'movements' => $row['movements'],
                 ];
             })
         ]);
+    }
+
+    public function exportExpensesAnalysisExcel(Request $request)
+    {
+        $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
+        $endDate   = $request->query('end_date',   Carbon::now()->endOfMonth()->toDateString());
+
+        return \Maatwebsite\Excel\Facades\Excel::download(
+            new \App\Exports\ExpensesAnalysisExport($startDate, $endDate),
+            'analisis_gastos_' . str_replace('-', '', $startDate) . '_al_' . str_replace('-', '', $endDate) . '.xlsx'
+        );
+    }
+
+    public function exportExpensesAnalysisPdf(Request $request)
+    {
+        $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
+        $endDate   = $request->query('end_date',   Carbon::now()->endOfMonth()->toDateString());
+
+        $expenses = DB::table('cash_movements')
+            ->leftJoin('expense_categories', 'cash_movements.expense_category_id', '=', 'expense_categories.id')
+            ->where('cash_movements.type', 'expense')
+            ->whereNull('cash_movements.deleted_at')
+            ->whereBetween('cash_movements.created_at', [\Carbon\Carbon::parse($startDate)->startOfDay(), \Carbon\Carbon::parse($endDate)->endOfDay()])
+            ->selectRaw("
+                COALESCE(expense_categories.name, 'Sin Categoría') as category_name,
+                SUM(cash_movements.amount) as total_amount,
+                COUNT(*) as transactions
+            ")
+            ->groupBy(DB::raw("COALESCE(expense_categories.name, 'Sin Categoría')"))
+            ->orderByDesc('total_amount')
+            ->get();
+
+        $totalExpenses = $expenses->sum('total_amount');
+
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('reports.pdf_expenses_analysis', compact('expenses', 'startDate', 'endDate', 'totalExpenses'));
+        return $pdf->download('analisis_gastos_' . str_replace('-', '', $startDate) . '_al_' . str_replace('-', '', $endDate) . '.pdf');
     }
 }
 

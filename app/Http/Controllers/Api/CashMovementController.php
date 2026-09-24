@@ -23,19 +23,20 @@ class CashMovementController extends Controller
 
     public function index(Request $request)
     {
-        $shift = $this->shiftService->getCurrentShift();
-        if (!$shift) {
-            return response()->json([
-                'data' => [],
-                'current_page' => 1,
-                'last_page' => 1,
-                'total' => 0
-            ]);
-        }
+        $query = CashMovement::with(['user', 'authorizer', 'supplier', 'check'])->latest();
 
-        $query = CashMovement::with(['user', 'authorizer', 'supplier', 'check'])
-            ->where('cash_shift_id', $shift->id)
-            ->latest();
+        if ($request->query('all') !== '1') {
+            $shift = $this->shiftService->getCurrentShift();
+            if (!$shift) {
+                return response()->json([
+                    'data' => [],
+                    'current_page' => 1,
+                    'last_page' => 1,
+                    'total' => 0
+                ]);
+            }
+            $query->where('cash_shift_id', $shift->id);
+        }
 
         // Optional filtering by category
         if ($request->has('category')) {
@@ -47,23 +48,50 @@ class CashMovementController extends Controller
             $query->where('expense_category_id', $request->query('expense_category_id'));
         }
 
+        // Optional filtering by date range
+        if ($request->has('start_date') && $request->has('end_date')) {
+            $query->whereBetween('created_at', [
+                $request->query('start_date') . ' 00:00:00',
+                $request->query('end_date') . ' 23:59:59'
+            ]);
+        }
+
+        // Calcular totales globales del query actual (antes de paginación)
+        $totalsQuery = clone $query;
+        $totalIn = (clone $totalsQuery)->where('type', 'deposit')->sum('amount');
+        $totalOut = (clone $totalsQuery)->whereIn('type', ['expense', 'withdrawal', 'supplier_payment'])->sum('amount');
+
         $movements = $query->paginate(50);
 
-        return response()->json($movements);
+        return response()->json([
+            'data' => $movements->items(),
+            'current_page' => $movements->currentPage(),
+            'last_page' => $movements->lastPage(),
+            'total' => $movements->total(),
+            'kpi_total_in' => $totalIn,
+            'kpi_total_out' => $totalOut,
+            'kpi_net' => $totalIn - $totalOut,
+        ]);
     }
 
     public function export(Request $request)
     {
-        $shift = $this->shiftService->getCurrentShift();
-        if (!$shift) {
-            return response()->json(['message' => 'No hay turno abierto para exportar.'], 400);
+        $shiftId = null;
+        if ($request->query('all') !== '1') {
+            $shift = $this->shiftService->getCurrentShift();
+            if (!$shift) {
+                return response()->json(['message' => 'No hay turno abierto para exportar.'], 400);
+            }
+            $shiftId = $shift->id;
         }
 
         $category = $request->query('category');
         $expenseCategoryId = $request->query('expense_category_id');
+        $startDate = $request->query('start_date');
+        $endDate = $request->query('end_date');
 
         return \Maatwebsite\Excel\Facades\Excel::download(
-            new \App\Exports\CashMovementsExport($shift->id, $category, $expenseCategoryId), 
+            new \App\Exports\CashMovementsExport($shiftId, $category, $expenseCategoryId, $startDate, $endDate), 
             'cash_movements_' . now()->format('Ymd_His') . '.xlsx'
         );
     }
@@ -131,6 +159,7 @@ class CashMovementController extends Controller
                         'type'           => $validated['type'],
                         'category'       => $validated['category'] ?? null,
                         'expense_category_id' => $validated['expense_category_id'] ?? null,
+                        'receipt_file_url' => $validated['receipt_file_url'] ?? null,
                         'description'    => $validated['description'] ?? null,
                         'receipt_number' => $validated['receipt_number'] ?? null,
                     ]);
@@ -148,7 +177,7 @@ class CashMovementController extends Controller
                 if (!empty($validated['supplier_id'])) {
                     $supplier = Supplier::find($validated['supplier_id']);
                     if ($supplier) {
-                        if ($validated['type'] === 'supplier_payment' || $validated['type'] === 'expense') {
+                        if (in_array($validated['type'], ['supplier_payment', 'expense'])) {
                             $supplier->decrement('balance', $totalAmountPaid);
                         } elseif ($validated['type'] === 'deposit') {
                             $supplier->increment('balance', $totalAmountPaid);
@@ -187,7 +216,7 @@ class CashMovementController extends Controller
                 if ($movement->supplier_id) {
                     $supplier = Supplier::find($movement->supplier_id);
                     if ($supplier) {
-                        if ($movement->type === 'supplier_payment' || $movement->type === 'expense') {
+                        if (in_array($movement->type, ['supplier_payment', 'expense'])) {
                             $supplier->increment('balance', $movement->amount);
                         } elseif ($movement->type === 'deposit') {
                             $supplier->decrement('balance', $movement->amount);
@@ -213,6 +242,29 @@ class CashMovementController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Error al anular el movimiento.',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function uploadAttachment(Request $request)
+    {
+        $request->validate([
+            'file' => 'required|file|max:5120|mimes:jpeg,png,jpg,pdf'
+        ]);
+
+        try {
+            $file = $request->file('file');
+            $path = $file->store('cash_receipts', 'public');
+            
+            return response()->json([
+                'message' => 'Archivo subido correctamente.',
+                'path' => $path,
+                'url' => asset('storage/' . $path)
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error al subir el archivo.',
                 'error' => $e->getMessage()
             ], 500);
         }

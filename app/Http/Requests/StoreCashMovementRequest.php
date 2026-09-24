@@ -31,13 +31,15 @@ class StoreCashMovementRequest extends FormRequest
             'category' => ['nullable', 'string', 'max:100'],
             'description' => ['nullable', 'string', 'max:500'],
             'receipt_number' => ['nullable', 'string', 'max:100'],
+            'receipt_file_url' => ['nullable', 'string', 'max:255'],
             
             // Proveedor
             'supplier_id' => [
                 'nullable', 
                 'integer',
                 'exists:suppliers,id', 
-                'required_if:type,supplier_payment'
+                'required_if:type,supplier_payment',
+                'prohibited_if:type,expense'
             ],
             
             // Array de pagos (para pagos mixtos)
