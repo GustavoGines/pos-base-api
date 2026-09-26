@@ -6,8 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\Product;
 use App\Models\ProductPriceTier;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
-use Illuminate\Validation\Rule;
+use App\Http\Requests\StoreProductRequest;
+use App\Http\Requests\UpdateProductRequest;
+use App\Services\BarcodeService;
 
 class ProductController extends Controller
 {
@@ -60,47 +61,13 @@ class ProductController extends Controller
         return response()->json($query->paginate($perPage));
     }
 
-    public function store(Request $request)
+    public function store(StoreProductRequest $request, BarcodeService $barcodeService)
     {
-        $validated = $request->validate([
-            'name' => [
-                'required',
-                'string',
-                'max:255',
-                Rule::unique('products')->whereNull('deleted_at')
-            ],
-            'barcode' => [
-                'nullable',
-                'string',
-                Rule::unique('products')->whereNull('deleted_at')
-            ],
-            'cost_price' => 'numeric|min:0',
-            'selling_price' => 'numeric|min:0|gte:cost_price',
-            // [hardware_store] Listas de precio estáticas — opcionales para retail
-            'price_wholesale' => 'nullable|numeric|min:0',
-            'price_card'      => 'nullable|numeric|min:0',
-            'stock' => 'numeric',
-            'min_stock' => 'nullable|numeric|min:0',
-            'active' => 'boolean',
-            'is_sold_by_weight' => 'boolean',
-            'unit_type' => 'sometimes|in:un,kg,lt,g',
-            'vencimiento_dias' => 'nullable|integer|min:1|max:3650',
-            'category_id' => 'nullable|exists:categories,id',
-            'brand_id' => 'nullable|exists:brands,id',
-            'supplier_id' => ['nullable', \Illuminate\Validation\Rule::exists('suppliers', 'id')->whereNull('deleted_at')],
-            'is_combo' => 'boolean',
-            'combo_ingredients' => 'nullable|array|required_if:is_combo,true',
-            'combo_ingredients.*.id' => 'required_with:combo_ingredients|exists:products,id',
-            'combo_ingredients.*.quantity' => 'required_with:combo_ingredients|numeric|min:0.001',
-            // Tramos de precio mayorista
-            'price_tiers'                => 'nullable|array',
-            'price_tiers.*.min_quantity' => 'required_with:price_tiers|numeric|min:1',
-            'price_tiers.*.unit_price'   => 'required_with:price_tiers|numeric|min:0',
-        ]);
+        $validated = $request->validated();
 
         // Flujo de Código Interno (PLU)
         if (empty($request->internal_code)) {
-            $validated['internal_code'] = $this->generateUniqueInternalCode();
+            $validated['internal_code'] = $barcodeService->generateUniqueInternalCode();
         } else {
             $validated['internal_code'] = str_pad($request->internal_code, 5, '0', STR_PAD_LEFT);
         }
@@ -110,7 +77,7 @@ class ProductController extends Controller
         // - Si es por unidad, le generamos un código de barras EAN-13 Interno basado en su PLU.
         if (empty($validated['barcode'])) {
             $validated['barcode'] = empty($request->is_sold_by_weight) 
-                ? $this->generateInternalEan13($validated['internal_code']) 
+                ? $barcodeService->generateInternalEan13($validated['internal_code']) 
                 : null;
         }
 
@@ -184,44 +151,10 @@ class ProductController extends Controller
         ]);
     }
 
-    public function update(Request $request, Product $product)
+    public function update(UpdateProductRequest $request, Product $product, BarcodeService $barcodeService)
     {
-        $validated = $request->validate([
-            'name' => [
-                'sometimes',
-                'string',
-                'max:255',
-                Rule::unique('products')->ignore($product->id)->whereNull('deleted_at')
-            ],
-            'barcode' => [
-                'nullable',
-                'string',
-                Rule::unique('products')->ignore($product->id)->whereNull('deleted_at')
-            ],
-            'cost_price' => 'numeric|min:0',
-            'selling_price' => 'numeric|min:0|gte:cost_price',
-            // [hardware_store] Listas de precio estáticas — opcionales para retail
-            'price_wholesale' => 'nullable|numeric|min:0',
-            'price_card'      => 'nullable|numeric|min:0',
-            'stock' => 'numeric',
-            'min_stock' => 'nullable|numeric|min:0',
-            'active' => 'boolean',
-            'is_sold_by_weight' => 'boolean',
-            'unit_type' => 'sometimes|in:un,kg,lt,g',
-            'vencimiento_dias' => 'nullable|integer|min:1|max:3650',
-            'category_id' => 'nullable|exists:categories,id',
-            'brand_id' => 'nullable|exists:brands,id',
-            'supplier_id' => 'nullable|exists:suppliers,id',
-            'is_combo' => 'boolean',
-            'combo_ingredients' => 'nullable|array|required_if:is_combo,true',
-            'combo_ingredients.*.id' => 'required_with:combo_ingredients|exists:products,id',
-            'combo_ingredients.*.quantity' => 'required_with:combo_ingredients|numeric|min:0.001',
-            // Tramos de precio mayorista
-            'price_tiers'                => 'nullable|array',
-            'price_tiers.*.min_quantity' => 'required_with:price_tiers|numeric|min:1',
-            'price_tiers.*.unit_price'   => 'required_with:price_tiers|numeric|min:0',
-            'add_stock'                  => 'nullable|numeric|min:0.001',
-        ]);
+        $validated = $request->validated();
+
         // Flujo de Código Interno (PLU) en actualización
         if (empty($request->internal_code)) {
             $validated['internal_code'] = $product->internal_code;
@@ -231,7 +164,7 @@ class ProductController extends Controller
 
         if (array_key_exists('barcode', $validated) && empty($validated['barcode'])) {
             $isWeight = $request->has('is_sold_by_weight') ? $request->is_sold_by_weight : $product->is_sold_by_weight;
-            $validated['barcode'] = empty($isWeight) ? $this->generateInternalEan13($validated['internal_code']) : null;
+            $validated['barcode'] = empty($isWeight) ? $barcodeService->generateInternalEan13($validated['internal_code']) : null;
         }
 
         // Auditoría de Stock: Guardar valor previo antes de actualizar
@@ -337,134 +270,15 @@ class ProductController extends Controller
 
     /**
      * Motor de Predicción de Quiebre de Stock (Velocidad de Venta).
-     *
-     * Algoritmo:
-     *   avg_daily_units  = SUM(qty vendidas en últimos 15 días) / 15
-     *   days_of_coverage = stock_actual / avg_daily_units
-     *
-     * Solo devuelve productos activos donde:
-     *   - Tienen stock > 0 (si el stock ya es 0, es un quiebre consumado, no predictivo)
-     *   - avg_daily_units > 0  (el producto vendió algo en los últimos 15 días)
-     *   - days_of_coverage < $threshold (umbral configurable, default 7 días)
      */
-    public function inventoryAlerts(\Illuminate\Http\Request $request)
+    public function inventoryAlerts(\Illuminate\Http\Request $request, \App\Services\InventoryAlertService $alertService)
     {
+        $threshold  = (int) $request->query('threshold', 3);
         $periodDays = 15;
-        $threshold  = (int) $request->query('threshold', 3);   // Solo alertamos <= 3 días de cobertura
-        $since      = now()->subDays($periodDays)->startOfDay();
 
-        // Subquery: unidades vendidas por producto en los últimos N días
-        $salesVelocity = \Illuminate\Support\Facades\DB::table('sale_items')
-            ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
-            ->where('sales.status', 'completed')
-            ->where('sales.created_at', '>=', $since)
-            ->selectRaw('product_id, SUM(quantity) as total_sold')
-            ->groupBy('product_id');
+        $data = $alertService->getPredictiveAlerts($threshold, $periodDays);
 
-        // Query unificada: Alertas Reactivas (Quiebre/Stock Min) + Predictivas (Velocidad de venta)
-        $products = \Illuminate\Support\Facades\DB::table('products')
-            ->leftJoinSub($salesVelocity, 'vel', 'vel.product_id', '=', 'products.id')
-            ->leftJoin('categories', 'categories.id', '=', 'products.category_id')
-            ->where('products.active', true)
-            ->where('products.is_combo', false)
-            ->selectRaw(sprintf("
-                products.id                     as product_id,
-                products.name                   as product_name,
-                products.internal_code          as internal_code,
-                products.is_sold_by_weight      as is_sold_by_weight,
-                COALESCE(categories.name, 'Sin Categoría') as category,
-                products.stock                  as current_stock,
-                products.min_stock              as min_stock,
-                
-                -- COLD START: Cálculo dinámico de días de vida para no subestimar promedios (Tope max: 15, Tope min: 1)
-                ROUND(COALESCE(vel.total_sold, 0) / LEAST(GREATEST(DATEDIFF(NOW(), COALESCE(products.created_at, NOW() - INTERVAL %1\$d DAY)), 1), %1\$d), 2) as avg_daily_units,
-                
-                -- ALERTA PREDICTIVA: Excluye recién nacidos (< 2 días / 48 hrs) asignando 9999 (silencio estadístico)
-                IF(COALESCE(vel.total_sold, 0) > 0 AND DATEDIFF(NOW(), COALESCE(products.created_at, NOW() - INTERVAL %1\$d DAY)) >= 2, 
-                   ROUND( IF(products.stock > COALESCE(products.min_stock, 0), products.stock - COALESCE(products.min_stock, 0), 0) / (vel.total_sold / LEAST(GREATEST(DATEDIFF(NOW(), COALESCE(products.created_at, NOW() - INTERVAL %1\$d DAY)), 1), %1\$d)), 1), 
-                   9999) as days_of_coverage
-            ", $periodDays))
-            ->havingRaw('
-                days_of_coverage <= ? 
-                OR current_stock <= 0 
-                OR (min_stock IS NOT NULL AND current_stock <= min_stock)
-            ', [$threshold])
-            ->orderByRaw('current_stock ASC, days_of_coverage ASC')
-            ->get();
-
-        // Clasificación semafórica unificada en PHP (Zero-Processing para Flutter)
-        $alerts = $products->map(function ($row) {
-            $row->alert_level = match(true) {
-                $row->current_stock <= 0 => 'critical',                                // Quiebre total (Reactivo)
-                !is_null($row->min_stock) && $row->current_stock <= $row->min_stock => 'critical', // Debajo del mínimo (Reactivo)
-                $row->days_of_coverage <= 3  => 'critical',                             // Quiebre inminente (Predictivo)
-                default                      => 'info',
-            };
-
-            $row->alert_type = match(true) {
-                $row->current_stock <= 0 => 'out_of_stock',
-                !is_null($row->min_stock) && $row->current_stock <= $row->min_stock => 'low_stock',
-                default => 'predictive',
-            };
-            
-            return $row;
-        });
-
-        return response()->json([
-            'period_analyzed_days' => $periodDays,
-            'threshold_days'       => $threshold,
-            'generated_at'         => now()->toIso8601String(),
-            'alerts'               => $alerts,
-        ]);
-    }
-
-    /**
-     * Genera un PLU numérico de 5 dígitos secuencial.
-     */
-
-    private function generateUniqueInternalCode(): string
-    {
-        if (\Illuminate\Support\Facades\DB::getDriverName() === 'sqlite') {
-            // Fallback para SQLite en entorno de testing (evita REGEXP y CAST AS UNSIGNED)
-            $lastCode = Product::withTrashed()
-                ->get(['internal_code'])
-                ->filter(fn($p) => ctype_digit($p->internal_code))
-                ->max(fn($p) => (int)$p->internal_code);
-            $nextNumber = $lastCode ? $lastCode + 1 : 1;
-        } else {
-            // Obtener el último código interno numérico (incluso si fue borrado)
-            $lastCode = Product::withTrashed()
-                ->whereRaw('internal_code REGEXP "^[0-9]+$"')
-                ->orderByRaw('CAST(internal_code AS UNSIGNED) DESC')
-                ->first();
-            $nextNumber = $lastCode ? (int)$lastCode->internal_code + 1 : 1;
-        }
-        
-        // Si por alguna razón el número ya existe, buscamos el siguiente disponible
-        while (Product::withTrashed()->where('internal_code', str_pad($nextNumber, 5, '0', STR_PAD_LEFT))->exists()) {
-            $nextNumber++;
-        }
-
-        return str_pad($nextNumber, 5, '0', STR_PAD_LEFT);
-    }
-
-    /**
-     * Genera un EAN-13 de uso interno estandarizado.
-     * Formato: Prefijo (20) + Relleno (00000) + PLU (5 dígitos) + Checksum (1 dígito)
-     */
-    private function generateInternalEan13(string $plu): string
-    {
-        $base = '2000000' . str_pad($plu, 5, '0', STR_PAD_LEFT);
-        
-        $sum = 0;
-        for ($i = 0; $i < 12; $i++) {
-            $digit = (int) $base[$i];
-            // Peso 1 para posiciones impares (idx par), Peso 3 para posiciones pares (idx impar)
-            $sum += ($i % 2 === 0) ? $digit : $digit * 3;
-        }
-        $checksum = (10 - ($sum % 10)) % 10;
-        
-        return $base . $checksum;
+        return response()->json($data);
     }
 
     /**
