@@ -154,8 +154,11 @@ class SalesController extends Controller
                     if ($diff != 0) {
                         $product = \App\Models\Product::find($productId);
                         if ($product) {
-                            $product->stock -= $diff;
-                            $product->save();
+                            if ($diff > 0) {
+                                $product->decrement('stock', $diff);
+                            } else {
+                                $product->increment('stock', abs($diff));
+                            }
 
                             \App\Models\StockMovement::create([
                                 'product_id' => $productId,
@@ -204,6 +207,24 @@ class SalesController extends Controller
                 $lockedSale->setAttribute('total', $newTotal);
             }
 
+            $expectedTotal = $lockedSale->total + ($validated['total_surcharge'] ?? 0) + ($validated['shipping_cost'] ?? 0) - $lockedSale->shipping_cost; 
+            // Si shipping_cost viene en request, reemplaza al anterior. Usamos la diferencia para no sumarlo dos veces si ya estaba en el total? 
+            // Para estar seguros, el backend anterior confiaba en el frontend. Ahora validamos que cubra el expectedTotal actual.
+            $expectedTotal = $lockedSale->total + ($validated['total_surcharge'] ?? 0);
+            // El shipping ya deberia estar en $lockedSale->total o se agrega al total final? En PosController $total suele incluir todo. Dejémoslo validado contra la suma.
+            
+            $sumPayments = 0;
+            foreach ($validated['payments'] as $payment) {
+                if (abs($payment['base_amount'] + $payment['surcharge_amount'] - $payment['total_amount']) > 0.01) {
+                    return ['error' => true, 'message' => 'Inconsistencia en el pago: base + recargo no coinciden con el total.'];
+                }
+                $sumPayments += $payment['total_amount'];
+            }
+            
+            if ($sumPayments < $expectedTotal - 0.1) {
+                return ['error' => true, 'message' => 'El monto de los pagos enviados ('. $sumPayments .') no cubre el total esperado de la venta ('. $expectedTotal .').'];
+            }
+
             foreach ($validated['payments'] as $payment) {
                 $paymentMethod = \App\Models\PaymentMethod::find($payment['payment_method_id']);
 
@@ -246,7 +267,7 @@ class SalesController extends Controller
             if (!$isInternalSale) {
                 foreach ($lockedSale->items as $item) {
                     if ($item->product) {
-                        $item->product->increment('sales_count', (int) $item->quantity);
+                        $item->product->increment('sales_count', (float) $item->quantity);
                     }
                 }
             }
@@ -344,8 +365,11 @@ class SalesController extends Controller
                     }
 
                     // Disminuir contador de ventas (siempre se revierte la cantidad vendida total)
-                    $newCount = max(0, $item->product->sales_count - (int) $item->quantity);
-                    $item->product->update(['sales_count' => $newCount]);
+                    \Illuminate\Support\Facades\DB::table('products')
+                        ->where('id', $item->product_id)
+                        ->update([
+                            'sales_count' => \Illuminate\Support\Facades\DB::raw('GREATEST(0, sales_count - ' . (float) $item->quantity . ')')
+                        ]);
                 }
             }
 

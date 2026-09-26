@@ -205,8 +205,7 @@ class PosController extends Controller
                             $childProd = Product::findOrFail($combo->child_product_id);
                             $qtyDeducted = $itemData['quantity'] * $combo->quantity;
                             
-                            $childProd->stock -= $qtyDeducted;
-                            $childProd->save();
+                            $childProd->decrement('stock', $qtyDeducted);
 
                             StockMovement::create([
                                 'product_id' => $childProd->id,
@@ -220,18 +219,16 @@ class PosController extends Controller
                         // Al producto Padre/Combo solo le subimos el contador estadístico de ventas
                         // (solo si NO es cuenta interna, para no inflar los reportes de popularidad)
                         if (!$isInternalAccount) {
-                            $product->sales_count += (int) $itemData['quantity'];
+                            $product->increment('sales_count', (float) $itemData['quantity']);
                         }
-                        $product->save();
 
                     } else {
                         // Producto normal unitario
-                        $product->stock -= $itemData['quantity'];
+                        $product->decrement('stock', $itemData['quantity']);
                         // Solo actualizar el contador si el comprador es un cliente real (no cuenta interna)
                         if (!$isInternalAccount) {
-                            $product->sales_count += (int) $itemData['quantity'];
+                            $product->increment('sales_count', (float) $itemData['quantity']);
                         }
-                        $product->save();
 
                         StockMovement::create([
                             'product_id' => $product->id,

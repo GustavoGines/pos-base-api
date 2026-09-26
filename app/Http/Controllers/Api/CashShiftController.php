@@ -67,10 +67,21 @@ class CashShiftController extends Controller
         $validated = $request->validate([
             'actual_balance'   => 'required|numeric|min:0',
             'closer_user_id'   => 'nullable|exists:users,id',
+            'pin'              => 'nullable|string',
         ]);
 
-        // Prioridad: authenticated_user si hay sesión, sino viene del body (PIN auth sin tokens)
-        $closerUserId = $request->attributes->get('authenticated_user')?->id ?? $validated['closer_user_id'] ?? null;
+        $authUser = $request->attributes->get('authenticated_user');
+        $closerUserId = $authUser?->id ?? $validated['closer_user_id'] ?? null;
+
+        if (!$authUser && !empty($validated['closer_user_id'])) {
+            if (empty($validated['pin'])) {
+                return response()->json(['message' => 'El PIN de seguridad es obligatorio para cerrar turno sin token.'], 403);
+            }
+            $user = \App\Models\User::find($validated['closer_user_id']);
+            if (!$user || !\Illuminate\Support\Facades\Hash::check($validated['pin'], $user->pin)) {
+                return response()->json(['message' => 'PIN de autorización incorrecto.'], 403);
+            }
+        }
 
         try {
             $shift = $this->cashShiftService->closeShift(
