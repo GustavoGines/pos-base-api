@@ -42,223 +42,34 @@ class PosController extends Controller
         return response()->json($products);
     }
 
-    public function processSale(\App\Http\Requests\ProcessSaleRequest $request)
+    public function processSale(\App\Http\Requests\ProcessSaleRequest $request, \App\Services\SaleService $saleService)
     {
         $validated = $request->validated();
-
-        $isPendingSale = ($validated['status'] ?? 'completed') === 'pending';
-
-        $ccPaymentTotal = 0;
-        $isCuentaCorriente = false;
         
-        if (!$isPendingSale) {
-            $ccPaymentTotal = collect($validated['payments'])->filter(function ($p) {
+        if (isset($validated['payments'])) {
+            $hasCuentaCorriente = collect($validated['payments'])->contains(function ($p) {
                 $method = \App\Models\PaymentMethod::find($p['payment_method_id']);
                 return $method && $method->code === 'cuenta_corriente';
-            })->sum('total_amount');
-
-            $isCuentaCorriente = $ccPaymentTotal > 0;
+            });
+            if ($hasCuentaCorriente && empty($validated['customer_id'])) {
+                return response()->json([
+                    'message' => 'Error de validación.',
+                    'errors'  => ['customer_id' => ['Debe seleccionar un cliente para ventas en Cuenta Corriente.']],
+                ], 422);
+            }
         }
 
-        if ($isCuentaCorriente && empty($validated['customer_id'])) {
-            return response()->json([
-                'message' => 'Error de validación.',
-                'errors'  => ['customer_id' => ['Debe seleccionar un cliente para ventas en Cuenta Corriente.']],
-            ], 422);
-        }
+        $dto = \App\DTOs\ProcessSaleDTO::fromRequest($validated);
+        $context = \App\DTOs\SaleContextDTO::fromArray(
+            $validated, 
+            $request->user()?->id ?? $request->attributes->get('authenticated_user')?->id
+        );
+        
+        $sale = $saleService->executeSale($dto, $context);
 
-        return DB::transaction(function () use ($validated, $isCuentaCorriente, $isPendingSale, $ccPaymentTotal, $request) {
-            $total = (float) $validated['total'];
-            $totalSurcharge = (float) $validated['total_surcharge'];
-
-            $sale = Sale::create([
-                'total'                  => $total,
-                'total_surcharge'        => $totalSurcharge,
-                'payment_status'         => $isPendingSale ? 'pending' : ($isCuentaCorriente ? ($ccPaymentTotal >= ($total + $totalSurcharge) ? 'pending' : 'partial') : 'paid'),
-                'amount_due'             => $isCuentaCorriente ? $ccPaymentTotal : ($isPendingSale ? $total : 0),
-                'tendered_amount'        => $validated['tendered_amount'] ?? null,
-                'change_amount'          => $validated['change_amount'] ?? null,
-                'cash_shift_id'          => $validated['cash_shift_id'],
-                'user_id'                => $validated['user_id'] ?? null,
-                'customer_id'            => $validated['customer_id'] ?? null,
-                'delivery_address'       => $validated['delivery_address'] ?? null,
-                'status'                 => $validated['status'] ?? 'completed',
-                'shipping_cost'          => $validated['shipping_cost'] ?? 0,
-                'price_list'             => $validated['price_list'] ?? null,
-            ]);
-
-            if (!$isPendingSale) {
-                foreach ($validated['payments'] as $payment) {
-                    $paymentMethod = \App\Models\PaymentMethod::find($payment['payment_method_id']);
-
-                    // ── 1. Registro genérico SalePayment (siempre) ──
-                    $sale->payments()->create([
-                        'payment_method_id' => $payment['payment_method_id'],
-                        'base_amount'       => $payment['base_amount'],
-                        'surcharge_amount'  => $payment['surcharge_amount'],
-                        'total_amount'      => $payment['total_amount'],
-                    ]);
-
-                    // ── 2. Bridge de Cheque (solo si el método es 'cheque' Y vienen datos del cartón) ──
-                    // SEGURIDAD: Dos condiciones simultáneas. Un pago en efectivo nunca las satisface.
-                    if ($paymentMethod && $paymentMethod->code === 'cheque' && $request->has('check_details')) {
-                        $cd = $request->input('check_details');
-                        ThirdPartyCheck::create([
-                            'bank_name'    => $cd['bank_name'],
-                            'check_number' => $cd['check_number'],
-                            'amount'       => $payment['total_amount'], // importe ya calculado con recargo
-                            'issue_date'   => $cd['issue_date'],
-                            'payment_date' => $cd['payment_date'],
-                            'issuer_name'  => $cd['issuer_name'],
-                            'issuer_cuit'  => $cd['issuer_cuit'],
-                            'customer_id'  => $sale->customer_id,
-                            'sale_id'      => $sale->id,
-                            'cash_shift_id'=> $validated['cash_shift_id'],
-                            'supplier_id'  => null,
-                            'status'       => 'in_wallet',
-                        ]);
-                    }
-                }
-            }
-
-            $requiresDispatch = $request->input('requires_dispatch', false);
-            $fulfillmentStatus = $request->input('fulfillment_status', 'pending');
-
-            // ── Hotfix: cuentas internas no inflan el sales_count estadístico ──
-            $isInternalAccount = !empty($validated['customer_id'])
-                && \App\Models\Customer::where('id', $validated['customer_id'])
-                                       ->where('is_internal_account', true)
-                                       ->exists();
-
-            foreach ($validated['items'] as $itemData) {
-                $product = Product::findOrFail($itemData['product_id']);
-
-                // Determinar el costo histórico
-                $currentCostPrice = 0;
-                if ($product->is_combo) {
-                    $combos = DB::table('product_combos')->where('parent_product_id', $product->id)->get();
-                    foreach ($combos as $c) {
-                        $childProd = Product::find($c->child_product_id);
-                        if ($childProd) {
-                            $currentCostPrice += ($childProd->cost_price * $c->quantity);
-                        }
-                    }
-                } else {
-                    $currentCostPrice = (float) $product->cost_price;
-                }
-
-                // === MOTOR DE PRECIOS VOLUMÉTRICOS ===
-                $expectedUnitPrice = $product->getPriceForQuantity((float) $itemData['quantity']);
-
-                $saleItem = $sale->items()->create([
-                    'product_id'      => $product->id,
-                    'product_name'    => $product->name,
-                    'quantity'        => $itemData['quantity'],
-                    'unit_cost_price' => $currentCostPrice,
-                    'unit_price'   => $itemData['unit_price'],
-                    'subtotal'     => $itemData['subtotal'],
-                ]);
-
-                // Lógica de Descuento de Stock:
-                // SOLO descontamos stock de INMEDIATO si:
-                // 1) NO lleva remito (requiresDispatch == false)
-                // 2) SÍ lleva remito, pero es "Se lo lleva AHORA" (fulfillmentStatus == 'delivered')
-                $shouldDeductStock = (!$requiresDispatch) || ($requiresDispatch && $fulfillmentStatus === 'delivered');
-
-                if ($shouldDeductStock) {
-                    // Si es un combo, descontar de los ingredientes (children)
-                    if ($product->is_combo) {
-                        $combos = DB::table('product_combos')->where('parent_product_id', $product->id)->get();
-                        foreach ($combos as $combo) {
-                            $childProd = Product::findOrFail($combo->child_product_id);
-                            $qtyDeducted = $itemData['quantity'] * $combo->quantity;
-                            
-                            $childProd->decrement('stock', $qtyDeducted);
-
-                            StockMovement::create([
-                                'product_id' => $childProd->id,
-                                'user_id'    => $validated['user_id'] ?? $request->attributes->get('authenticated_user')?->id,
-                                'type'       => 'sale',
-                                'quantity'   => -$qtyDeducted,
-                                'notes'      => "Venta #{$sale->id} (Hijo del Combo: {$product->name})"
-                            ]);
-                        }
-                        
-                        // Al producto Padre/Combo solo le subimos el contador estadístico de ventas
-                        // (solo si NO es cuenta interna, para no inflar los reportes de popularidad)
-                        if (!$isInternalAccount) {
-                            $product->increment('sales_count', (float) $itemData['quantity']);
-                        }
-
-                    } else {
-                        // Producto normal unitario
-                        $product->decrement('stock', $itemData['quantity']);
-                        // Solo actualizar el contador si el comprador es un cliente real (no cuenta interna)
-                        if (!$isInternalAccount) {
-                            $product->increment('sales_count', (float) $itemData['quantity']);
-                        }
-
-                        StockMovement::create([
-                            'product_id' => $product->id,
-                            'user_id'    => $validated['user_id'] ?? $request->attributes->get('authenticated_user')?->id,
-                            'type'       => 'sale',
-                            'quantity'   => -$itemData['quantity'],
-                            'notes'      => "Venta #{$sale->id}"
-                        ]);
-                    }
-                }
-            }
-
-            // Crear el remito asociado a la venta
-            if ($requiresDispatch) {
-                $deliveryNote = \App\Models\DeliveryNote::create([
-                    'sale_id' => $sale->id,
-                    'status'  => $fulfillmentStatus, // 'pending' o 'delivered'
-                    'notes'   => 'Generado automáticamente desde Checkout.',
-                ]);
-
-                foreach ($validated['items'] as $itemData) {
-                    \App\Models\DeliveryNoteItem::create([
-                        'delivery_note_id'   => $deliveryNote->id,
-                        'product_id'         => $itemData['product_id'],
-                        'quantity_purchased' => $itemData['quantity'],
-                        'quantity_delivered' => $fulfillmentStatus === 'delivered' ? $itemData['quantity'] : 0,
-                    ]);
-                }
-            }
-
-            // Si es cuenta corriente, registrar la deuda en Customer + Ledger
-            if ($isCuentaCorriente && !empty($validated['customer_id'])) {
-                $customer = Customer::lockForUpdate()->find($validated['customer_id']);
-                $customer->balance += $ccPaymentTotal;
-                $customer->save();
-
-                CustomerTransaction::create([
-                    'customer_id'   => $customer->id,
-                    'user_id'       => $validated['user_id'] ?? 1,
-                    'sale_id'       => $sale->id,
-                    'type'          => 'charge',
-                    'amount'        => $ccPaymentTotal,
-                    'balance_after' => $customer->balance,
-                    'description'   => "Venta en Cta. Cte. — Ticket #{$sale->id}",
-                ]);
-            }
-
-            // Si proviene de un presupuesto, marcarlo como aprobado
-            if (!empty($validated['quote_id'])) {
-                $quote = Quote::find($validated['quote_id']);
-                if ($quote && $quote->status !== 'approved') {
-                    $quote->update(['status' => 'approved']);
-                }
-            }
-
-            try { broadcast(new \App\Events\DashboardUpdated()); } catch (\Throwable $e) { \Illuminate\Support\Facades\Log::error("Broadcast failed: " . $e->getMessage()); }
-
-            return response()->json([
-                'message' => 'Sale processed successfully',
-                'sale'    => $sale->load('items', 'payments.paymentMethod', 'deliveryNote', 'deliveryNote.items', 'deliveryNote.items.product'),
-            ], 201);
-        });
+        return response()->json([
+            'message' => 'Venta registrada correctamente',
+            'sale'    => $sale->load('items.product', 'user:id,name', 'cashier:id,name', 'payments.paymentMethod:id,name,code,is_cash'),
+        ], 201);
     }
 }
-

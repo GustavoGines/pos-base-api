@@ -6,8 +6,11 @@ use App\Models\Sale;
 use App\Models\Quote;
 use App\Models\Product;
 use App\Models\DeliveryNote;
+use App\Models\CustomerTransaction;
 use App\DTOs\SaleContextDTO;
 use App\DTOs\ProcessSaleDTO;
+use App\DTOs\PaySaleDTO;
+use Illuminate\Support\Facades\DB;
 
 class SaleService
 {
@@ -18,7 +21,7 @@ class SaleService
 
     public function executeSale(ProcessSaleDTO $dto, SaleContextDTO $context): Sale
     {
-        return \Illuminate\Support\Facades\DB::transaction(function () use ($dto, $context) {
+        return DB::transaction(function () use ($dto, $context) {
             $isPendingSale = $dto->status === 'pending';
             
             $ccPaymentTotal = 0;
@@ -39,12 +42,10 @@ class SaleService
             $total = $dto->total;
             $totalSurcharge = $dto->totalSurcharge;
             
-            // Machine state: payment_status and amount_due
             $paymentStatus = $isPendingSale ? 'pending' : 
                 ($isCuentaCorriente ? ($ccPaymentTotal >= ($total + $totalSurcharge - 0.1) ? 'pending' : 'partial') : 'paid');
             $amountDue = $isCuentaCorriente ? $ccPaymentTotal : ($isPendingSale ? $total : 0);
 
-            // 1. Create Sale
             $sale = Sale::create([
                 'total'                  => $total,
                 'total_surcharge'        => $totalSurcharge,
@@ -61,7 +62,6 @@ class SaleService
                 'status'                 => $dto->status,
             ]);
 
-            // Resolve Quote
             if ($context->quoteId) {
                 $quote = Quote::find($context->quoteId);
                 if ($quote) {
@@ -69,7 +69,6 @@ class SaleService
                 }
             }
 
-            // 2. Process Payments
             if (!$isPendingSale && !empty($dto->payments)) {
                 $this->paymentService->validatePaymentsTotal($dto->payments, $total + $totalSurcharge + $dto->shippingCost);
                 $this->paymentService->registerPayments($sale, $dto->payments, $dto->checkDetails, $context);
@@ -79,24 +78,116 @@ class SaleService
                 }
             }
 
-            // 3. Lock products to prevent Dirty Reads, then process
             $productIds = array_column($dto->items, 'product_id');
             $lockedProducts = $this->stockService->lockProducts($productIds);
 
-            // 4. Process Items and Stock
             $this->processItems($sale, $dto->items, $lockedProducts, $context);
 
             $this->stockService->processCartStock($dto->items, $lockedProducts, $sale, $context, $dto->requiresDispatch, $dto->fulfillmentStatus);
 
-            // 5. Delivery Notes
             if ($dto->requiresDispatch) {
                 $this->createDeliveryNote($sale, $dto->items, $dto->fulfillmentStatus);
             }
 
-            // Domain Event instead of websocket broadcast
             event(new \App\Events\SaleCompleted($sale));
 
             return $sale;
+        });
+    }
+
+    public function payPendingSale(Sale $sale, PaySaleDTO $dto, SaleContextDTO $context): Sale
+    {
+        return DB::transaction(function () use ($sale, $dto, $context) {
+            $lockedSale = Sale::lockForUpdate()->find($sale->id);
+
+            if ($lockedSale->status !== 'pending') {
+                throw new \InvalidArgumentException('Esta venta ya no está en estado pendiente.');
+            }
+
+            // Order Recall Items Delta
+            if (!empty($dto->items)) {
+                $this->stockService->reconcileStockDiff($dto->items, $lockedSale, $context);
+
+                $lockedSale->items()->delete();
+                
+                $productIds = array_column($dto->items, 'product_id');
+                $lockedProducts = $this->stockService->lockProducts($productIds);
+                $this->processItems($lockedSale, $dto->items, $lockedProducts, $context);
+                
+                // Recalculate Totals based on new items
+                $newTotal = collect($dto->items)->sum('subtotal');
+                $lockedSale->total = $newTotal;
+            }
+
+            $totalToValidate = $lockedSale->total + $dto->totalSurcharge + $dto->shippingCost;
+            $this->paymentService->validatePaymentsTotal($dto->payments, $totalToValidate);
+            $this->paymentService->registerPayments($lockedSale, $dto->payments, $dto->checkDetails, $context);
+
+            $ccPaymentTotal = 0;
+            $isCuentaCorriente = false;
+            if (!empty($dto->payments)) {
+                $paymentMethodIds = array_column($dto->payments, 'payment_method_id');
+                $paymentMethods = \App\Models\PaymentMethod::whereIn('id', $paymentMethodIds)->get()->keyBy('id');
+
+                $ccPaymentTotal = collect($dto->payments)->filter(function ($p) use ($paymentMethods) {
+                    $method = $paymentMethods->get($p['payment_method_id']);
+                    return $method && $method->code === 'cuenta_corriente';
+                })->sum('total_amount');
+
+                $isCuentaCorriente = $ccPaymentTotal > 0;
+            }
+
+            if ($isCuentaCorriente) {
+                $this->paymentService->registerCustomerCharge($lockedSale, $ccPaymentTotal, $context);
+            }
+
+            $lockedSale->update([
+                'status' => 'completed',
+                'payment_status' => $isCuentaCorriente ? ($ccPaymentTotal >= ($totalToValidate - 0.1) ? 'pending' : 'partial') : 'paid',
+                'total_surcharge' => $dto->totalSurcharge,
+                'shipping_cost' => $dto->shippingCost,
+                'amount_due' => $isCuentaCorriente ? $ccPaymentTotal : 0,
+                'tendered_amount' => $dto->tenderedAmount,
+                'change_amount' => $dto->changeAmount,
+            ]);
+
+            event(new \App\Events\SaleCompleted($lockedSale));
+
+            return $lockedSale;
+        });
+    }
+
+    public function voidSale(Sale $sale, SaleContextDTO $context): Sale
+    {
+        return DB::transaction(function () use ($sale, $context) {
+            $lockedSale = Sale::lockForUpdate()->find($sale->id);
+
+            if ($lockedSale->status === 'voided') {
+                throw new \InvalidArgumentException('Esta venta ya está anulada.');
+            }
+            if ($lockedSale->status !== 'pending' && $lockedSale->status !== 'completed') {
+                throw new \InvalidArgumentException('No se puede anular una venta en este estado.');
+            }
+
+            $deliveryNote = DeliveryNote::with('items')->where('sale_id', $lockedSale->id)->first();
+
+            $this->stockService->restoreStockForVoid($lockedSale, $context, $deliveryNote);
+
+            if ($deliveryNote) {
+                $deliveryNote->update(['status' => 'cancelled']);
+            }
+
+            // Anular Cheques
+            \App\Models\ThirdPartyCheck::where('sale_id', $lockedSale->id)->update(['status' => 'voided']);
+
+            // Revertir Cuenta Corriente
+            $this->paymentService->revertCustomerTransactionsForVoid($lockedSale, $context);
+
+            $lockedSale->update(['status' => 'voided']);
+
+            event(new \App\Events\SaleCompleted($lockedSale)); // Opcional, podría ser SaleVoided
+
+            return $lockedSale;
         });
     }
 
@@ -106,7 +197,6 @@ class SaleService
             $product = $products[$itemData['product_id']] ?? null;
             if (!$product) continue;
             
-            // Invoke Volume Pricing and Historical Cost on locked models (no dirty reads, no N+1)
             $unitPrice = $product->getPriceForQuantity($itemData['quantity']) ?? $itemData['unit_price'];
             $costPrice = $this->stockService->calculateCostPrice($product);
             
