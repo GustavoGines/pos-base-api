@@ -86,7 +86,7 @@ class PosProcessSaleTest extends TestCase
             ));
 
         $response->assertStatus(201)
-                 ->assertJsonPath('message', 'Sale processed successfully');
+                 ->assertJsonPath('message', 'Venta registrada correctamente');
 
         // Stock descontado
         $this->assertEquals(8, (float) $product->fresh()->stock);

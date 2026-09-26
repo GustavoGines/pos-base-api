@@ -42,12 +42,18 @@ class PaySaleRequest extends FormRequest
             ],
             // Check details
             'check_details'          => 'nullable|array',
-            'check_details.bank_name'    => 'required_with:check_details|string|max:100',
-            'check_details.check_number' => 'required_with:check_details|string|max:50',
-            'check_details.issue_date'   => 'required_with:check_details|date',
-            'check_details.payment_date' => 'required_with:check_details|date|after_or_equal:check_details.issue_date',
-            'check_details.issuer_name'  => 'required_with:check_details|string|max:100',
+            'check_details.bank_name'    => 'nullable|string|max:100',
+            'check_details.check_number' => 'nullable|string|max:50',
+            'check_details.issue_date'   => 'nullable|date',
+            'check_details.payment_date' => 'nullable|date',
+            'check_details.issuer_name'  => 'nullable|string|max:100',
             'check_details.issuer_cuit'  => 'nullable|string|max:20',
+            'check_details.*.bank_name'    => 'nullable|string|max:100',
+            'check_details.*.check_number' => 'nullable|string|max:50',
+            'check_details.*.issue_date'   => 'nullable|date',
+            'check_details.*.payment_date' => 'nullable|date',
+            'check_details.*.issuer_name'  => 'nullable|string|max:100',
+            'check_details.*.issuer_cuit'  => 'nullable|string|max:20',
         ];
     }
 

@@ -27,7 +27,7 @@ class StockService
         sort($allIds); // Anti-Deadlock
 
         return Product::whereIn('id', $allIds)
-            ->with('combos.childProduct')
+            ->with('children')
             ->lockForUpdate()
             ->get()
             ->keyBy('id');
@@ -60,17 +60,14 @@ class StockService
     protected function deductProductStock(Product $product, float $qty, Sale $sale, SaleContextDTO $context, bool $isAdjustment): void
     {
         if ($product->is_combo) {
-            foreach ($product->combos as $combo) {
-                $child = $combo->childProduct;
-                if ($child) {
-                    $qtyDeducted = $qty * $combo->quantity;
-                    $child->stock -= $qtyDeducted;
-                    $child->save(); // Dispara Observers
+            foreach ($product->children as $child) {
+                $qtyDeducted = $qty * $child->pivot->quantity;
+                $child->stock -= $qtyDeducted;
+                $child->save(); // Dispara Observers
 
-                    $this->logMovement($child->id, -$qtyDeducted, 'sale', 
-                        ($isAdjustment ? "Ajuste Recall " : "Venta ") . "Ticket #{$sale->id} (Hijo de: {$product->name})", 
-                        $context, $sale);
-                }
+                $this->logMovement($child->id, -$qtyDeducted, 'sale', 
+                    ($isAdjustment ? "Ajuste Recall " : "Venta ") . "Ticket #{$sale->id} (Hijo de: {$product->name})", 
+                    $context, $sale);
             }
         } else {
             $product->stock -= $qty;
@@ -157,15 +154,12 @@ class StockService
     protected function addStockBack(Product $product, float $qtyToRestore, Sale $sale, SaleContextDTO $context): void
     {
         if ($product->is_combo) {
-            foreach ($product->combos as $combo) {
-                $child = $combo->childProduct;
-                if ($child) {
-                    $qtyRestored = $qtyToRestore * $combo->quantity;
-                    $child->stock += $qtyRestored;
-                    $child->save();
+            foreach ($product->children as $child) {
+                $qtyRestored = $qtyToRestore * $child->pivot->quantity;
+                $child->stock += $qtyRestored;
+                $child->save();
 
-                    $this->logMovement($child->id, $qtyRestored, 'in', "Reversión (Combo Hijo) Venta #{$sale->id}", $context, $sale);
-                }
+                $this->logMovement($child->id, $qtyRestored, 'in', "Reversión (Combo Hijo) Venta #{$sale->id}", $context, $sale);
             }
         } else {
             $product->stock += $qtyToRestore;
@@ -182,10 +176,8 @@ class StockService
     {
         if ($product->is_combo) {
             $currentCostPrice = 0.0;
-            foreach ($product->combos as $combo) {
-                if ($combo->childProduct) {
-                    $currentCostPrice += ((float)$combo->childProduct->cost_price * $combo->quantity);
-                }
+            foreach ($product->children as $child) {
+                $currentCostPrice += ((float)$child->cost_price * $child->pivot->quantity);
             }
             return $currentCostPrice;
         }

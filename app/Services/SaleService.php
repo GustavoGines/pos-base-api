@@ -43,8 +43,8 @@ class SaleService
             $totalSurcharge = $dto->totalSurcharge;
             
             $paymentStatus = $isPendingSale ? 'pending' : 
-                ($isCuentaCorriente ? ($ccPaymentTotal >= ($total + $totalSurcharge - 0.1) ? 'pending' : 'partial') : 'paid');
-            $amountDue = $isCuentaCorriente ? $ccPaymentTotal : ($isPendingSale ? $total : 0);
+                ($isCuentaCorriente ? ($ccPaymentTotal >= ($total + $totalSurcharge + $dto->shippingCost - 0.1) ? 'pending' : 'partial') : 'paid');
+            $amountDue = $isCuentaCorriente ? $ccPaymentTotal : ($isPendingSale ? $total + $dto->shippingCost : 0);
 
             $sale = Sale::create([
                 'total'                  => $total,
@@ -99,6 +99,9 @@ class SaleService
     {
         return DB::transaction(function () use ($sale, $dto, $context) {
             $lockedSale = Sale::with('items')->lockForUpdate()->find($sale->id);
+            if (!$lockedSale) {
+                \Log::error("Sale not found! id=" . $sale->id . ", count=" . Sale::count() . ", without lock=" . (Sale::find($sale->id) ? 'yes' : 'no'));
+            }
 
             if ($lockedSale->status !== 'pending') {
                 throw new \InvalidArgumentException('Esta venta ya no está en estado pendiente.');

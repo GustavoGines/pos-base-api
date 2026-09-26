@@ -15,7 +15,7 @@ return new class extends Migration
         // MODIFY COLUMN is MySQL-only syntax. SQLite stores ENUMs as strings
         // and already accepts any value, so the column change is a no-op there.
         if (DB::getDriverName() !== 'sqlite') {
-            DB::statement("ALTER TABLE delivery_notes MODIFY COLUMN status ENUM('pending', 'partial', 'delivered', 'cancelled') DEFAULT 'pending'");
+            if (\Illuminate\Support\Facades\DB::getDriverName() !== 'sqlite') { DB::statement("ALTER TABLE delivery_notes MODIFY COLUMN status ENUM('pending', 'partial', 'delivered', 'cancelled') DEFAULT 'pending'"); }
         }
     }
 
@@ -25,7 +25,7 @@ return new class extends Migration
     public function down(): void
     {
         if (DB::getDriverName() !== 'sqlite') {
-            DB::statement("ALTER TABLE delivery_notes MODIFY COLUMN status ENUM('pending', 'partial', 'delivered') DEFAULT 'pending'");
+            if (\Illuminate\Support\Facades\DB::getDriverName() !== 'sqlite') { DB::statement("ALTER TABLE delivery_notes MODIFY COLUMN status ENUM('pending', 'partial', 'delivered') DEFAULT 'pending'"); }
         }
     }
 };

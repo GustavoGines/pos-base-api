@@ -96,7 +96,7 @@ class SaleVoidTest extends TestCase
         $sale = $this->crearVentaCompletada($product, qty: 2);
 
         $response = $this->actingAsAdmin($admin)
-            ->postJson("/api/sales/{$sale->id}/void");
+            ->postJson("/api/sales/{$sale->id}/void", ['cash_shift_id' => $sale->cash_shift_id]);
 
         $response->assertStatus(200)
                  ->assertJsonPath('message', fn($msg) => str_contains($msg, 'anulada'));
@@ -152,7 +152,7 @@ class SaleVoidTest extends TestCase
         $sale = $this->crearVentaCompletada($combo, qty: 2);
 
         $response = $this->actingAsAdmin($admin)
-            ->postJson("/api/sales/{$sale->id}/void");
+            ->postJson("/api/sales/{$sale->id}/void", ['cash_shift_id' => $sale->cash_shift_id]);
 
         $response->assertStatus(200);
 
@@ -201,7 +201,7 @@ class SaleVoidTest extends TestCase
         ]);
 
         $response = $this->actingAsAdmin($admin)
-            ->postJson("/api/sales/{$sale->id}/void");
+            ->postJson("/api/sales/{$sale->id}/void", ['cash_shift_id' => $sale->cash_shift_id]);
 
         $response->assertStatus(200);
 
@@ -237,7 +237,7 @@ class SaleVoidTest extends TestCase
         $sale->update(['status' => 'voided']);
 
         $response = $this->actingAsAdmin($admin)
-            ->postJson("/api/sales/{$sale->id}/void");
+            ->postJson("/api/sales/{$sale->id}/void", ['cash_shift_id' => $sale->cash_shift_id]);
 
         $response->assertStatus(422)
                  ->assertJsonPath('message', fn($msg) =>
@@ -276,7 +276,7 @@ class SaleVoidTest extends TestCase
         ]);
 
         $response = $this->actingAsAdmin($admin)
-            ->postJson("/api/sales/{$sale->id}/void");
+            ->postJson("/api/sales/{$sale->id}/void", ['cash_shift_id' => $sale->cash_shift_id]);
 
         $response->assertStatus(200);
 

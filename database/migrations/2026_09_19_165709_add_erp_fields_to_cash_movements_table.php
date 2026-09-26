@@ -19,7 +19,7 @@ return new class extends Migration
         });
 
         // Safe way to update ENUM in MySQL without DBAL
-        DB::statement("ALTER TABLE cash_movements MODIFY COLUMN type ENUM('expense', 'withdrawal', 'deposit', 'supplier_payment') NOT NULL");
+        if (\Illuminate\Support\Facades\DB::getDriverName() !== 'sqlite') { DB::statement("ALTER TABLE cash_movements MODIFY COLUMN type ENUM('expense', 'withdrawal', 'deposit', 'supplier_payment') NOT NULL"); }
     }
 
     /**
@@ -27,7 +27,7 @@ return new class extends Migration
      */
     public function down(): void
     {
-        DB::statement("ALTER TABLE cash_movements MODIFY COLUMN type ENUM('expense', 'withdrawal', 'deposit') NOT NULL");
+        if (\Illuminate\Support\Facades\DB::getDriverName() !== 'sqlite') { DB::statement("ALTER TABLE cash_movements MODIFY COLUMN type ENUM('expense', 'withdrawal', 'deposit') NOT NULL"); }
 
         Schema::table('cash_movements', function (Blueprint $table) {
             $table->dropForeign(['expense_category_id']);
