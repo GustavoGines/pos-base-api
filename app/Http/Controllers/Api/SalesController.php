@@ -116,7 +116,7 @@ class SalesController extends Controller
 
         return response()->json([
             'message' => "Venta #{$completedSale->id} cobrada correctamente.",
-            'sale'    => $completedSale->fresh()->load('items.product', 'user:id,name', 'cashier:id,name'),
+            'sale'    => $completedSale->fresh()->load('items.product', 'user:id,name', 'cashier:id,name', 'payments.paymentMethod:id,name,code,is_cash'),
         ]);
     }
 

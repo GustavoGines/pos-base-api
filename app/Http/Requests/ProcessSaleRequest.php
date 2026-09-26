@@ -21,7 +21,7 @@ class ProcessSaleRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'total'                  => 'required|numeric',
+            'total'                  => 'required|numeric|min:0',
             'total_surcharge'        => 'required|numeric|min:0',
             'shipping_cost'          => 'nullable|numeric|min:0',
             'payments'               => 'exclude_if:status,pending|required|array|min:1',
@@ -29,8 +29,8 @@ class ProcessSaleRequest extends FormRequest
             'payments.*.base_amount'      => 'required|numeric|min:0',
             'payments.*.surcharge_amount' => 'required|numeric|min:0',
             'payments.*.total_amount'     => 'required|numeric|min:0',
-            'tendered_amount'        => 'nullable|numeric',
-            'change_amount'          => 'nullable|numeric',
+            'tendered_amount'        => 'nullable|numeric|min:0',
+            'change_amount'          => 'nullable|numeric|min:0',
             'cash_shift_id'          => [
                 'required',
                 'integer',
@@ -43,8 +43,8 @@ class ProcessSaleRequest extends FormRequest
             'items'                  => 'required|array|min:1',
             'items.*.product_id'     => 'required|integer|exists:products,id',
             'items.*.quantity'       => 'required|numeric|min:0.001',
-            'items.*.unit_price'     => 'required|numeric',
-            'items.*.subtotal'       => 'required|numeric',
+            'items.*.unit_price'     => 'required|numeric|min:0',
+            'items.*.subtotal'       => 'required|numeric|min:0',
             'quote_id'               => 'nullable|integer|exists:quotes,id',
             'price_list'             => 'nullable|string|max:100',
             // Check details bridge validation
@@ -69,6 +69,26 @@ class ProcessSaleRequest extends FormRequest
             'customer_id.exists'           => 'El cliente seleccionado no existe en el sistema.',
             'user_id.exists'               => 'El cajero actual no está registrado en el sistema. Inicie sesión nuevamente.',
             'items.*.product_id.exists'    => 'Uno de los productos en el carrito ya no está disponible en la base de datos.',
+        ];
+    }
+
+    public function after(): array
+    {
+        return [
+            function ($validator) {
+                $payments = $this->input('payments', []);
+                if (is_array($payments) && !empty($payments)) {
+                    $hasCuentaCorriente = collect($payments)->contains(function ($p) {
+                        if (!isset($p['payment_method_id'])) return false;
+                        $method = \App\Models\PaymentMethod::find($p['payment_method_id']);
+                        return $method && $method->code === 'cuenta_corriente';
+                    });
+
+                    if ($hasCuentaCorriente && empty($this->input('customer_id'))) {
+                        $validator->errors()->add('customer_id', 'Debe seleccionar un cliente para ventas en Cuenta Corriente.');
+                    }
+                }
+            }
         ];
     }
 }

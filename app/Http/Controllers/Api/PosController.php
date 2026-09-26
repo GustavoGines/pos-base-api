@@ -45,19 +45,6 @@ class PosController extends Controller
     public function processSale(\App\Http\Requests\ProcessSaleRequest $request, \App\Services\SaleService $saleService)
     {
         $validated = $request->validated();
-        
-        if (isset($validated['payments'])) {
-            $hasCuentaCorriente = collect($validated['payments'])->contains(function ($p) {
-                $method = \App\Models\PaymentMethod::find($p['payment_method_id']);
-                return $method && $method->code === 'cuenta_corriente';
-            });
-            if ($hasCuentaCorriente && empty($validated['customer_id'])) {
-                return response()->json([
-                    'message' => 'Error de validación.',
-                    'errors'  => ['customer_id' => ['Debe seleccionar un cliente para ventas en Cuenta Corriente.']],
-                ], 422);
-            }
-        }
 
         $dto = \App\DTOs\ProcessSaleDTO::fromRequest($validated);
         $context = \App\DTOs\SaleContextDTO::fromArray(
