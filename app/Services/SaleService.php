@@ -76,26 +76,34 @@ class SaleService
                 }
             }
 
-            // 3. Process Items and Stock
-            $this->processItems($sale, $dto->items, $context);
+            // 3. Lock products to prevent Dirty Reads, then process
+            $productIds = array_column($dto->items, 'product_id');
+            $lockedProducts = $this->stockService->lockProducts($productIds);
 
-            $this->stockService->processCartStock($dto->items, $sale, $context, $dto->requiresDispatch, $dto->fulfillmentStatus);
+            // 4. Process Items and Stock
+            $this->processItems($sale, $dto->items, $lockedProducts, $context);
 
-            // 4. Delivery Notes
+            $this->stockService->processCartStock($dto->items, $lockedProducts, $sale, $context, $dto->requiresDispatch, $dto->fulfillmentStatus);
+
+            // 5. Delivery Notes
             if ($dto->requiresDispatch) {
                 $this->createDeliveryNote($sale, $dto->items, $dto->fulfillmentStatus);
             }
+
+            // Domain Event instead of websocket broadcast
+            event(new \App\Events\SaleCompleted($sale));
 
             return $sale;
         });
     }
 
-    protected function processItems(Sale $sale, array $items, SaleContextDTO $context): void
+    protected function processItems(Sale $sale, array $items, \Illuminate\Database\Eloquent\Collection $products, SaleContextDTO $context): void
     {
         foreach ($items as $itemData) {
-            $product = Product::findOrFail($itemData['product_id']);
+            $product = $products[$itemData['product_id']] ?? null;
+            if (!$product) continue;
             
-            // Invoke Volume Pricing and Historical Cost
+            // Invoke Volume Pricing and Historical Cost on locked models (no dirty reads, no N+1)
             $unitPrice = $product->getPriceForQuantity($itemData['quantity']) ?? $itemData['unit_price'];
             $costPrice = $this->stockService->calculateCostPrice($product);
             

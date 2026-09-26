@@ -12,27 +12,32 @@ use Illuminate\Support\Facades\DB;
 class StockService
 {
     /**
-     * Deduct stock for a brand new sale or checkout.
+     * Pre-carga y bloquea todos los productos (padres e hijos) en una sola query para evitar N+1 y Deadlocks.
      */
-    public function processCartStock(array $items, Sale $sale, SaleContextDTO $context, bool $requiresDispatch, string $fulfillmentStatus): void
+    public function lockProducts(array $productIds): \Illuminate\Database\Eloquent\Collection
     {
-        $shouldDeductStock = (!$requiresDispatch) || ($requiresDispatch && $fulfillmentStatus === 'delivered');
+        $uniqueIds = array_unique($productIds);
+        sort($uniqueIds); // Anti-Deadlock
 
-        if (!$shouldDeductStock) {
-            return; // Stock will be deducted upon delivery
-        }
-
-        $productIds = array_column($items, 'product_id');
-        sort($productIds); // Anti-Deadlock: Forzar bloqueo en orden secuencial
-        
-        // Anti N+1 y Bloqueo Pesimista en Tabla Padre y Relacionada
-        $products = Product::whereIn('id', $productIds)
+        return Product::whereIn('id', $uniqueIds)
             ->with(['combos.childProduct' => function($query) {
                 $query->lockForUpdate();
             }])
             ->lockForUpdate()
             ->get()
             ->keyBy('id');
+    }
+
+    /**
+     * Deduct stock for a brand new sale or checkout.
+     */
+    public function processCartStock(array $items, \Illuminate\Database\Eloquent\Collection $products, Sale $sale, SaleContextDTO $context, bool $requiresDispatch, string $fulfillmentStatus): void
+    {
+        $shouldDeductStock = (!$requiresDispatch) || ($requiresDispatch && $fulfillmentStatus === 'delivered');
+
+        if (!$shouldDeductStock) {
+            return; // Stock will be deducted upon delivery
+        }
 
         foreach ($items as $itemData) {
             if (!isset($products[$itemData['product_id']])) continue;
