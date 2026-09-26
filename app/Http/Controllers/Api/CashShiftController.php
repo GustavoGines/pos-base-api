@@ -73,14 +73,13 @@ class CashShiftController extends Controller
         $authUser = $request->attributes->get('authenticated_user');
         $closerUserId = $authUser?->id ?? $validated['closer_user_id'] ?? null;
 
-        if (!$authUser && !empty($validated['closer_user_id'])) {
-            if (empty($validated['pin'])) {
-                return response()->json(['message' => 'El PIN de seguridad es obligatorio para cerrar turno sin token.'], 403);
-            }
-            $user = \App\Models\User::find($validated['closer_user_id']);
-            if (!$user || !\Illuminate\Support\Facades\Hash::check($validated['pin'], $user->pin)) {
-                return response()->json(['message' => 'PIN de autorización incorrecto.'], 403);
-            }
+        if (empty($validated['pin'])) {
+            return response()->json(['message' => 'El PIN de seguridad es obligatorio para cerrar el turno de caja.'], 403);
+        }
+
+        $user = \App\Models\User::find($closerUserId);
+        if (!$user || !\Illuminate\Support\Facades\Hash::check($validated['pin'], $user->pin)) {
+            return response()->json(['message' => 'PIN de autorización incorrecto.'], 403);
         }
 
         try {
