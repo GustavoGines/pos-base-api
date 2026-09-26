@@ -14,162 +14,27 @@ class ReportController extends Controller
 {
     // ─── Método Privado: Motor de la Mega-Query (DRY) ────────────────────────
 
+    private \App\Repositories\SalesAnalyticsRepository $analyticsRepo;
+
+    public function __construct(\App\Repositories\SalesAnalyticsRepository $analyticsRepo)
+    {
+        $this->analyticsRepo = $analyticsRepo;
+    }
+
     private function getProfitDataArray(string $startDate, string $endDate): \Illuminate\Support\Collection
     {
         $cacheKey = "profit_data_{$startDate}_{$endDate}";
         return Cache::remember($cacheKey, 900, function () use ($startDate, $endDate) {
-            return $this->getProfitDataArrayUncached($startDate, $endDate);
+            return $this->analyticsRepo->getProfitReport($startDate, $endDate, 'category');
         });
-    }
-
-    private function getProfitDataArrayUncached(string $startDate, string $endDate): \Illuminate\Support\Collection
-    {
-        $productStats = SaleItem::join('sales', 'sales.id', '=', 'sale_items.sale_id')
-            ->join('products', 'products.id', '=', 'sale_items.product_id')
-            ->leftJoin('categories', 'categories.id', '=', 'products.category_id')
-            ->selectRaw('
-                COALESCE(categories.name, "Sin Categoría") as category_name,
-                products.id as product_id,
-                products.name as product_name,
-                SUM(sale_items.quantity) as items_sold,
-                SUM(sale_items.subtotal) as total_revenue,
-                SUM(
-                    CASE
-                        WHEN sale_items.unit_cost_price IS NOT NULL AND sale_items.unit_cost_price > 0
-                        THEN sale_items.subtotal - (sale_items.unit_cost_price * sale_items.quantity)
-                        WHEN products.cost_price IS NOT NULL AND products.cost_price > 0
-                        THEN sale_items.subtotal - (products.cost_price * sale_items.quantity)
-                        ELSE 0
-                    END
-                ) as total_profit,
-                SUM(
-                    CASE
-                        WHEN (sale_items.unit_cost_price IS NOT NULL AND sale_items.unit_cost_price > 0)
-                          OR (products.cost_price IS NOT NULL AND products.cost_price > 0)
-                        THEN sale_items.subtotal
-                        ELSE 0
-                    END
-                ) as revenue_with_cost,
-                COUNT(CASE
-                    WHEN (sale_items.unit_cost_price IS NOT NULL AND sale_items.unit_cost_price > 0)
-                      OR (products.cost_price IS NOT NULL AND products.cost_price > 0)
-                    THEN 1
-                END) as items_with_cost,
-                COUNT(*) as total_items
-            ')
-            ->whereBetween('sales.created_at', [\Carbon\Carbon::parse($startDate)->startOfDay(), \Carbon\Carbon::parse($endDate)->endOfDay()])
-            ->where('sales.status', 'completed')
-            ->whereNotExists(function ($query) {
-                $query->select(DB::raw(1))
-                      ->from('customers')
-                      ->whereColumn('customers.id', 'sales.customer_id')
-                      ->where('customers.is_internal_account', true);
-            })
-            ->groupBy('products.category_id', 'categories.name', 'products.id', 'products.name')
-            ->get();
-
-        return $productStats->groupBy('category_name')->map(function ($items, $categoryName) {
-            return [
-                'category_name'   => $categoryName,
-                'items_sold'      => $items->sum('items_sold'),
-                'total_revenue'   => $items->sum('total_revenue'),
-                'total_profit'    => $items->sum('total_profit'),
-                'revenue_with_cost' => $items->sum('revenue_with_cost'),
-                'items_with_cost' => $items->sum('items_with_cost'),
-                'total_items'     => $items->sum('total_items'),
-                'products'        => $items->sortByDesc('total_revenue')->map(function ($prod) {
-                    return [
-                        'product_id'       => $prod->product_id,
-                        'product_name'     => $prod->product_name,
-                        'items_sold'       => (int)   $prod->items_sold,
-                        'total_revenue'    => (float) $prod->total_revenue,
-                        'total_profit'     => (float) $prod->total_profit,
-                        'revenue_with_cost'=> (float) $prod->revenue_with_cost,
-                        'items_with_cost'  => (int)   $prod->items_with_cost,
-                        'total_items'      => (int)   $prod->total_items,
-                    ];
-                })->values(),
-            ];
-        })->sortByDesc('total_revenue')->values();
     }
 
     private function getProfitByBrandDataArray(string $startDate, string $endDate): \Illuminate\Support\Collection
     {
         $cacheKey = "profit_brand_{$startDate}_{$endDate}";
         return Cache::remember($cacheKey, 900, function () use ($startDate, $endDate) {
-            return $this->getProfitByBrandDataArrayUncached($startDate, $endDate);
+            return $this->analyticsRepo->getProfitReport($startDate, $endDate, 'brand');
         });
-    }
-
-    private function getProfitByBrandDataArrayUncached(string $startDate, string $endDate): \Illuminate\Support\Collection
-    {
-        $productStats = SaleItem::join('sales', 'sales.id', '=', 'sale_items.sale_id')
-            ->join('products', 'products.id', '=', 'sale_items.product_id')
-            ->leftJoin('brands', 'brands.id', '=', 'products.brand_id')
-            ->selectRaw('
-                COALESCE(brands.name, "Sin Marca") as category_name,
-                products.id as product_id,
-                products.name as product_name,
-                SUM(sale_items.quantity) as items_sold,
-                SUM(sale_items.subtotal) as total_revenue,
-                SUM(
-                    CASE
-                        WHEN sale_items.unit_cost_price IS NOT NULL AND sale_items.unit_cost_price > 0
-                        THEN sale_items.subtotal - (sale_items.unit_cost_price * sale_items.quantity)
-                        WHEN products.cost_price IS NOT NULL AND products.cost_price > 0
-                        THEN sale_items.subtotal - (products.cost_price * sale_items.quantity)
-                        ELSE 0
-                    END
-                ) as total_profit,
-                SUM(
-                    CASE
-                        WHEN (sale_items.unit_cost_price IS NOT NULL AND sale_items.unit_cost_price > 0)
-                          OR (products.cost_price IS NOT NULL AND products.cost_price > 0)
-                        THEN sale_items.subtotal
-                        ELSE 0
-                    END
-                ) as revenue_with_cost,
-                COUNT(CASE
-                    WHEN (sale_items.unit_cost_price IS NOT NULL AND sale_items.unit_cost_price > 0)
-                      OR (products.cost_price IS NOT NULL AND products.cost_price > 0)
-                    THEN 1
-                END) as items_with_cost,
-                COUNT(*) as total_items
-            ')
-            ->whereBetween('sales.created_at', [\Carbon\Carbon::parse($startDate)->startOfDay(), \Carbon\Carbon::parse($endDate)->endOfDay()])
-            ->where('sales.status', 'completed')
-            ->whereNotExists(function ($query) {
-                $query->select(DB::raw(1))
-                      ->from('customers')
-                      ->whereColumn('customers.id', 'sales.customer_id')
-                      ->where('customers.is_internal_account', true);
-            })
-            ->groupBy('products.brand_id', 'brands.name', 'products.id', 'products.name')
-            ->get();
-
-        return $productStats->groupBy('category_name')->map(function ($items, $categoryName) {
-            return [
-                'category_name'   => $categoryName, // Reutilizamos la misma key para el frontend
-                'items_sold'      => $items->sum('items_sold'),
-                'total_revenue'   => $items->sum('total_revenue'),
-                'total_profit'    => $items->sum('total_profit'),
-                'revenue_with_cost' => $items->sum('revenue_with_cost'),
-                'items_with_cost' => $items->sum('items_with_cost'),
-                'total_items'     => $items->sum('total_items'),
-                'products'        => $items->sortByDesc('total_revenue')->map(function ($prod) {
-                    return [
-                        'product_id'       => $prod->product_id,
-                        'product_name'     => $prod->product_name,
-                        'items_sold'       => (int)   $prod->items_sold,
-                        'total_revenue'    => (float) $prod->total_revenue,
-                        'total_profit'     => (float) $prod->total_profit,
-                        'revenue_with_cost'=> (float) $prod->revenue_with_cost,
-                        'items_with_cost'  => (int)   $prod->items_with_cost,
-                        'total_items'      => (int)   $prod->total_items,
-                    ];
-                })->values(),
-            ];
-        })->sortByDesc('total_revenue')->values();
     }
 
     // ─── Endpoint: JSON para el Dashboard Flutter ─────────────────────────────
