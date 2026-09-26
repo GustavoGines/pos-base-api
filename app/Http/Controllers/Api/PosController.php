@@ -46,7 +46,7 @@ class PosController extends Controller
     {
         $validated = $request->validated();
 
-        $dto = \App\DTOs\ProcessSaleDTO::fromRequest($validated);
+        $dto = \App\DTOs\ProcessSaleDTO::fromArray($validated);
         $context = \App\DTOs\SaleContextDTO::fromArray(
             $validated, 
             $request->user()?->id ?? $request->attributes->get('authenticated_user')?->id

@@ -14,7 +14,7 @@ class PaySaleDTO
         public readonly ?array $checkDetails
     ) {}
 
-    public static function fromRequest(array $validated): self
+    public static function fromArray(array $validated): self
     {
         return new self(
             payments: $validated['payments'] ?? [],

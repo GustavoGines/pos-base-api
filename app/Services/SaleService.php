@@ -109,12 +109,10 @@ class SaleService
 
             // Order Recall Items Delta
             if (!empty($dto->items)) {
-                $this->stockService->reconcileStockDiff($dto->items, $lockedSale, $context);
+                $lockedProducts = $this->stockService->reconcileStockDiff($dto->items, $lockedSale, $context);
 
                 $lockedSale->items()->delete();
                 
-                $productIds = array_column($dto->items, 'product_id');
-                $lockedProducts = $this->stockService->lockProducts($productIds);
                 $this->processItems($lockedSale, $dto->items, $lockedProducts, $context);
                 
                 // Recalculate Totals based on new items

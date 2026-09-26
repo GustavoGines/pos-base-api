@@ -16,7 +16,15 @@ class StockService
      */
     public function lockProducts(array $productIds): \Illuminate\Database\Eloquent\Collection
     {
-        $uniqueIds = array_unique($productIds);
+        if (DB::transactionLevel() === 0) {
+            throw new \RuntimeException('lockProducts debe ser llamado dentro de una transacción activa para garantizar el Anti-Deadlock.');
+        }
+
+        $uniqueIds = array_unique(array_filter($productIds));
+        
+        if (empty($uniqueIds)) {
+            return new \Illuminate\Database\Eloquent\Collection();
+        }
         
         $childIds = DB::table('product_combos')
             ->whereIn('parent_product_id', $uniqueIds)
@@ -24,10 +32,11 @@ class StockService
             ->toArray();
             
         $allIds = array_unique(array_merge($uniqueIds, $childIds));
-        sort($allIds); // Anti-Deadlock
 
+        // Bloqueo Pesimista REAL: Delegamos a la DB el orden (orderBy) para evitar Deadlocks Circulares
         return Product::whereIn('id', $allIds)
             ->with('children')
+            ->orderBy('id', 'asc')
             ->lockForUpdate()
             ->get()
             ->keyBy('id');
@@ -50,26 +59,31 @@ class StockService
             $product = $products[$itemData['product_id']];
             $qty = (float) $itemData['quantity'];
             
-            $this->deductProductStock($product, $qty, $sale, $context, false);
+            $this->deductProductStock($product, $qty, $sale, $context, false, $products);
         }
     }
 
     /**
      * Deduct stock mathematically for a specific product (Combo-aware)
      */
-    protected function deductProductStock(Product $product, float $qty, Sale $sale, SaleContextDTO $context, bool $isAdjustment): void
+    protected function deductProductStock(Product $product, float $qty, Sale $sale, SaleContextDTO $context, bool $isAdjustment, \Illuminate\Database\Eloquent\Collection $products): void
     {
         if ($product->is_combo) {
             foreach ($product->children as $child) {
                 $qtyDeducted = $qty * $child->pivot->quantity;
-                $child->stock -= $qtyDeducted;
-                $child->save(); // Dispara Observers
+                
+                // CRITICAL FIX: Use canonical instance from the root $products collection 
+                // to prevent in-memory race conditions if the same product is processed twice.
+                $canonicalChild = $products[$child->id] ?? $child;
+                $canonicalChild->stock -= $qtyDeducted;
+                $canonicalChild->save(); // Dispara Observers
 
-                $this->logMovement($child->id, -$qtyDeducted, 'sale', 
+                $this->logMovement($canonicalChild->id, -$qtyDeducted, 'sale', 
                     ($isAdjustment ? "Ajuste Recall " : "Venta ") . "Ticket #{$sale->id} (Hijo de: {$product->name})", 
                     $context, $sale);
             }
         } else {
+            // Update the canonical product (which $product already is, as it comes from $products)
             $product->stock -= $qty;
             $this->logMovement($product->id, -$qty, 'sale', 
                 ($isAdjustment ? "Ajuste Recall " : "Venta ") . "Ticket #{$sale->id}", 
@@ -90,7 +104,7 @@ class StockService
     /**
      * Exact math for Order Recall (modifying pending tickets).
      */
-    public function reconcileStockDiff(array $newItems, Sale $sale, SaleContextDTO $context): void
+    public function reconcileStockDiff(array $newItems, Sale $sale, SaleContextDTO $context): \Illuminate\Database\Eloquent\Collection
     {
         $originalQuantities = [];
         foreach ($sale->items as $oldItem) {
@@ -113,9 +127,11 @@ class StockService
             
             if ($diff != 0 && isset($products[$productId])) {
                 $product = $products[$productId];
-                $this->deductProductStock($product, $diff, $sale, $context, true);
+                $this->deductProductStock($product, $diff, $sale, $context, true, $products);
             }
         }
+
+        return $products;
     }
 
     /**
@@ -135,12 +151,12 @@ class StockService
 
             if ($deliveryNote) {
                 // Si hay remito, solo devolvemos lo que ya fue entregado
-                $dnItem = $deliveryNote->items->where('product_id', $item->product_id)->first();
+                $dnItem = $deliveryNote->items->firstWhere('product_id', $item->product_id);
                 $qtyToRestore = $dnItem ? (float) $dnItem->quantity_delivered : 0.0;
             }
 
             if ($qtyToRestore > 0) {
-                $this->addStockBack($product, $qtyToRestore, $sale, $context);
+                $this->addStockBack($product, $qtyToRestore, $sale, $context, $products);
             }
 
             // Restauración segura de popularidad (GREATEST logic equivalent in memory since we locked)
@@ -151,15 +167,16 @@ class StockService
         }
     }
 
-    protected function addStockBack(Product $product, float $qtyToRestore, Sale $sale, SaleContextDTO $context): void
+    protected function addStockBack(Product $product, float $qtyToRestore, Sale $sale, SaleContextDTO $context, \Illuminate\Database\Eloquent\Collection $products): void
     {
         if ($product->is_combo) {
             foreach ($product->children as $child) {
                 $qtyRestored = $qtyToRestore * $child->pivot->quantity;
-                $child->stock += $qtyRestored;
-                $child->save();
+                $canonicalChild = $products[$child->id] ?? $child;
+                $canonicalChild->stock += $qtyRestored;
+                $canonicalChild->save();
 
-                $this->logMovement($child->id, $qtyRestored, 'in', "Reversión (Combo Hijo) Venta #{$sale->id}", $context, $sale);
+                $this->logMovement($canonicalChild->id, $qtyRestored, 'in', "Reversión (Combo Hijo) Venta #{$sale->id}", $context, $sale);
             }
         } else {
             $product->stock += $qtyToRestore;

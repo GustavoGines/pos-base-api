@@ -18,7 +18,7 @@ class ProcessSaleDTO
         public readonly string $fulfillmentStatus
     ) {}
 
-    public static function fromRequest(array $validated): self
+    public static function fromArray(array $validated): self
     {
         return new self(
             total: (float) $validated['total'],

@@ -103,7 +103,7 @@ class SalesController extends Controller
     {
         $validated = $request->validated();
 
-        $dto = \App\DTOs\PaySaleDTO::fromRequest($validated);
+        $dto = \App\DTOs\PaySaleDTO::fromArray($validated);
         $context = \App\DTOs\SaleContextDTO::fromArray(
             $validated, 
             $request->user()?->id ?? $request->attributes->get('authenticated_user')?->id
