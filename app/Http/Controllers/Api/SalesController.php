@@ -99,26 +99,9 @@ class SalesController extends Controller
      * PUT /api/sales/{sale}/pay
      * Cobra una venta en espera: cambia status a 'completed' y registra el pago.
      */
-    public function pay(Request $request, Sale $sale)
+    public function pay(\App\Http\Requests\PaySaleRequest $request, Sale $sale)
     {
-        $validated = $request->validate([
-            'payments'               => 'required|array|min:1',
-            'payments.*.payment_method_id' => 'required|integer|exists:payment_methods,id',
-            'payments.*.base_amount'      => 'required|numeric|min:0',
-            'payments.*.surcharge_amount' => 'required|numeric|min:0',
-            'payments.*.total_amount'     => 'required|numeric|min:0',
-            'total_surcharge'        => 'required|numeric|min:0',
-            'shipping_cost'          => 'nullable|numeric|min:0',
-            'tendered_amount'        => 'nullable|numeric|min:0',
-            'change_amount'          => 'nullable|numeric',
-            'items'                  => 'nullable|array',
-            'items.*.product_id'     => 'required_with:items|integer|exists:products,id',
-            'items.*.quantity'       => 'required_with:items|numeric|min:0.001',
-            'items.*.unit_price'     => 'required_with:items|numeric',
-            'items.*.subtotal'       => 'required_with:items|numeric',
-            'user_id'                => 'nullable|integer|exists:users,id',
-            'cash_shift_id'          => 'nullable|integer|exists:cash_shifts,id',
-        ]);
+        $validated = $request->validated();
 
         $response = DB::transaction(function () use ($validated, $sale, $request) {
             // Recargar el modelo bloqueando la fila para evitar cobros dobles simultáneos (Multi-Caja)
@@ -304,9 +287,10 @@ class SalesController extends Controller
      * POST /api/sales/{sale}/void
      * Anula una venta: devuelve stock a cada producto y registra movimiento de reversión.
      */
-    public function void(Request $request, Sale $sale)
+    public function void(\App\Http\Requests\VoidSaleRequest $request, Sale $sale)
     {
-        $userId = $request->input('user_id') ?? $request->attributes->get('authenticated_user')?->id;
+        $validated = $request->validated();
+        $userId = $validated['user_id'] ?? $request->attributes->get('authenticated_user')?->id;
 
         $response = DB::transaction(function () use ($sale, $userId) {
             $lockedSale = Sale::lockForUpdate()->find($sale->id);
