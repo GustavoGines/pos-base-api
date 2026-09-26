@@ -114,14 +114,9 @@ class ProductController extends Controller
         return response()->json($product->load(['category', 'brand', 'supplier', 'children', 'priceTiers']));
     }
 
-    public function adjustStock(Request $request, Product $product)
+    public function adjustStock(\App\Http\Requests\AdjustStockRequest $request, Product $product)
     {
-        $validated = $request->validate([
-            'type' => 'required|in:increment,decrement',
-            'quantity' => 'required|numeric|min:0.001',
-            'notes' => 'nullable|string|max:255',
-            'min_stock' => 'nullable|numeric|min:0',
-        ]);
+        $validated = $request->validated();
 
         if ($validated['type'] === 'increment') {
             $product->increment('stock', $validated['quantity']);
