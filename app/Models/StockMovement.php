@@ -10,7 +10,7 @@ class StockMovement extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['product_id', 'user_id', 'type', 'quantity', 'notes', 'supplier_invoice_id'];
+    protected $fillable = ['product_id', 'user_id', 'type', 'quantity', 'notes', 'supplier_invoice_id', 'cash_shift_id', 'sale_id'];
 
     protected $casts = [
         'quantity' => 'decimal:3',

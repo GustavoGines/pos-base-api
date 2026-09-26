@@ -17,12 +17,17 @@ class StockService
     public function lockProducts(array $productIds): \Illuminate\Database\Eloquent\Collection
     {
         $uniqueIds = array_unique($productIds);
-        sort($uniqueIds); // Anti-Deadlock
+        
+        $childIds = DB::table('product_combos')
+            ->whereIn('parent_product_id', $uniqueIds)
+            ->pluck('child_product_id')
+            ->toArray();
+            
+        $allIds = array_unique(array_merge($uniqueIds, $childIds));
+        sort($allIds); // Anti-Deadlock
 
-        return Product::whereIn('id', $uniqueIds)
-            ->with(['combos.childProduct' => function($query) {
-                $query->lockForUpdate();
-            }])
+        return Product::whereIn('id', $allIds)
+            ->with('combos.childProduct')
             ->lockForUpdate()
             ->get()
             ->keyBy('id');
@@ -64,14 +69,14 @@ class StockService
 
                     $this->logMovement($child->id, -$qtyDeducted, 'sale', 
                         ($isAdjustment ? "Ajuste Recall " : "Venta ") . "Ticket #{$sale->id} (Hijo de: {$product->name})", 
-                        $context);
+                        $context, $sale);
                 }
             }
         } else {
             $product->stock -= $qty;
             $this->logMovement($product->id, -$qty, 'sale', 
                 ($isAdjustment ? "Ajuste Recall " : "Venta ") . "Ticket #{$sale->id}", 
-                $context);
+                $context, $sale);
         }
 
         if (!$context->isInternalAccount) {
@@ -101,15 +106,8 @@ class StockService
         }
 
         $allProductIds = array_unique(array_merge(array_keys($originalQuantities), array_keys($newQuantities)));
-        sort($allProductIds); // Anti-Deadlock
         
-        $products = Product::whereIn('id', $allProductIds)
-            ->with(['combos.childProduct' => function($query) {
-                $query->lockForUpdate();
-            }])
-            ->lockForUpdate()
-            ->get()
-            ->keyBy('id');
+        $products = $this->lockProducts($allProductIds);
 
         foreach ($allProductIds as $productId) {
             $oldQty = $originalQuantities[$productId] ?? 0;
@@ -129,15 +127,8 @@ class StockService
     public function restoreStockForVoid(Sale $sale, SaleContextDTO $context, ?DeliveryNote $deliveryNote): void
     {
         $productIds = $sale->items->pluck('product_id')->unique()->toArray();
-        sort($productIds); // Anti-Deadlock
-
-        $products = Product::whereIn('id', $productIds)
-            ->with(['combos.childProduct' => function($query) {
-                $query->lockForUpdate();
-            }])
-            ->lockForUpdate()
-            ->get()
-            ->keyBy('id');
+        
+        $products = $this->lockProducts($productIds);
 
         foreach ($sale->items as $item) {
             if (!isset($products[$item->product_id])) continue;
@@ -173,14 +164,14 @@ class StockService
                     $child->stock += $qtyRestored;
                     $child->save();
 
-                    $this->logMovement($child->id, $qtyRestored, 'in', "Reversión (Combo Hijo) Venta #{$sale->id}", $context);
+                    $this->logMovement($child->id, $qtyRestored, 'in', "Reversión (Combo Hijo) Venta #{$sale->id}", $context, $sale);
                 }
             }
         } else {
             $product->stock += $qtyToRestore;
             $product->save();
 
-            $this->logMovement($product->id, $qtyToRestore, 'in', "Reversión por anulación de Venta #{$sale->id}", $context);
+            $this->logMovement($product->id, $qtyToRestore, 'in', "Reversión por anulación de Venta #{$sale->id}", $context, $sale);
         }
     }
 
@@ -191,11 +182,9 @@ class StockService
     {
         if ($product->is_combo) {
             $currentCostPrice = 0.0;
-            $combos = DB::table('product_combos')->where('parent_product_id', $product->id)->get();
-            foreach ($combos as $c) {
-                $childProd = Product::find($c->child_product_id);
-                if ($childProd) {
-                    $currentCostPrice += ((float)$childProd->cost_price * $c->quantity);
+            foreach ($product->combos as $combo) {
+                if ($combo->childProduct) {
+                    $currentCostPrice += ((float)$combo->childProduct->cost_price * $combo->quantity);
                 }
             }
             return $currentCostPrice;
@@ -204,12 +193,13 @@ class StockService
         return (float) $product->cost_price;
     }
 
-    protected function logMovement(int $productId, float $quantity, string $type, string $notes, SaleContextDTO $context): void
+    protected function logMovement(int $productId, float $quantity, string $type, string $notes, SaleContextDTO $context, ?Sale $sale = null): void
     {
         StockMovement::create([
             'product_id'    => $productId,
             'user_id'       => $context->userId ?? 1,
             'cash_shift_id' => $context->cashShiftId,
+            'sale_id'       => $sale?->id,
             'type'          => $type,
             'quantity'      => $quantity,
             'notes'         => $notes,
