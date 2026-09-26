@@ -43,47 +43,12 @@ Route::get('/settings', [SettingController::class, 'index']);
 Route::post('/settings/license', [SettingController::class, 'updateLicense']);
 Route::post('/settings/license/sync', [SettingController::class, 'syncLicense']);
 
+use App\Http\Controllers\Api\SystemController;
+
 // Endpoint de rescate de migraciones OTA (silencioso)
-// Ruta para consultar donde esta instalado fisicamente el servidor
-Route::get('/system/install-path', function () {
-    return response()->json([
-        'backend_path' => base_path(),
-        'base_path' => dirname(base_path())
-    ]);
-});
-
-// Protegido por token secreto si RESCUE_MIGRATE_SECRET está definido en .env.
-// Si no está definido (instalaciones antiguas), funciona sin autenticación
-// para garantizar retrocompatibilidad con clientes en producción.
-Route::get('/system/rescue-migrate', function (\Illuminate\Http\Request $request) {
-    $secret = config('app.rescue_migrate_secret');
-
-    // Solo exigir token si el secreto está configurado en .env.
-    // Instalaciones antiguas (sin RESCUE_MIGRATE_SECRET) continúan funcionando.
-    if (!empty($secret)) {
-        $token = $request->header('X-Rescue-Token');
-        if ($token !== $secret) {
-            return response()->json(['error' => 'Unauthorized'], 403);
-        }
-    }
-
-    \Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
-    return response()->json(['success' => true, 'output' => \Illuminate\Support\Facades\Artisan::output()]);
-});
-
-// Endpoint para que el Frontend verifique la versión local real del backend
-Route::get('/version-check', function () {
-    $path = public_path('version.txt');
-    clearstatcache(true, $path);
-    $version = '0.0.0';
-    if (file_exists($path)) {
-        $version = trim(file_get_contents($path));
-    }
-    return response()->json(['version' => $version])
-        ->header('Cache-Control', 'no-cache, no-store, must-revalidate')
-        ->header('Pragma', 'no-cache')
-        ->header('Expires', '0');
-});
+Route::get('/system/install-path', [SystemController::class, 'installPath']);
+Route::get('/system/rescue-migrate', [SystemController::class, 'rescueMigrate']);
+Route::get('/version-check', [SystemController::class, 'versionCheck']);
 
 // Verificación de turno activo (necesaria antes del login para decidir ruta inicial)
 Route::prefix('shifts')->group(function () {
@@ -252,22 +217,6 @@ Route::middleware(['session.validate'])->group(function () {
         Route::put('/{id}/deliver', [DeliveryNoteController::class, 'updateDelivery']);
     });
     // Mobile Scanner Module
-    Route::post('/mobile/scan', function (\Illuminate\Http\Request $request) {
-        $request->validate(['barcode' => 'required|string']);
-        try {
-            broadcast(new \App\Events\MobileScanned($request->barcode, $request->target_pc ?? 'caja-1'));
-            return response()->json(['status' => 'Scanned event sent']);
-        } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::error('Broadcast error in /mobile/scan: ' . $e->getMessage());
-            // Return 200 so the mobile app doesn't crash, but return the error in the body
-            return response()->json(['status' => 'Event queued, but Reverb might be down', 'error' => $e->getMessage()]);
-        }
-    });
-
-    // Mobile Print Label Module
-    Route::post('/mobile/print-label', function (\Illuminate\Http\Request $request) {
-        $request->validate(['product_id' => 'required|integer']);
-        broadcast(new \App\Events\PrintLabelRequested($request->product_id, $request->target_pc ?? 'caja-1'));
-        return response()->json(['status' => 'Print label event sent']);
-    });
+    Route::post('/mobile/scan', [\App\Http\Controllers\Api\MobileScannerController::class, 'scan']);
+    Route::post('/mobile/print-label', [\App\Http\Controllers\Api\MobileScannerController::class, 'printLabel']);
 });
