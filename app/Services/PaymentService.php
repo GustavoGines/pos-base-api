@@ -34,8 +34,11 @@ class PaymentService
      */
     public function registerPayments(Sale $sale, array $payments, ?array $checkDetails, SaleContextDTO $context): void
     {
+        $paymentMethodIds = array_column($payments, 'payment_method_id');
+        $paymentMethods = PaymentMethod::whereIn('id', $paymentMethodIds)->get()->keyBy('id');
+
         foreach ($payments as $payment) {
-            $paymentMethod = PaymentMethod::find($payment['payment_method_id']);
+            $paymentMethod = $paymentMethods->get($payment['payment_method_id']);
 
             $sale->payments()->create([
                 'payment_method_id' => $payment['payment_method_id'],

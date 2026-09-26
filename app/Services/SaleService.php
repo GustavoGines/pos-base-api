@@ -25,8 +25,11 @@ class SaleService
             $isCuentaCorriente = false;
 
             if (!$isPendingSale && !empty($dto->payments)) {
-                $ccPaymentTotal = collect($dto->payments)->filter(function ($p) {
-                    $method = \App\Models\PaymentMethod::find($p['payment_method_id']);
+                $paymentMethodIds = array_column($dto->payments, 'payment_method_id');
+                $paymentMethods = \App\Models\PaymentMethod::whereIn('id', $paymentMethodIds)->get()->keyBy('id');
+
+                $ccPaymentTotal = collect($dto->payments)->filter(function ($p) use ($paymentMethods) {
+                    $method = $paymentMethods->get($p['payment_method_id']);
                     return $method && $method->code === 'cuenta_corriente';
                 })->sum('total_amount');
 
