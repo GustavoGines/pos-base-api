@@ -78,11 +78,10 @@ class ProcessSaleRequest extends FormRequest
             function ($validator) {
                 $payments = $this->input('payments', []);
                 if (is_array($payments) && !empty($payments)) {
-                    $hasCuentaCorriente = collect($payments)->contains(function ($p) {
-                        if (!isset($p['payment_method_id'])) return false;
-                        $method = \App\Models\PaymentMethod::find($p['payment_method_id']);
-                        return $method && $method->code === 'cuenta_corriente';
-                    });
+                    $paymentMethodIds = collect($payments)->pluck('payment_method_id')->filter()->unique();
+                    $hasCuentaCorriente = \App\Models\PaymentMethod::whereIn('id', $paymentMethodIds)
+                        ->where('code', 'cuenta_corriente')
+                        ->exists();
 
                     if ($hasCuentaCorriente && empty($this->input('customer_id'))) {
                         $validator->errors()->add('customer_id', 'Debe seleccionar un cliente para ventas en Cuenta Corriente.');

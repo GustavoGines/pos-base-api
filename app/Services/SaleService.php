@@ -98,7 +98,7 @@ class SaleService
     public function payPendingSale(Sale $sale, PaySaleDTO $dto, SaleContextDTO $context): Sale
     {
         return DB::transaction(function () use ($sale, $dto, $context) {
-            $lockedSale = Sale::lockForUpdate()->find($sale->id);
+            $lockedSale = Sale::with('items')->lockForUpdate()->find($sale->id);
 
             if ($lockedSale->status !== 'pending') {
                 throw new \InvalidArgumentException('Esta venta ya no está en estado pendiente.');
@@ -138,6 +138,10 @@ class SaleService
             }
 
             if ($isCuentaCorriente) {
+                $context->customerId = $context->customerId ?? $lockedSale->customer_id;
+                if (!$context->customerId) {
+                    throw new \InvalidArgumentException('Debe asociar un cliente a la venta para pagar con Cuenta Corriente.');
+                }
                 $this->paymentService->registerCustomerCharge($lockedSale, $ccPaymentTotal, $context);
             }
 

@@ -20,7 +20,12 @@ class VoidSaleRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'user_id' => 'nullable|integer|exists:users,id',
+            'user_id'       => 'nullable|integer|exists:users,id',
+            'cash_shift_id' => [
+                'required',
+                'integer',
+                \Illuminate\Validation\Rule::exists('cash_shifts', 'id')->where('status', 'open'),
+            ],
         ];
     }
 }

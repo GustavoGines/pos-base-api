@@ -18,13 +18,15 @@ class PaymentService
     {
         $sumPayments = 0;
         foreach ($payments as $payment) {
-            if (abs($payment['base_amount'] + $payment['surcharge_amount'] - $payment['total_amount']) > 0.01) {
+            $calcTotal = round($payment['base_amount'] + $payment['surcharge_amount'], 2);
+            $payTotal = round($payment['total_amount'], 2);
+            if ($calcTotal !== $payTotal) {
                 throw new \InvalidArgumentException('Inconsistencia en el pago: base + recargo no coinciden con el total.');
             }
             $sumPayments += $payment['total_amount'];
         }
         
-        if ($sumPayments < $expectedTotal - 0.1) {
+        if (round($sumPayments, 2) < round($expectedTotal, 2)) {
             throw new \InvalidArgumentException('El monto de los pagos enviados ('. $sumPayments .') no cubre el total esperado de la venta ('. $expectedTotal .').');
         }
     }
@@ -36,6 +38,9 @@ class PaymentService
     {
         $paymentMethodIds = array_column($payments, 'payment_method_id');
         $paymentMethods = PaymentMethod::whereIn('id', $paymentMethodIds)->get()->keyBy('id');
+
+        $isMultiCheck = !empty($checkDetails) && isset($checkDetails[0]) && is_array($checkDetails[0]);
+        $checkDetailsUsed = false;
 
         foreach ($payments as $payment) {
             $paymentMethod = $paymentMethods->get($payment['payment_method_id']);
@@ -49,20 +54,29 @@ class PaymentService
 
             // Bridge de Cheque
             if ($paymentMethod && $paymentMethod->code === 'cheque' && !empty($checkDetails)) {
-                ThirdPartyCheck::create([
-                    'bank_name'    => $checkDetails['bank_name'],
-                    'check_number' => $checkDetails['check_number'],
-                    'amount'       => $payment['total_amount'],
-                    'issue_date'   => $checkDetails['issue_date'],
-                    'payment_date' => $checkDetails['payment_date'],
-                    'issuer_name'  => $checkDetails['issuer_name'],
-                    'issuer_cuit'  => $checkDetails['issuer_cuit'] ?? null,
-                    'customer_id'  => $context->customerId,
-                    'sale_id'      => $sale->id,
-                    'cash_shift_id'=> $context->cashShiftId,
-                    'supplier_id'  => null,
-                    'status'       => 'in_wallet',
-                ]);
+                $currentCheck = $isMultiCheck ? array_shift($checkDetails) : $checkDetails;
+                
+                if (!$isMultiCheck && $checkDetailsUsed) {
+                    throw new \InvalidArgumentException('Se enviaron múltiples pagos con cheque pero solo un detalle de cheque.');
+                }
+                $checkDetailsUsed = true;
+                
+                if ($currentCheck) {
+                    ThirdPartyCheck::create([
+                        'bank_name'    => $currentCheck['bank_name'],
+                        'check_number' => $currentCheck['check_number'],
+                        'amount'       => $payment['total_amount'],
+                        'issue_date'   => $currentCheck['issue_date'],
+                        'payment_date' => $currentCheck['payment_date'],
+                        'issuer_name'  => $currentCheck['issuer_name'],
+                        'issuer_cuit'  => $currentCheck['issuer_cuit'] ?? null,
+                        'customer_id'  => $context->customerId,
+                        'sale_id'      => $sale->id,
+                        'cash_shift_id'=> $context->cashShiftId,
+                        'supplier_id'  => null,
+                        'status'       => 'in_wallet',
+                    ]);
+                }
             }
         }
     }
