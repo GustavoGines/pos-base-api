@@ -82,7 +82,7 @@ class SalesAnalyticsRepository
                     return [
                         'product_id' => $prod->product_id,
                         'product_name' => $prod->product_name,
-                        'items_sold' => (int) $prod->items_sold,
+                        'items_sold' => (float) $prod->items_sold,
                         'total_revenue' => (float) $prod->total_revenue,
                         'total_profit' => (float) $prod->total_profit,
                         'revenue_with_cost' => (float) $prod->revenue_with_cost,

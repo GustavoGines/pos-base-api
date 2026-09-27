@@ -24,8 +24,8 @@ return new class extends Migration
             return;
         }
 
-        Artisan::call('optimize:clear');
-        Artisan::call('optimize');
+        // Artisan::call('optimize:clear');
+        // Artisan::call('optimize');
     }
 
     /**

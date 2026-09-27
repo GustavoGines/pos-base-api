@@ -57,7 +57,7 @@ class ProfitByCategoryExport implements FromCollection, ShouldAutoSize, WithColu
 
         return [
             $data['category_name'] ?? '',
-            (int) ($data['items_sold'] ?? 0),
+            (float) ($data['items_sold'] ?? 0),
             (float) ($data['total_revenue'] ?? 0),
             (float) ($data['total_profit'] ?? 0),
             $margin,

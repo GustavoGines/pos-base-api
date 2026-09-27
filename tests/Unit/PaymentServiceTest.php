@@ -49,7 +49,7 @@ class PaymentServiceTest extends TestCase
 
         // No debe arrojar excepción
         $this->paymentService->validatePaymentsTotal($payments, 200.00);
-        $this->assertTrue(true);
+        $this->expectNotToPerformAssertions();
     }
 
     /**
@@ -71,7 +71,7 @@ class PaymentServiceTest extends TestCase
         ];
 
         $this->paymentService->validatePaymentsTotal($payments, 215.00);
-        $this->assertTrue(true);
+        $this->expectNotToPerformAssertions();
     }
 
     /**
