@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Product;
 use App\Models\StockMovement;
+use App\Http\Requests\AdjustStockRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -16,15 +17,9 @@ class StockController extends Controller
      * POST /api/catalog/products/{product}/adjust-stock
      * Body: { "type": "in"|"out", "quantity": 5.5, "notes": "Compra proveedor X" }
      */
-    public function adjust(Request $request, Product $product)
+    public function adjust(AdjustStockRequest $request, Product $product)
     {
-        $validated = $request->validate([
-            'type'      => 'required|in:in,out,increment,decrement',
-            'quantity'  => 'required|numeric|min:0',
-            'notes'     => 'nullable|string|max:500',
-            'min_stock' => 'nullable|numeric|min:0',
-            'user_id'   => 'nullable|exists:users,id',
-        ]);
+        $validated = $request->validated();
 
         DB::transaction(function () use ($validated, $product, $request) {
             // Solo registramos movimiento si la cantidad es realmente mayor a cero

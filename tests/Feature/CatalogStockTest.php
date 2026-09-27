@@ -159,6 +159,46 @@ class CatalogStockTest extends TestCase
         ]);
     }
 
+    public function test_ST06_adjust_stock_request_validates_in_out_and_rejects_invalid_types(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $product = Product::create([
+            'name'          => 'Prod Validacion',
+            'internal_code' => 'VAL01',
+            'selling_price' => 50,
+            'cost_price'    => 20,
+            'stock'         => 30,
+        ]);
+
+        $this->actingAsAdmin($admin);
+
+        // 1. Tipo 'in' válido
+        $resIn = $this->postJson("/api/catalog/products/{$product->id}/adjust-stock", [
+            'type'      => 'in',
+            'quantity'  => 5,
+            'notes'     => 'Ajuste in válido',
+            'min_stock' => 10,
+        ]);
+        $resIn->assertStatus(200);
+        $this->assertEquals(35, (float) $product->fresh()->stock);
+
+        // 2. Tipo 'out' válido
+        $resOut = $this->postJson("/api/catalog/products/{$product->id}/adjust-stock", [
+            'type'     => 'out',
+            'quantity' => 15,
+        ]);
+        $resOut->assertStatus(200);
+        $this->assertEquals(20, (float) $product->fresh()->stock);
+
+        // 3. Tipo inválido rechazado con 422 por FormRequest
+        $resInvalid = $this->postJson("/api/catalog/products/{$product->id}/adjust-stock", [
+            'type'     => 'invalid_type',
+            'quantity' => 5,
+        ]);
+        $resInvalid->assertStatus(422)
+                   ->assertJsonValidationErrors(['type']);
+    }
+
     // ── ST-07: Alerta de Stock Crítico ────────────────────────────────────────
 
     public function test_ST07_alertas_muestra_productos_bajo_stock_min(): void

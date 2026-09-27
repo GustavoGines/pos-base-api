@@ -197,4 +197,21 @@ class AuthTest extends TestCase
         $response->assertStatus(200);
         $this->assertNull($user->fresh()->session_token);
     }
+
+    // ── A-12: ValidateSessionToken puebla Auth facade nativo de Laravel ───────
+    public function test_A12_validate_session_token_populates_laravel_auth_facade(): void
+    {
+        $user = User::factory()->create([
+            'role'          => 'admin',
+            'session_token' => 'test-auth-sync-token-12345',
+        ]);
+
+        $response = $this->withHeader('X-Session-Token', 'test-auth-sync-token-12345')
+                         ->getJson('/api/sales');
+
+        $response->assertStatus(200);
+        $this->assertTrue(auth()->check(), 'Auth::check() debe retornar true tras validar session token');
+        $this->assertEquals($user->id, auth()->id(), 'auth()->id() debe coincidir con el usuario del token');
+        $this->assertEquals($user->id, auth()->user()->id, 'auth()->user() debe ser el usuario autenticado');
+    }
 }

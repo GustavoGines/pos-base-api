@@ -94,4 +94,128 @@ class SalesAnalyticsRepository
             ];
         })->sortByDesc('total_revenue')->values();
     }
+
+    /**
+     * Obtiene el balance mensual financiero consolidado (excluye cuentas internas y deduce egresos).
+     *
+     * @param string|int $startMonthOrYear Año (ej. 2026) o mes inicial (ej. '2026-01')
+     * @param string|null $endMonth Mes final opcional (ej. '2026-12')
+     * @return array
+     */
+    public function getMonthlyBalance(string|int $startMonthOrYear, ?string $endMonth = null): array
+    {
+        if ($endMonth === null) {
+            if (is_int($startMonthOrYear) || (is_numeric($startMonthOrYear) && strlen((string) $startMonthOrYear) === 4)) {
+                $startMonth = "{$startMonthOrYear}-01";
+                $endMonth   = "{$startMonthOrYear}-12";
+            } else {
+                $startMonth = (string) $startMonthOrYear;
+                $endMonth   = (string) $startMonthOrYear;
+            }
+        } else {
+            $startMonth = (string) $startMonthOrYear;
+            $endMonth   = (string) $endMonth;
+        }
+
+        $startDate = Carbon::parse($startMonth . '-01')->startOfMonth();
+        $endDate   = Carbon::parse($endMonth   . '-01')->endOfMonth();
+
+        $isSqlite = DB::connection()->getDriverName() === 'sqlite';
+        $periodSql = $isSqlite ? "strftime('%Y-%m', sales.created_at)" : "DATE_FORMAT(sales.created_at, '%Y-%m')";
+
+        $rows = DB::table('sale_items')
+            ->join('sales',    'sales.id',    '=', 'sale_items.sale_id')
+            ->join('products', 'products.id', '=', 'sale_items.product_id')
+            ->where('sales.status', 'completed')
+            ->whereNotExists(function ($query) {
+                $query->select(DB::raw(1))
+                      ->from('customers')
+                      ->whereColumn('customers.id', 'sales.customer_id')
+                      ->where('customers.is_internal_account', true);
+            })
+            ->whereBetween('sales.created_at', [
+                $startDate->toDateTimeString(),
+                $endDate->toDateTimeString(),
+            ])
+            ->selectRaw("
+                {$periodSql} as period,
+                SUM(sale_items.subtotal)               as total_revenue,
+                SUM(
+                    CASE
+                        WHEN sale_items.unit_cost_price IS NOT NULL AND sale_items.unit_cost_price > 0
+                        THEN sale_items.unit_cost_price * sale_items.quantity
+                        WHEN products.cost_price IS NOT NULL AND products.cost_price > 0
+                        THEN products.cost_price * sale_items.quantity
+                        ELSE 0
+                    END
+                )                                       as total_cost,
+                SUM(
+                    CASE
+                        WHEN sale_items.unit_cost_price IS NOT NULL AND sale_items.unit_cost_price > 0
+                        THEN sale_items.subtotal - (sale_items.unit_cost_price * sale_items.quantity)
+                        WHEN products.cost_price IS NOT NULL AND products.cost_price > 0
+                        THEN sale_items.subtotal - (products.cost_price * sale_items.quantity)
+                        ELSE 0
+                    END
+                )                                       as total_profit,
+                SUM(
+                    CASE
+                        WHEN (sale_items.unit_cost_price IS NOT NULL AND sale_items.unit_cost_price > 0)
+                          OR (products.cost_price IS NOT NULL AND products.cost_price > 0)
+                        THEN sale_items.subtotal
+                        ELSE 0
+                    END
+                )                                       as revenue_with_cost,
+                COUNT(DISTINCT sales.id)               as transactions
+            ")
+            ->groupByRaw($periodSql)
+            ->orderByRaw("period ASC")
+            ->get();
+
+        $months = $rows->map(function ($row) {
+            $date = Carbon::parse($row->period . '-01');
+            
+            // Buscar gastos (expenses) para este mes
+            $expenses = DB::table('cash_movements')
+                ->where('type', 'expense')
+                ->whereNull('deleted_at')
+                ->whereBetween('created_at', [
+                    $date->copy()->startOfMonth()->toDateTimeString(),
+                    $date->copy()->endOfMonth()->toDateTimeString()
+                ])->sum('amount');
+            
+            // Restamos los gastos a la ganancia bruta para obtener la ganancia neta
+            $netProfit = $row->total_profit - $expenses;
+            
+            $marginPct    = $row->revenue_with_cost > 0
+                            ? round(($netProfit / $row->revenue_with_cost) * 100, 1)
+                            : 0.0;
+            return [
+                'period'            => $row->period,
+                'label'             => $date->translatedFormat('M Y'),
+                'total_revenue'     => round((float) $row->total_revenue, 2),
+                'total_cost'        => round((float) $row->total_cost,    2),
+                'total_profit'      => round((float) $netProfit,  2),
+                'transactions'      => (int) $row->transactions,
+                'margin_pct'        => $marginPct,
+                'revenue_with_cost' => round((float) $row->revenue_with_cost, 2),
+            ];
+        });
+
+        $grandRevenue     = $months->sum('total_revenue');
+        $grandCost        = $months->sum('total_cost');
+        $grandProfit      = $months->sum('total_profit');
+        $grandRWC         = $rows->sum('revenue_with_cost');
+        $grandMargin      = $grandRWC > 0 ? round(($grandProfit / $grandRWC) * 100, 1) : 0.0;
+
+        return [
+            'months' => $months,
+            'totals' => [
+                'total_revenue' => round($grandRevenue, 2),
+                'total_cost'    => round($grandCost,    2),
+                'total_profit'  => round($grandProfit,  2),
+                'avg_margin_pct'=> $grandMargin,
+            ]
+        ];
+    }
 }

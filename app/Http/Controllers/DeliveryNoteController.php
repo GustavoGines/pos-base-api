@@ -4,10 +4,16 @@ namespace App\Http\Controllers;
 
 use App\Models\Sale;
 use App\Models\DeliveryNote;
+use App\Models\StockMovement;
+use App\Services\StockService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class DeliveryNoteController extends Controller
 {
+    public function __construct(
+        protected StockService $stockService
+    ) {}
     public function index(Request $request)
     {
         $query = DeliveryNote::with(['sale.customer', 'items.product']);
@@ -72,76 +78,84 @@ class DeliveryNoteController extends Controller
             'items.*.delivered_now' => 'required|numeric|min:0'
         ]);
 
-        $note = DeliveryNote::with('items')->findOrFail($id);
+        return DB::transaction(function () use ($request, $id) {
+            $note = DeliveryNote::with(['items', 'sale'])->lockForUpdate()->findOrFail($id);
 
+            $alreadyDeducted = $note->sale && $note->sale->hasDeductedStock();
 
-        foreach ($request->items as $itemRequest) {
-            $item = $note->items->where('id', $itemRequest['id'])->first();
-            if ($item) {
-                // Ensure we don't deliver more than purchased
-                $newDelivered = $item->quantity_delivered + $itemRequest['delivered_now'];
-                if ($newDelivered > $item->quantity_purchased) {
-                    $newDelivered = $item->quantity_purchased;
-                }
-                $actualDeliveredNow = $newDelivered - $item->quantity_delivered;
+            $lockedProducts = null;
+            if (!$alreadyDeducted) {
+                $productIds = $note->items->pluck('product_id')->filter()->unique()->toArray();
+                $lockedProducts = $this->stockService->lockProducts($productIds);
+            }
 
-                $item->update(['quantity_delivered' => $newDelivered]);
-                
-                // Lógica de Descuento de Stock en diferido (Fase 3 Logística)
-                if ($actualDeliveredNow > 0) {
-                    $product = \App\Models\Product::find($item->product_id);
-                    if ($product) {
-                        if ($product->is_combo) {
-                            $combos = \Illuminate\Support\Facades\DB::table('product_combos')
-                                        ->where('parent_product_id', $product->id)->get();
-                            foreach ($combos as $combo) {
-                                $childProd = \App\Models\Product::find($combo->child_product_id);
-                                if ($childProd) {
-                                    $qtyDeducted = $actualDeliveredNow * $combo->quantity;
-                                    $childProd->stock -= $qtyDeducted;
-                                    $childProd->save();
+            foreach ($request->items as $itemRequest) {
+                $item = $note->items->where('id', $itemRequest['id'])->first();
+                if ($item) {
+                    // Ensure we don't deliver more than purchased
+                    $newDelivered = $item->quantity_delivered + $itemRequest['delivered_now'];
+                    if ($newDelivered > $item->quantity_purchased) {
+                        $newDelivered = $item->quantity_purchased;
+                    }
+                    $actualDeliveredNow = $newDelivered - $item->quantity_delivered;
 
-                                    \App\Models\StockMovement::create([
-                                        'product_id' => $childProd->id,
-                                        'user_id'    => $request->attributes->get('authenticated_user')?->id,
-                                        'type'       => 'sale', // o 'dispatch'
+                    $item->update(['quantity_delivered' => $newDelivered]);
+                    
+                    // Lógica de Descuento de Stock en diferido (solo si la venta origen NO dedujo stock en checkout)
+                    if (!$alreadyDeducted && $actualDeliveredNow > 0 && $lockedProducts) {
+                        $product = $lockedProducts[$item->product_id] ?? null;
+                        if ($product) {
+                            $user = $request->user() ?? $request->attributes->get('authenticated_user');
+                            $userId = $user?->id;
+
+                            if ($product->is_combo) {
+                                foreach ($product->children as $child) {
+                                    $qtyDeducted = $actualDeliveredNow * $child->pivot->quantity;
+                                    $canonicalChild = $lockedProducts[$child->id] ?? $child;
+                                    $canonicalChild->stock -= $qtyDeducted;
+                                    $canonicalChild->save();
+
+                                    StockMovement::create([
+                                        'product_id' => $canonicalChild->id,
+                                        'user_id'    => $userId,
+                                        'sale_id'    => $note->sale_id,
+                                        'type'       => 'sale',
                                         'quantity'   => -$qtyDeducted,
                                         'notes'      => "Despacho Logístico (Hijo del Combo: {$product->name}) Remito #{$note->id}"
                                     ]);
                                 }
-                            }
-                        } else {
-                            $product->stock -= $actualDeliveredNow;
-                            $product->save();
+                            } else {
+                                $product->stock -= $actualDeliveredNow;
+                                $product->save();
 
-                            \App\Models\StockMovement::create([
-                                'product_id' => $product->id,
-                                'user_id'    => $request->attributes->get('authenticated_user')?->id,
-                                'type'       => 'sale', // o 'dispatch'
-                                'quantity'   => -$actualDeliveredNow,
-                                'notes'      => "Despacho Logístico Remito #{$note->id}"
-                            ]);
+                                StockMovement::create([
+                                    'product_id' => $product->id,
+                                    'user_id'    => $userId,
+                                    'sale_id'    => $note->sale_id,
+                                    'type'       => 'sale',
+                                    'quantity'   => -$actualDeliveredNow,
+                                    'notes'      => "Despacho Logístico Remito #{$note->id}"
+                                ]);
+                            }
                         }
                     }
                 }
-
             }
-        }
 
-        // Re-evaluar el estado iterando sobre TODOS los ítems del remito, no solo los enviados en el request
-        $allDelivered = true;
-        // Recargar los ítems para asegurar que tenemos los valores actualizados
-        $note->load('items');
-        foreach ($note->items as $item) {
-            if ($item->quantity_delivered < $item->quantity_purchased) {
-                $allDelivered = false;
-                break;
+            // Re-evaluar el estado iterando sobre TODOS los ítems del remito, no solo los enviados en el request
+            $allDelivered = true;
+            $note->load('items');
+            foreach ($note->items as $item) {
+                if ($item->quantity_delivered < $item->quantity_purchased) {
+                    $allDelivered = false;
+                    break;
+                }
             }
-        }
 
-        $note->status = $allDelivered ? 'delivered' : 'partial';
-        $note->save();
+            $note->status = $allDelivered ? 'delivered' : 'partial';
+            $note->save();
 
-        return response()->json($note->load('items.product'));
+            return response()->json($note->load('items.product'));
+        });
     }
 }

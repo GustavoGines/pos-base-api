@@ -114,38 +114,6 @@ class ProductController extends Controller
         return response()->json($product->load(['category', 'brand', 'supplier', 'children', 'priceTiers']));
     }
 
-    public function adjustStock(\App\Http\Requests\AdjustStockRequest $request, Product $product)
-    {
-        $validated = $request->validated();
-
-        if ($validated['type'] === 'increment') {
-            $product->increment('stock', $validated['quantity']);
-        } else {
-            $product->decrement('stock', $validated['quantity']);
-        }
-
-        // Si se envió un nuevo stock mínimo, lo actualizamos también (UX Quick Win)
-        if (array_key_exists('min_stock', $validated)) {
-            $product->update(['min_stock' => $validated['min_stock']]);
-        }
-
-        // Registrar movimiento si existe una tabla de movimientos (opcional según arquitectura)
-        if (method_exists($product, 'stockMovements')) {
-            $product->stockMovements()->create([
-                'type' => $validated['type'],
-                'quantity' => $validated['quantity'],
-                'notes' => $validated['notes'] ?? 'Ajuste manual desde catálogo',
-                'user_id' => $request->attributes->get('authenticated_user')?->id,
-            ]);
-        }
-
-        return response()->json([
-            'message' => 'Stock actualizado con éxito',
-            'new_stock' => $product->fresh()->stock,
-            'product' => $product->fresh()->load(['category', 'brand', 'supplier']),
-        ]);
-    }
-
     public function update(UpdateProductRequest $request, Product $product, BarcodeService $barcodeService)
     {
         $validated = $request->validated();

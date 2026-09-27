@@ -106,3 +106,38 @@ Al finalizar, el equipo **NO debe realizar ningún commit en Git**. Deben dejar 
 ---
 *Next: when approved → delegate via invoke_subagent (see Delegation Protocol)*
 
+## 2026-09-27T04:06:07Z
+
+# Teamwork Project Prompt — Draft
+
+> Status: Launched
+> Goal: Craft prompt → get user approval → delegate to teamwork_preview
+> Requested team: [none — teamwork routes from the description]
+
+Implementar las correcciones de código correspondientes exclusivamente a la **Fase P2 (Alta Prioridad: Concurrencia, DRY y Precios)** detalladas en el documento `backend_tech_debt_report.md`. El objetivo es resolver condiciones de carrera en stock/cotizaciones, unificar motores de precios y exportaciones, y habilitar la autenticación nativa de Laravel.
+
+Working directory: c:\laragon\www\Sistema_POS\pos-backend
+
+## Requirements
+
+### R1. Implementación Estricta de la Fase P2
+El equipo debe leer la sección de la Fase P2 del archivo `backend_tech_debt_report.md` y escribir el código para solucionar las deudas técnicas allí listadas (como el doble descuento en remitos, el cálculo erróneo de precios unitarios, y las condiciones de carrera en los presupuestos).
+
+### R2. Validación y Arreglo de Tests
+Todas las modificaciones deben ser validadas corriendo la suite de pruebas automatizadas del proyecto (`php artisan test`). El equipo debe iterar y actualizar los tests que queden obsoletos (ej. la inyección de `AdjustStockRequest`) garantizando que la suite pase al 100% (verde).
+
+### R3. Auditoría Adversarial
+El código escrito debe ser revisado por un agente independiente para garantizar que no existan condiciones de carrera en la base de datos (deadlocks) al aplicar bloqueos en `Quotes` y `DeliveryNotes`.
+
+### R4. Gestión de Código (Unstaged)
+Al finalizar, el equipo **NO debe realizar ningún commit en Git**. Deben dejar todos los archivos modificados guardados en el disco pero sin hacer commit (unstaged), para que el usuario pueda revisarlos manualmente en su editor.
+
+## Acceptance Criteria
+
+### Integridad del Sistema
+- [ ] Todas las deudas técnicas de la Fase P2 están cerradas en el código fuente.
+- [ ] La suite completa de `php artisan test` corre sin errores.
+- [ ] El comando `git status` muestra los archivos modificados sin generar un nuevo commit en el historial.
+
+---
+*Next: when approved → delegate via invoke_subagent (see Delegation Protocol)*

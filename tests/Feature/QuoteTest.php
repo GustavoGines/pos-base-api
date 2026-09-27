@@ -382,4 +382,22 @@ class QuoteTest extends TestCase
 
         $response->assertStatus(403);
     }
+
+    // ── Q-08: nextQuoteNumber maneja secuencias de más de 4 dígitos y números altos ──
+    public function test_Q08_next_quote_number_handles_overflow_and_custom_padding(): void
+    {
+        $this->habilitarFeatureQuotes();
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        Quote::create([
+            'quote_number' => 'PRES-9999',
+            'status'       => 'pending',
+            'subtotal'     => 100,
+            'total'        => 100,
+            'user_id'      => $admin->id,
+        ]);
+
+        $next = Quote::nextQuoteNumber();
+        $this->assertEquals('PRES-10000', $next);
+    }
 }

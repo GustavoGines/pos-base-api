@@ -117,7 +117,7 @@ class SaleService
                 $this->processItems($lockedSale, $dto->items, $lockedProducts, $context);
                 
                 // Recalculate Totals based on new items
-                $newTotal = collect($dto->items)->sum('subtotal');
+                $newTotal = (float) $lockedSale->items()->sum('subtotal');
                 $lockedSale->total = $newTotal;
             }
 
@@ -150,6 +150,7 @@ class SaleService
             $lockedSale->update([
                 'status'          => 'completed',
                 'payment_status'  => $isCuentaCorriente ? ($ccPaymentTotal >= ($totalToValidate - 0.1) ? 'pending' : 'partial') : 'paid',
+                'total'           => $lockedSale->total,
                 'total_surcharge' => $dto->totalSurcharge,
                 'shipping_cost'   => $dto->shippingCost,
                 'amount_due'      => $isCuentaCorriente ? $ccPaymentTotal : 0,
@@ -204,17 +205,30 @@ class SaleService
         foreach ($items as $itemData) {
             $product = $products[$itemData['product_id']] ?? null;
             if (!$product) continue;
-            
-            $unitPrice = $product->getPriceForQuantity($itemData['quantity']) ?? $itemData['unit_price'];
+
+            $quantity = isset($itemData['quantity']) && is_numeric($itemData['quantity'])
+                ? (float) $itemData['quantity']
+                : 1.0;
+
+            $rawPrice = $itemData['unit_price'] ?? $itemData['price'] ?? null;
+            if ($rawPrice !== null && is_numeric($rawPrice)) {
+                $unitPrice = (float) $rawPrice;
+            } else {
+                $unitPrice = (float) $product->getPriceForQuantity($quantity);
+            }
+            $unitPrice = max(0.0, round($unitPrice, 2));
+
+            $subtotal = round($unitPrice * $quantity, 2);
+
             $costPrice = $this->stockService->calculateCostPrice($product);
-            
+
             $sale->items()->create([
                 'product_id'      => $product->id,
                 'product_name'    => $product->name,
-                'quantity'        => $itemData['quantity'],
+                'quantity'        => $quantity,
                 'unit_cost_price' => $costPrice,
                 'unit_price'      => $unitPrice,
-                'subtotal'        => $itemData['subtotal'],
+                'subtotal'        => $subtotal,
             ]);
         }
     }

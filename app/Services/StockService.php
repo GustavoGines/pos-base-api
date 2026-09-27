@@ -149,8 +149,8 @@ class StockService
             $product = $products[$item->product_id];
             $qtyToRestore = (float) $item->quantity;
 
-            if ($deliveryNote) {
-                // Si hay remito, solo devolvemos lo que ya fue entregado
+            if ($deliveryNote && !$sale->hasDeductedStock()) {
+                // Si el remito era diferido (stock no descontado en mostrador), solo se restituye lo efectivamente entregado
                 $dnItem = $deliveryNote->items->firstWhere('product_id', $item->product_id);
                 $qtyToRestore = $dnItem ? (float) $dnItem->quantity_delivered : 0.0;
             }

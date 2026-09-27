@@ -97,44 +97,65 @@ class QuoteController extends Controller
             throw $e;
         }
 
-        DB::beginTransaction();
-        try {
-            // Calcular totales en el servidor para evitar manipulación del cliente
-            $subtotal = collect($validated['items'])->sum(function ($item) {
-                return round($item['unit_price'] * $item['quantity'], 2);
-            });
+        $maxAttempts = 5;
+        $attempt = 0;
 
-            $quote = Quote::create([
-                'quote_number'   => Quote::nextQuoteNumber(),
-                'status'         => 'pending',
-                'subtotal'       => $subtotal,
-                'total'          => $subtotal, // Sin impuestos en esta versión MVP
-                'customer_name'  => $validated['customer_name'] ?? null,
-                'customer_phone' => $validated['customer_phone'] ?? null,
-                'notes'          => $validated['notes'] ?? null,
-                'valid_until'    => $validated['valid_until'] ?? now()->addDays(7)->toDateString(),
-                'user_id'        => $validated['user_id'] ?? null,
-                'price_list'     => $validated['price_list'] ?? 'base',
-            ]);
+        while ($attempt < $maxAttempts) {
+            $attempt++;
+            DB::beginTransaction();
+            try {
+                // Calcular totales en el servidor para evitar manipulación del cliente
+                $subtotal = collect($validated['items'])->sum(function ($item) {
+                    return round($item['unit_price'] * $item['quantity'], 2);
+                });
 
-            foreach ($validated['items'] as $item) {
-                QuoteItem::create([
-                    'quote_id'     => $quote->id,
-                    'product_id'   => $item['product_id'] ?? null,
-                    'product_name' => $item['product_name'],
-                    'unit_price'   => $item['unit_price'],
-                    'quantity'     => $item['quantity'],
-                    'subtotal'     => round($item['unit_price'] * $item['quantity'], 2),
+                $quote = Quote::create([
+                    'quote_number'   => Quote::nextQuoteNumber(),
+                    'status'         => 'pending',
+                    'subtotal'       => $subtotal,
+                    'total'          => $subtotal, // Sin impuestos en esta versión MVP
+                    'customer_name'  => $validated['customer_name'] ?? null,
+                    'customer_phone' => $validated['customer_phone'] ?? null,
+                    'notes'          => $validated['notes'] ?? null,
+                    'valid_until'    => $validated['valid_until'] ?? now()->addDays(7)->toDateString(),
+                    'user_id'        => $validated['user_id'] ?? null,
+                    'price_list'     => $validated['price_list'] ?? 'base',
                 ]);
+
+                foreach ($validated['items'] as $item) {
+                    QuoteItem::create([
+                        'quote_id'     => $quote->id,
+                        'product_id'   => $item['product_id'] ?? null,
+                        'product_name' => $item['product_name'],
+                        'unit_price'   => $item['unit_price'],
+                        'quantity'     => $item['quantity'],
+                        'subtotal'     => round($item['unit_price'] * $item['quantity'], 2),
+                    ]);
+                }
+
+                DB::commit();
+
+                return response()->json($quote->load('items'), 201);
+            } catch (\Illuminate\Database\QueryException $e) {
+                DB::rollBack();
+                $isRetryable = in_array($e->getCode(), [23000, '23000', 40001, '40001', 1213])
+                    || str_contains($e->getMessage(), 'Duplicate entry')
+                    || str_contains($e->getMessage(), 'UNIQUE constraint failed')
+                    || str_contains($e->getMessage(), 'Deadlock found')
+                    || str_contains($e->getMessage(), 'Serialization failure');
+
+                if ($isRetryable && $attempt < $maxAttempts) {
+                    usleep(random_int(10000, 30000) * $attempt);
+                    continue;
+                }
+
+                \Illuminate\Support\Facades\Log::error('Database Error in QuoteController store: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+                return response()->json(['message' => 'Error al guardar el presupuesto: ' . $e->getMessage()], 500);
+            } catch (\Throwable $e) {
+                DB::rollBack();
+                \Illuminate\Support\Facades\Log::error('Database Error in QuoteController store: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+                return response()->json(['message' => 'Error al guardar el presupuesto: ' . $e->getMessage()], 500);
             }
-
-            DB::commit();
-
-            return response()->json($quote->load('items'), 201);
-        } catch (\Throwable $e) {
-            DB::rollBack();
-            \Illuminate\Support\Facades\Log::error('Database Error in QuoteController store: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
-            return response()->json(['message' => 'Error al guardar el presupuesto: ' . $e->getMessage()], 500);
         }
     }
 

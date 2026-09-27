@@ -381,4 +381,54 @@ class PosProcessSaleTest extends TestCase
         $this->assertEquals(140.0, $product->getPriceForQuantity(100), 'En tramo 100 → $140');
         $this->assertEquals(140.0, $product->getPriceForQuantity(200), 'Más de 100 → $140');
     }
+
+    // ── V-14: Precio unitario pactado prevalece y reconcilia subtotal atómicamente ────
+
+    public function test_V14_agreed_unit_price_prevails_and_reconciles_subtotal_atomically(): void
+    {
+        $user  = User::factory()->create(['role' => 'admin']);
+        $shift = $this->crearTurnoAbierto(user: $user);
+        $cash  = $this->crearMetodoEfectivo();
+
+        $product = Product::create([
+            'name'          => 'Producto Precio Pactado',
+            'internal_code' => 'PACTA01',
+            'selling_price' => 100.00,
+            'cost_price'    => 40.00,
+            'stock'         => 20,
+            'active'        => true,
+        ]);
+
+        // Precio pactado de $75.00 con subtotal adulterado por cliente ($999.00). Total de venta $300.00 (4 * 75).
+        $payload = [
+            'total'           => 300.00,
+            'total_surcharge' => 0,
+            'cash_shift_id'   => $shift->id,
+            'user_id'         => $user->id,
+            'payments'        => [[
+                'payment_method_id' => $cash->id,
+                'base_amount'       => 300.00,
+                'surcharge_amount'  => 0,
+                'total_amount'      => 300.00,
+            ]],
+            'items' => [[
+                'product_id' => $product->id,
+                'quantity'   => 4,
+                'unit_price' => 75.00,
+                'subtotal'   => 999.00, // Subtotal adulterado que el backend debe corregir
+            ]],
+        ];
+
+        $response = $this->actingAsAdmin($user)
+            ->postJson('/api/pos/sales', $payload);
+
+        $response->assertStatus(201);
+
+        $this->assertDatabaseHas('sale_items', [
+            'product_id' => $product->id,
+            'quantity'   => 4,
+            'unit_price' => 75.00,  // Prevaleció el precio pactado
+            'subtotal'   => 300.00, // Reconciliado atómicamente: 4 * 75.00
+        ]);
+    }
 }

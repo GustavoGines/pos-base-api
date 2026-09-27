@@ -73,4 +73,15 @@ class Sale extends Model
     {
         return $this->hasMany(ThirdPartyCheck::class);
     }
+
+    /**
+     * Determina si la venta ya dedujo stock físico durante el checkout.
+     */
+    public function hasDeductedStock(): bool
+    {
+        return \App\Models\StockMovement::where('sale_id', $this->id)
+            ->where('type', 'sale')
+            ->where('notes', 'like', '%Ticket #' . $this->id . '%')
+            ->exists();
+    }
 }

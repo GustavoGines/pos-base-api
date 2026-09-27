@@ -5,6 +5,7 @@ namespace App\Http\Middleware;
 use App\Models\User;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -42,9 +43,12 @@ class ValidateSessionToken
             ], 401);
         }
 
-        // Adjuntar el usuario resuelto al request para que los controladores
-        // puedan usarlo si lo necesitan (ej: auditoría, logs)
+        // Adjuntar el usuario resuelto al request para retrocompatibilidad
         $request->attributes->set('authenticated_user', $user);
+
+        // Conectar la autenticación nativa de Laravel en el AuthManager y Request Resolver
+        Auth::setUser($user);
+        $request->setUserResolver(fn () => $user);
 
         return $next($request);
     }
