@@ -7,6 +7,7 @@ use App\Models\CashShift;
 use App\Models\PaymentMethod;
 use App\Models\User;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
 abstract class TestCase extends BaseTestCase
@@ -17,17 +18,17 @@ abstract class TestCase extends BaseTestCase
      */
     protected function actingAsAdmin(?User $user = null): static
     {
-        $token = 'test-admin-token-' . uniqid();
+        $token = 'test-admin-token-'.uniqid();
 
         if ($user === null) {
             $user = User::factory()->create([
                 'role' => 'admin',
-                'pin'  => Hash::make('1234'),
+                'pin' => Hash::make('1234'),
             ]);
         }
 
         // Escribir el token directamente en la BD para que el middleware lo encuentre
-        \Illuminate\Support\Facades\DB::table('users')
+        DB::table('users')
             ->where('id', $user->id)
             ->update(['session_token' => $token]);
 
@@ -52,10 +53,10 @@ abstract class TestCase extends BaseTestCase
 
         return CashShift::create([
             'cash_register_id' => $register->id,
-            'user_id'          => $user->id,
-            'opened_at'        => now(),
-            'opening_balance'  => $fondoInicial,
-            'status'           => 'open',
+            'user_id' => $user->id,
+            'opened_at' => now(),
+            'opening_balance' => $fondoInicial,
+            'status' => 'open',
         ]);
     }
 

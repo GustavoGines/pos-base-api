@@ -15,9 +15,9 @@ class SalePayment extends Model
     ];
 
     protected $casts = [
-        'base_amount'     => 'decimal:2',
+        'base_amount' => 'decimal:2',
         'surcharge_amount' => 'decimal:2',
-        'total_amount'    => 'decimal:2',
+        'total_amount' => 'decimal:2',
     ];
 
     public function sale(): BelongsTo

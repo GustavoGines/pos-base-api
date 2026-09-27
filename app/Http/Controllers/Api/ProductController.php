@@ -3,12 +3,13 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Product;
-use App\Models\ProductPriceTier;
-use Illuminate\Http\Request;
 use App\Http\Requests\StoreProductRequest;
 use App\Http\Requests\UpdateProductRequest;
+use App\Models\Product;
+use App\Models\ProductPriceTier;
 use App\Services\BarcodeService;
+use App\Services\InventoryAlertService;
+use Illuminate\Http\Request;
 
 class ProductController extends Controller
 {
@@ -17,17 +18,17 @@ class ProductController extends Controller
         $query = Product::with(['category', 'brand', 'supplier', 'children', 'priceTiers']);
 
         if ($search = $request->query('search')) {
-            $like = '%' . $search . '%';
-            $query->where(function ($q) use ($like, $search) {
+            $like = '%'.$search.'%';
+            $query->where(function ($q) use ($like) {
                 $q->where('products.name', 'like', $like)
-                  ->orWhere('products.barcode', 'like', $like)
-                  ->orWhere('products.internal_code', 'like', $like);
+                    ->orWhere('products.barcode', 'like', $like)
+                    ->orWhere('products.internal_code', 'like', $like);
             });
         }
 
         $allowedSorts = [
             'id', 'name', 'selling_price', 'cost_price', 'stock',
-            'barcode', 'internal_code', 'category_id', 'brand_id', 'supplier_id', 'is_sold_by_weight', 'active', 'sales_count', 'vencimiento_dias'
+            'barcode', 'internal_code', 'category_id', 'brand_id', 'supplier_id', 'is_sold_by_weight', 'active', 'sales_count', 'vencimiento_dias',
         ];
         $sortBy = $request->query('sort_by');
         $sortDir = $request->query('sort_direction') === 'desc' ? 'desc' : 'asc';
@@ -36,16 +37,16 @@ class ProductController extends Controller
             // Ordenar por nombre de la relación (no por ID numérico) para que sea intuitivo
             if ($sortBy === 'brand_id') {
                 $query->leftJoin('brands', 'brands.id', '=', 'products.brand_id')
-                      ->orderBy('brands.name', $sortDir)
-                      ->select('products.*');
+                    ->orderBy('brands.name', $sortDir)
+                    ->select('products.*');
             } elseif ($sortBy === 'category_id') {
                 $query->leftJoin('categories', 'categories.id', '=', 'products.category_id')
-                      ->orderBy('categories.name', $sortDir)
-                      ->select('products.*');
+                    ->orderBy('categories.name', $sortDir)
+                    ->select('products.*');
             } elseif ($sortBy === 'supplier_id') {
                 $query->leftJoin('suppliers', 'suppliers.id', '=', 'products.supplier_id')
-                      ->orderBy('suppliers.name', $sortDir)
-                      ->select('products.*');
+                    ->orderBy('suppliers.name', $sortDir)
+                    ->select('products.*');
             } else {
                 $column = $sortBy === 'name' ? 'products.name' : $sortBy;
                 $query->orderBy($column, $sortDir);
@@ -53,11 +54,12 @@ class ProductController extends Controller
         } else {
             // Default sorting when no specific sort is requested
             $query->orderBy('products.sales_count', 'desc')
-                  ->orderBy('products.is_sold_by_weight', 'desc')
-                  ->orderBy('products.name', 'asc');
+                ->orderBy('products.is_sold_by_weight', 'desc')
+                ->orderBy('products.name', 'asc');
         }
 
         $perPage = min((int) $request->query('per_page', 100), 500); // Cap de seguridad: máx 500
+
         return response()->json($query->paginate($perPage));
     }
 
@@ -76,8 +78,8 @@ class ProductController extends Controller
         // - Si es producto de balanza (granel), lo dejamos NULO para no interferir con códigos EAN13 de balanza.
         // - Si es por unidad, le generamos un código de barras EAN-13 Interno basado en su PLU.
         if (empty($validated['barcode'])) {
-            $validated['barcode'] = empty($request->is_sold_by_weight) 
-                ? $barcodeService->generateInternalEan13($validated['internal_code']) 
+            $validated['barcode'] = empty($request->is_sold_by_weight)
+                ? $barcodeService->generateInternalEan13($validated['internal_code'])
                 : null;
         }
 
@@ -86,14 +88,14 @@ class ProductController extends Controller
         // Auditoría: Registrar stock inicial si es mayor a 0
         if ($product->stock > 0) {
             $product->stockMovements()->create([
-                'user_id'  => $request->attributes->get('authenticated_user')?->id,
-                'type'     => 'in',
+                'user_id' => $request->attributes->get('authenticated_user')?->id,
+                'type' => 'in',
                 'quantity' => $product->stock,
-                'notes'    => 'Stock inicial (Creación de producto)',
+                'notes' => 'Stock inicial (Creación de producto)',
             ]);
         }
 
-        if (!empty($validated['is_combo']) && $request->has('combo_ingredients')) {
+        if (! empty($validated['is_combo']) && $request->has('combo_ingredients')) {
             $syncData = [];
             foreach ($request->combo_ingredients as $ingredient) {
                 $syncData[$ingredient['id']] = ['quantity' => $ingredient['quantity']];
@@ -132,46 +134,46 @@ class ProductController extends Controller
 
         // Auditoría de Stock: Guardar valor previo antes de actualizar
         $oldStock = (float) $product->stock;
-        
+
         // Si usamos add_stock, no pisamos el stock absoluto
-        if (!empty($validated['add_stock'])) {
+        if (! empty($validated['add_stock'])) {
             unset($validated['stock']);
         }
-        
+
         $product->update($validated);
 
         // Modificación aditiva (Sin race condition)
-        if (!empty($request->add_stock)) {
+        if (! empty($request->add_stock)) {
             $product->increment('stock', $request->add_stock);
-            
+
             $product->stockMovements()->create([
-                'user_id'  => $request->attributes->get('authenticated_user')?->id,
-                'type'     => 'in',
+                'user_id' => $request->attributes->get('authenticated_user')?->id,
+                'type' => 'in',
                 'quantity' => $request->add_stock,
-                'notes'    => "Ingreso rápido de mercadería (Mobile)",
+                'notes' => 'Ingreso rápido de mercadería (Mobile)',
             ]);
         }
         // Modificación absoluta (Puede tener race conditions si no se usa con cuidado)
-        else if (array_key_exists('stock', $validated) && (float) $validated['stock'] !== $oldStock) {
+        elseif (array_key_exists('stock', $validated) && (float) $validated['stock'] !== $oldStock) {
             $newStock = (float) $validated['stock'];
             $diff = $newStock - $oldStock;
-            
+
             $product->stockMovements()->create([
-                'user_id'  => $request->attributes->get('authenticated_user')?->id,
-                'type'     => $diff > 0 ? 'in' : 'out',
+                'user_id' => $request->attributes->get('authenticated_user')?->id,
+                'type' => $diff > 0 ? 'in' : 'out',
                 'quantity' => abs($diff),
-                'notes'    => "Modificación manual de ficha de producto (de $oldStock a $newStock)",
+                'notes' => "Modificación manual de ficha de producto (de $oldStock a $newStock)",
             ]);
         }
 
         if (array_key_exists('is_combo', $validated)) {
-            if (!empty($validated['is_combo']) && $request->has('combo_ingredients')) {
+            if (! empty($validated['is_combo']) && $request->has('combo_ingredients')) {
                 $syncData = [];
                 foreach ($request->combo_ingredients as $ingredient) {
                     $syncData[$ingredient['id']] = ['quantity' => $ingredient['quantity']];
                 }
                 $product->children()->sync($syncData);
-            } else if (empty($validated['is_combo'])) {
+            } elseif (empty($validated['is_combo'])) {
                 $product->children()->detach();
             }
         }
@@ -187,6 +189,7 @@ class ProductController extends Controller
     public function destroy(Product $product)
     {
         $product->delete();
+
         return response()->json(null, 204);
     }
 
@@ -214,7 +217,7 @@ class ProductController extends Controller
     {
         $ids = array_filter(
             array_map('intval', explode(',', $request->query('ids', ''))),
-            fn($id) => $id > 0
+            fn ($id) => $id > 0
         );
 
         if (empty($ids)) {
@@ -234,9 +237,9 @@ class ProductController extends Controller
     /**
      * Motor de Predicción de Quiebre de Stock (Velocidad de Venta).
      */
-    public function inventoryAlerts(\Illuminate\Http\Request $request, \App\Services\InventoryAlertService $alertService)
+    public function inventoryAlerts(Request $request, InventoryAlertService $alertService)
     {
-        $threshold  = (int) $request->query('threshold', 3);
+        $threshold = (int) $request->query('threshold', 3);
         $periodDays = 15;
 
         $data = $alertService->getPredictiveAlerts($threshold, $periodDays);
@@ -261,11 +264,11 @@ class ProductController extends Controller
         $recordsToInsert = [];
         foreach ($tiersData as $tier) {
             $recordsToInsert[] = [
-                'product_id'   => $product->id,
+                'product_id' => $product->id,
                 'min_quantity' => $tier['min_quantity'],
-                'unit_price'   => $tier['unit_price'],
-                'created_at'   => now(),
-                'updated_at'   => now(),
+                'unit_price' => $tier['unit_price'],
+                'created_at' => now(),
+                'updated_at' => now(),
             ];
         }
 

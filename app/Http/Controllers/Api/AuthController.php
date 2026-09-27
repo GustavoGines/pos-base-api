@@ -3,27 +3,18 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
 use App\Models\User;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 
 class AuthController extends Controller
 {
     /**
-     * PROTOCOLO DE RESCATE — Ghost Master PIN
-     *
-     * Hash Bcrypt del PIN maestro de soporte técnico.
-     * Generá el tuyo con: echo Hash::make('TU_PIN') en Tinker.
-     * NUNCA guardar el PIN en texto plano — solo el hash va aquí.
-     */
-    private const GHOST_MASTER_HASH = '$2y$12$rgQrlCqdMrZGc6b7ZtMMJuflM62zBN5w5H2Zmtz16Q7iO78qAs6Di';
-
-    /**
      * POST /api/auth/verify-pin
      *
      * Login completo: valida el PIN, genera un nuevo session_token UUID,
-     * lo guarda en BD (sobreescribiendo el anterior → mata la sesión vieja
+     * lo guarda en BD (sobreescribiendo el anterior -> mata la sesión vieja
      * en cualquier otra terminal), y lo devuelve al cliente.
      *
      * Este es el ÚNICO endpoint que emite tokens y que invalida sesiones previas.
@@ -38,30 +29,31 @@ class AuthController extends Controller
 
         // FIX BUG A-1: Busca usuario por PIN hasheado sin cargar todos a memoria.
         // Iteramos solo los usuarios con PIN registrado para minimizar surface de ataque.
-        $user = User::whereNotNull('pin')
+        $user = User::withoutGlobalScope('visible')
+            ->whereNotNull('pin')
             ->get()
             ->first(fn ($u) => Hash::check($pin, $u->pin));
 
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'PIN incorrecto o usuario no encontrado.'], 401);
         }
 
         // Generar token único de sesión (64 chars hex = 256 bits de entropía)
         $token = Str::random(64);
 
-        // Guardar en BD: sobrescribe la sesión anterior → Single Active Session
+        // Guardar en BD: sobrescribe la sesión anterior -> Single Active Session
         $user->update(['session_token' => $token]);
 
         return response()->json([
             'user' => [
-                'id'          => $user->id,
-                'name'        => $user->name,
-                'email'       => $user->email,
-                'role'        => $user->role,
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role' => $user->role,
                 'permissions' => $user->permissions ?? [],
             ],
-            'session_token'      => $token,
-            'requires_pin_change' => false,   // ← Login normal
+            'session_token' => $token,
+            'requires_pin_change' => false,   // <- Login normal
         ]);
     }
 
@@ -83,41 +75,25 @@ class AuthController extends Controller
 
         $pin = $request->input('pin');
 
-        // ── PROTOCOLO DE RESCATE (Master Override para autorizaciones) ────────
-        if (Hash::check($pin, self::GHOST_MASTER_HASH)) {
-            $admin = User::where('role', 'admin')->first();
-            if ($admin) {
-                return response()->json([
-                    'authorized' => true,
-                    'user' => [
-                        'id'          => $admin->id,
-                        'name'        => $admin->name,
-                        'role'        => $admin->role,
-                        'permissions' => $admin->permissions ?? [],
-                    ],
-                ]);
-            }
-        }
-        // ── FIN PROTOCOLO DE RESCATE ──────────────────────────────────────────
-
         // FIX BUG A-1: Busca solo entre usuarios con PIN registrado.
-        $user = User::whereNotNull('pin')
+        $user = User::withoutGlobalScope('visible')
+            ->whereNotNull('pin')
             ->get()
             ->first(fn ($u) => Hash::check($pin, $u->pin));
 
-        if (!$user) {
+        if (! $user || $user->role !== 'admin') {
             return response()->json([
                 'authorized' => false,
-                'message'    => 'PIN incorrecto o usuario no encontrado.',
+                'message' => 'PIN incorrecto o permisos insuficientes.',
             ], 401);
         }
 
         return response()->json([
             'authorized' => true,
             'user' => [
-                'id'          => $user->id,
-                'name'        => $user->name,
-                'role'        => $user->role,
+                'id' => $user->id,
+                'name' => $user->name,
+                'role' => $user->role,
                 'permissions' => $user->permissions ?? [],
             ],
         ]);
@@ -138,28 +114,28 @@ class AuthController extends Controller
     {
         $token = $request->header('X-Session-Token');
 
-        if (!$token) {
+        if (! $token) {
             return response()->json([
-                'message'    => 'No autenticado.',
+                'message' => 'No autenticado.',
                 'error_code' => 'SESSION_MISSING',
             ], 401);
         }
 
-        $user = User::where('session_token', $token)->first();
+        $user = User::withoutGlobalScope('visible')->where('session_token', $token)->first();
 
-        if (!$user) {
+        if (! $user) {
             return response()->json([
-                'message'    => 'Tu sesión fue cerrada porque otro dispositivo inició sesión con tu usuario.',
+                'message' => 'Tu sesión fue cerrada porque otro dispositivo inició sesión con tu usuario.',
                 'error_code' => 'SESSION_EXPIRED',
             ], 401);
         }
 
         return response()->json([
             'user' => [
-                'id'          => $user->id,
-                'name'        => $user->name,
-                'email'       => $user->email,
-                'role'        => $user->role,
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role' => $user->role,
                 'permissions' => $user->permissions ?? [],
             ],
         ]);
@@ -177,7 +153,7 @@ class AuthController extends Controller
         $token = $request->header('X-Session-Token');
 
         if ($token) {
-            User::where('session_token', $token)->update(['session_token' => null]);
+            User::withoutGlobalScope('visible')->where('session_token', $token)->update(['session_token' => null]);
         }
 
         return response()->json(['message' => 'Sesión cerrada correctamente.']);

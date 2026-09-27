@@ -4,15 +4,26 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Database\Factories\UserFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable;
+
+    /**
+     * The "booted" method of the model.
+     */
+    protected static function booted(): void
+    {
+        static::addGlobalScope('visible', function (Builder $builder) {
+            $builder->where('is_system', false);
+        });
+    }
 
     /**
      * The attributes that are mass assignable.
@@ -55,17 +66,11 @@ class User extends Authenticatable
         ];
     }
 
-    /**
-     * @return HasMany
-     */
     public function customerTransactions(): HasMany
     {
         return $this->hasMany(CustomerTransaction::class);
     }
 
-    /**
-     * @return HasMany
-     */
     public function cashShifts(): HasMany
     {
         return $this->hasMany(CashShift::class);

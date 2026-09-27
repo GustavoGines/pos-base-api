@@ -3,15 +3,18 @@
 namespace App\Services;
 
 use App\Models\BusinessSetting;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Str;
 use Carbon\Carbon;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class LicenseSyncService
 {
     private function getSetting(string $key, $default = null)
     {
         $setting = BusinessSetting::where('key', $key)->first();
+
         return $setting ? $setting->value : $default;
     }
 
@@ -32,11 +35,11 @@ class LicenseSyncService
     {
         // Mapa: alias del servidor => nombre interno del sistema (solo renombres reales)
         $aliasMap = [
-            'fast_pos'         => 'fast_pos',
+            'fast_pos' => 'fast_pos',
             'current_accounts' => 'current_accounts',
-            'multi_caja'       => 'multi_caja',
-            'quotes'           => 'quotes',
-            'z_reports'        => 'z_reports',        // Reportes Z de auditoría (cierre de turno)
+            'multi_caja' => 'multi_caja',
+            'quotes' => 'quotes',
+            'z_reports' => 'z_reports',        // Reportes Z de auditoría (cierre de turno)
             'advanced_reports' => 'advanced_reports', // Reportes Gerenciales (addon separado)
         ];
 
@@ -51,10 +54,11 @@ class LicenseSyncService
     private function getInstallationId(): string
     {
         $id = $this->getSetting('installation_id');
-        if (!$id) {
+        if (! $id) {
             $id = (string) Str::uuid();
             $this->setSetting('installation_id', $id);
         }
+
         return $id;
     }
 
@@ -70,13 +74,14 @@ class LicenseSyncService
     public function syncHeartbeat(): void
     {
         $licenseKey = $this->getSetting('license_key');
-        if (!$licenseKey) {
+        if (! $licenseKey) {
             $this->setSetting('app_plan', 'basic'); // Sin clave = básico/restringido
+
             return;
         }
 
         $installationId = $this->getInstallationId();
-        $url = $this->getServerUrl() . '/api/validate';
+        $url = $this->getServerUrl().'/api/validate';
 
         try {
             // Timeout 120s para permitir Cold Starts del server remoto
@@ -90,23 +95,23 @@ class LicenseSyncService
                 // 200 OK: Licencia válida
                 $data = $response->json();
                 $this->setSetting('app_plan', $data['plan'] ?? $data['plan_type'] ?? 'basic');
-                
+
                 // Determinar si es SaaS o Lifetime (DRM Heartbeat)
                 $planMode = $data['plan_mode'] ?? $data['plan_type'] ?? 'saas';
                 $this->setSetting('license_plan_mode', $planMode);
                 $this->setSetting('license_is_lifetime', $planMode === 'lifetime' ? '1' : '0');
-                
+
                 // [feature-flag] Tipo de negocio — persiste en BD local para que el Flutter lo lea offline
                 $this->setSetting('license_business_type', $data['business_type'] ?? 'retail');
-                
+
                 // Metadatos de suscripción extendidos
                 $this->setSetting('license_expires_at', $data['expires_at'] ?? null);
                 $this->setSetting('license_next_payment_at', $data['next_payment_at'] ?? null);
                 $this->setSetting('license_manage_url', $data['manage_url'] ?? null);
-                
+
                 // [feature-flags] Nuevo Diccionario de Características
                 $features = $data['features'] ?? [];
-                
+
                 // Failsafe local override: Si el servidor remoto de licencias es antiguo y no envía
                 // las nuevas llaves, pero el plan es Premium/Pro, forzamos la habilitación local.
                 $planLower = strtolower($data['plan'] ?? $data['plan_type'] ?? 'basic');
@@ -116,8 +121,8 @@ class LicenseSyncService
                     $features['suppliers'] = true;
                     $features['expenses'] = true;
                     $features['advanced_reports'] = true;
-                    
-                    $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store' || !empty($features['quotes']);
+
+                    $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store' || ! empty($features['quotes']);
                     if ($isHardwareStore) {
                         $features['multiple_prices'] = true;
                         $features['logistics'] = true;
@@ -126,12 +131,12 @@ class LicenseSyncService
                     }
                 }
                 $this->setSetting('license_features_dict', json_encode($features));
-                
+
                 // LIMPIEZA EXTREMA: Eliminar keys de legado de la base de datos local
                 BusinessSetting::whereIn('key', ['license_addons', 'license_allowed_addons'])->delete();
-                
+
                 $this->setSetting('last_license_check', now()->toIso8601String());
-            } else if ($response->status() === 401 || $response->status() === 403 || $response->status() === 404) {
+            } elseif ($response->status() === 401 || $response->status() === 403 || $response->status() === 404) {
                 // 401/403/404: Licencia suspendida, revocada o inválida
                 $this->setSetting('app_plan', 'blocked');
             } else {
@@ -152,12 +157,15 @@ class LicenseSyncService
         // Las licencias Lifetime nunca se bloquean por falta de conectividad.
         // Espeja la misma lógica del Flutter (_checkOfflineGrace): si es lifetime, salir.
         $planMode = $this->getSetting('license_plan_mode', 'saas');
-        if ($planMode === 'lifetime') return;
+        if ($planMode === 'lifetime') {
+            return;
+        }
 
         $lastCheck = $this->getSetting('last_license_check');
-        
-        if (!$lastCheck) {
+
+        if (! $lastCheck) {
             $this->setSetting('app_plan', 'blocked');
+
             return;
         }
 
@@ -178,12 +186,12 @@ class LicenseSyncService
     public function syncManualForce(): void
     {
         $licenseKey = $this->getSetting('license_key');
-        if (!$licenseKey) {
+        if (! $licenseKey) {
             throw new \Exception('No hay ninguna clave de licencia activa configurada para sincronizar.');
         }
 
         $installationId = $this->getInstallationId();
-        $url = $this->getServerUrl() . '/api/validate';
+        $url = $this->getServerUrl().'/api/validate';
 
         try {
             $response = Http::timeout(240)->post($url, [
@@ -195,7 +203,7 @@ class LicenseSyncService
             if ($response->successful()) {
                 $data = $response->json();
                 $this->setSetting('app_plan', $data['plan'] ?? $data['plan_type'] ?? 'basic');
-                
+
                 // ✅ FIX: Sincronizar plan_mode para que los cambios SaaS↔Lifetime
                 $planMode = $data['plan_mode'] ?? $data['plan_type'] ?? 'saas';
                 $this->setSetting('license_plan_mode', $planMode);
@@ -208,10 +216,10 @@ class LicenseSyncService
                 $this->setSetting('license_expires_at', $data['expires_at'] ?? null);
                 $this->setSetting('license_next_payment_at', $data['next_payment_at'] ?? null);
                 $this->setSetting('license_manage_url', $data['manage_url'] ?? null);
-                
+
                 // [feature-flags] Nuevo Diccionario de Características
                 $features = $data['features'] ?? [];
-                
+
                 // Failsafe local override: Si el servidor remoto de licencias es antiguo y no envía
                 // las nuevas llaves, pero el plan es Premium/Pro, forzamos la habilitación local.
                 $planLower = strtolower($data['plan'] ?? $data['plan_type'] ?? 'basic');
@@ -224,9 +232,9 @@ class LicenseSyncService
                     $features['multiple_prices'] = true;
                     $features['cheques'] = true;
                     $features['predictive_alerts'] = true;
-                    
+
                     $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store';
-                    
+
                     if ($isHardwareStore) {
                         $features['quotes'] = true;
                         $features['logistics'] = true;
@@ -241,20 +249,19 @@ class LicenseSyncService
 
                 // LIMPIEZA EXTREMA: Eliminar keys de legado
                 BusinessSetting::whereIn('key', ['license_addons', 'license_allowed_addons'])->delete();
-                
+
                 $this->setSetting('last_license_check', now()->toIso8601String());
-            } else if ($response->status() === 401 || $response->status() === 403 || $response->status() === 404) {
+            } elseif ($response->status() === 401 || $response->status() === 403 || $response->status() === 404) {
                 // Si está revocada o eliminada, actualizamos a blocked y tiramos error
                 $this->setSetting('app_plan', 'blocked');
                 throw new \Exception('La licencia ha sido suspendida, revocada o es inválida.');
             } else {
-                throw new \Exception('El servidor remoto de licencias no respondió correctamente (HTTP ' . $response->status() . ').');
+                throw new \Exception('El servidor remoto de licencias no respondió correctamente (HTTP '.$response->status().').');
             }
-        } catch (\Illuminate\Http\Client\ConnectionException $e) {
+        } catch (ConnectionException $e) {
             throw new \Exception('Error de red: No se pudo contactar al servidor de licencias. Verifique su conexión y vuelva a intentar.');
         }
     }
-
 
     /**
      * Activación manual forzada desde el Frontend de Flutter.
@@ -263,7 +270,7 @@ class LicenseSyncService
     public function activateManual(string $licenseKey): string
     {
         $installationId = $this->getInstallationId();
-        $url = $this->getServerUrl() . '/api/validate';
+        $url = $this->getServerUrl().'/api/validate';
 
         try {
             $response = Http::timeout(240)->post($url, [
@@ -275,18 +282,18 @@ class LicenseSyncService
             if ($response->successful()) {
                 $data = $response->json();
                 $plan = $data['plan'] ?? $data['plan_type'] ?? 'basic';
-                
+
                 // [feature-flags] Diccionario de Características
                 $features = $data['features'] ?? [];
-                
+
                 // Failsafe local override: Si el servidor remoto de licencias es antiguo y no envía
                 // las nuevas llaves, pero el plan es Premium/Pro, forzamos la habilitación local.
                 $planLower = strtolower($data['plan'] ?? $data['plan_type'] ?? 'basic');
                 if (in_array($planLower, ['premium', 'pro'])) {
                     $features['multi_caja'] = $features['multi_caja'] ?? true;
                     $features['advanced_reports'] = $features['advanced_reports'] ?? true;
-                    
-                    $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store' || !empty($features['quotes']);
+
+                    $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store' || ! empty($features['quotes']);
                     if ($isHardwareStore) {
                         $features['multiple_prices'] = $features['multiple_prices'] ?? true;
                         $features['logistics'] = $features['logistics'] ?? true;
@@ -298,9 +305,9 @@ class LicenseSyncService
 
                 $this->setSetting('license_key', $licenseKey);
                 $this->setSetting('app_plan', $plan);
-                
+
                 $planMode = $data['plan_mode'] ?? $data['plan_type'] ?? 'saas';
-                $this->setSetting('license_plan_mode', $planMode); 
+                $this->setSetting('license_plan_mode', $planMode);
                 $this->setSetting('license_is_lifetime', $planMode === 'lifetime' ? '1' : '0');
 
                 // [feature-flag] Tipo de negocio — se persiste en la BD local para modo offline
@@ -313,9 +320,9 @@ class LicenseSyncService
 
                 // LIMPIEZA EXTREMA: Eliminar keys de legado
                 BusinessSetting::whereIn('key', ['license_addons', 'license_allowed_addons'])->delete();
-                
+
                 $this->setSetting('last_license_check', now()->toIso8601String());
-                
+
                 return $plan;
             }
 
@@ -323,11 +330,11 @@ class LicenseSyncService
                 throw new \Exception('La clave de licencia es inválida o está en uso en otra sucursal.');
             }
 
-            file_put_contents('C:\laragon\www\error_body.html', $response->body());
-            throw new \Exception('URL: ' . $url . ' | Status: ' . $response->status() . ' | Body: ' . substr($response->body(), 0, 100));
-        } catch (\Illuminate\Http\Client\ConnectionException $e) {
-            \Illuminate\Support\Facades\Log::error('Error de red al validar licencia: ' . $e->getMessage());
-            throw new \Exception('No se pudo conectar con el servidor de licencias. Detalle: ' . $e->getMessage());
+            @file_put_contents(storage_path('logs/license_sync_error.html'), $response->body());
+            throw new \Exception('URL: '.$url.' | Status: '.$response->status().' | Body: '.substr($response->body(), 0, 100));
+        } catch (ConnectionException $e) {
+            Log::error('Error de red al validar licencia: '.$e->getMessage());
+            throw new \Exception('No se pudo conectar con el servidor de licencias. Detalle: '.$e->getMessage());
         }
     }
 }

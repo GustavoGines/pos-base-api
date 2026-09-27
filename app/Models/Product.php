@@ -4,9 +4,10 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Product extends Model
 {
@@ -16,7 +17,7 @@ class Product extends Model
         'name', 'barcode', 'internal_code', 'cost_price', 'selling_price',
         'price_wholesale', 'price_card',  // [hardware_store] Listas de Precio
         'stock', 'min_stock', 'active', 'is_combo', 'is_sold_by_weight', 'sales_count', 'vencimiento_dias',
-        'unit_type', 'category_id', 'brand_id', 'supplier_id'
+        'unit_type', 'category_id', 'brand_id', 'supplier_id',
     ];
 
     protected $casts = [
@@ -37,24 +38,22 @@ class Product extends Model
      * Relación de Recetas / Combos
      * Un producto COMBO está compuesto por múltiples ingredientes (niños).
      */
-    public function children(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    public function children(): BelongsToMany
     {
         return $this->belongsToMany(Product::class, 'product_combos', 'parent_product_id', 'child_product_id')
-                    ->withPivot('quantity')
-                    ->withTimestamps();
+            ->withPivot('quantity')
+            ->withTimestamps();
     }
 
     /**
      * Si este producto es un ingrediente, devuelve a qué Combos pertenece.
      */
-    public function combos(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    public function combos(): BelongsToMany
     {
         return $this->belongsToMany(Product::class, 'product_combos', 'child_product_id', 'parent_product_id')
-                    ->withPivot('quantity')
-                    ->withTimestamps();
+            ->withPivot('quantity')
+            ->withTimestamps();
     }
-
-
 
     public function category(): BelongsTo
     {
@@ -107,7 +106,7 @@ class Product extends Model
         }
 
         // Filtramos los tramos alcanzados y tomamos el de mayor min_quantity
-        $applicable = $tiers->filter(fn($t) => $quantity >= (float) $t->min_quantity);
+        $applicable = $tiers->filter(fn ($t) => $quantity >= (float) $t->min_quantity);
 
         return $applicable->isNotEmpty()
             ? (float) $applicable->last()->unit_price

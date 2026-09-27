@@ -1,13 +1,20 @@
 <?php
 
+use App\Http\Controllers\Api\QuoteController;
+use App\Http\Controllers\DeliveryNoteController;
+use App\Models\User;
+use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+
 /**
  * Challenger 3 Stress Worker Process
  * Executes API operations against MySQL 8.4 InnoDB under high concurrency.
  */
 
-require_once __DIR__ . '/../../vendor/autoload.php';
-$app = require_once __DIR__ . '/../../bootstrap/app.php';
-$kernel = $app->make(\Illuminate\Contracts\Console\Kernel::class);
+require_once __DIR__.'/../../vendor/autoload.php';
+$app = require_once __DIR__.'/../../bootstrap/app.php';
+$kernel = $app->make(Kernel::class);
 $kernel->bootstrap();
 
 // Ensure stress test database is used
@@ -15,9 +22,9 @@ config([
     'database.default' => 'mysql',
     'database.connections.mysql.database' => 'sistema_pos_stress_test',
 ]);
-\Illuminate\Support\Facades\DB::purge('mysql');
-\Illuminate\Support\Facades\DB::reconnect('mysql');
-\Illuminate\Support\Facades\DB::setDefaultConnection('mysql');
+DB::purge('mysql');
+DB::reconnect('mysql');
+DB::setDefaultConnection('mysql');
 
 $action = $argv[1] ?? '';
 $workerId = (int) ($argv[2] ?? 0);
@@ -33,12 +40,12 @@ if ($syncTimestamp > 0) {
 $startTime = microtime(true);
 $result = [
     'worker_id' => $workerId,
-    'action'    => $action,
-    'start_at'  => $startTime,
+    'action' => $action,
+    'start_at' => $startTime,
 ];
 
 try {
-    $user = \App\Models\User::firstOrCreate(
+    $user = User::firstOrCreate(
         ['id' => 1],
         [
             'name' => 'Admin Stress',
@@ -52,8 +59,8 @@ try {
 
     switch ($action) {
         case 'quote_store':
-            $controller = app(\App\Http\Controllers\Api\QuoteController::class);
-            $request = \Illuminate\Http\Request::create('/api/quotes', 'POST', [
+            $controller = app(QuoteController::class);
+            $request = Request::create('/api/quotes', 'POST', [
                 'customer_name' => "Cliente C3-W{$workerId}",
                 'items' => [
                     ['product_name' => "Item W{$workerId}", 'unit_price' => 15.50, 'quantity' => 2],
@@ -71,8 +78,8 @@ try {
             $itemId = (int) ($argv[5] ?? 1);
             $deliverQty = (float) ($argv[6] ?? 5);
 
-            $controller = app(\App\Http\Controllers\DeliveryNoteController::class);
-            $request = \Illuminate\Http\Request::create("/api/delivery-notes/{$dnId}/deliver", 'PUT', [
+            $controller = app(DeliveryNoteController::class);
+            $request = Request::create("/api/delivery-notes/{$dnId}/deliver", 'PUT', [
                 'items' => [
                     ['id' => $itemId, 'delivered_now' => $deliverQty],
                 ],
@@ -85,11 +92,11 @@ try {
             break;
 
         default:
-            throw new \InvalidArgumentException("Unknown worker action: {$action}");
+            throw new InvalidArgumentException("Unknown worker action: {$action}");
     }
 
     $result['success'] = true;
-} catch (\Throwable $e) {
+} catch (Throwable $e) {
     $result['success'] = false;
     $result['error_class'] = get_class($e);
     $result['error_message'] = $e->getMessage();
@@ -99,4 +106,4 @@ try {
 $result['end_at'] = microtime(true);
 $result['duration_ms'] = round(($result['end_at'] - $startTime) * 1000, 2);
 
-echo "WORKER_RESULT:" . json_encode($result) . "\n";
+echo 'WORKER_RESULT:'.json_encode($result)."\n";

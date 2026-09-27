@@ -2,9 +2,9 @@
 
 namespace Database\Seeders;
 
+use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
-use App\Models\User;
 
 class UserSeeder extends Seeder
 {
@@ -19,10 +19,10 @@ class UserSeeder extends Seeder
         User::updateOrCreate(
             ['email' => 'admin@pos.com'],
             [
-                'name'        => 'Administrador',
-                'role'        => 'admin',
-                'pin'         => Hash::make('1234'),
-                'password'    => Hash::make('admin1234'),
+                'name' => 'Administrador',
+                'role' => 'admin',
+                'pin' => Hash::make('1234'),
+                'password' => Hash::make('admin1234'),
                 'permissions' => ['void_sales', 'manage_catalog', 'adjust_stock', 'view_global_history'],
             ]
         );
@@ -32,10 +32,10 @@ class UserSeeder extends Seeder
         User::updateOrCreate(
             ['email' => 'adminmovil@pos.com'],
             [
-                'name'        => 'Admin Movil',
-                'role'        => 'admin',
-                'pin'         => Hash::make('5678'),
-                'password'    => Hash::make('adminmovil5678'),
+                'name' => 'Admin Movil',
+                'role' => 'admin',
+                'pin' => Hash::make('5678'),
+                'password' => Hash::make('adminmovil5678'),
                 'permissions' => ['void_sales', 'manage_catalog', 'adjust_stock', 'view_global_history'],
             ]
         );

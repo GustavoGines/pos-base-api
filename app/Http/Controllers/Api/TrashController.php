@@ -3,9 +3,15 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
+use App\Models\CashMovement;
+use App\Models\CashRegister;
 use App\Models\Customer;
+use App\Models\ExpenseCategory;
 use App\Models\Product;
+use App\Models\Supplier;
+use Illuminate\Database\QueryException;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class TrashController extends Controller
 {
@@ -20,9 +26,13 @@ class TrashController extends Controller
             case 'products':
                 return Product::onlyTrashed();
             case 'suppliers':
-                return \App\Models\Supplier::onlyTrashed();
+                return Supplier::onlyTrashed();
             case 'cash_movements':
-                return \App\Models\CashMovement::with(['user', 'authorizer', 'deletedBy', 'supplier', 'check'])->onlyTrashed();
+                return CashMovement::with(['user', 'authorizer', 'deletedBy', 'supplier', 'check'])->onlyTrashed();
+            case 'cash_registers':
+                return CashRegister::onlyTrashed();
+            case 'expense_categories':
+                return ExpenseCategory::onlyTrashed();
             default:
                 abort(404, 'Modelo no soportado para la papelera de reciclaje.');
         }
@@ -37,22 +47,24 @@ class TrashController extends Controller
 
         // Búsqueda simple
         if ($search = $request->query('search')) {
-            $like = '%' . $search . '%';
+            $like = '%'.$search.'%';
             $query->where(function ($q) use ($like, $model) {
                 if ($model === 'customers') {
                     $q->where('name', 'like', $like)->orWhere('document_number', 'like', $like);
                 } elseif ($model === 'products') {
                     $q->where('name', 'like', $like)
-                      ->orWhere('barcode', 'like', $like)
-                      ->orWhere('internal_code', 'like', $like);
+                        ->orWhere('barcode', 'like', $like)
+                        ->orWhere('internal_code', 'like', $like);
                 } elseif ($model === 'suppliers') {
                     $q->where('name', 'like', $like)
-                      ->orWhere('cuit', 'like', $like)
-                      ->orWhere('contact_name', 'like', $like);
+                        ->orWhere('cuit', 'like', $like)
+                        ->orWhere('contact_name', 'like', $like);
                 } elseif ($model === 'cash_movements') {
                     $q->where('category', 'like', $like)
-                      ->orWhere('description', 'like', $like)
-                      ->orWhere('receipt_number', 'like', $like);
+                        ->orWhere('description', 'like', $like)
+                        ->orWhere('receipt_number', 'like', $like);
+                } elseif ($model === 'cash_registers' || $model === 'expense_categories') {
+                    $q->where('name', 'like', $like);
                 }
             });
         }
@@ -68,19 +80,19 @@ class TrashController extends Controller
     {
         if ($model === 'cash_movements') {
             return response()->json([
-                'message' => 'Por seguridad contable, los movimientos de dinero anulados no se pueden restaurar. Debe registrar un movimiento nuevo.'
+                'message' => 'Por seguridad contable, los movimientos de dinero anulados no se pueden restaurar. Debe registrar un movimiento nuevo.',
             ], 422);
         }
 
         $item = $this->getModelQuery($model)->findOrFail($id);
 
-        \Illuminate\Support\Facades\DB::transaction(function () use ($item) {
+        DB::transaction(function () use ($item) {
             $item->restore();
         });
 
         return response()->json([
             'message' => 'Elemento restaurado exitosamente.',
-            'data' => $item
+            'data' => $item,
         ]);
     }
 
@@ -90,21 +102,23 @@ class TrashController extends Controller
     public function forceDelete($model, $id)
     {
         $item = $this->getModelQuery($model)->findOrFail($id);
-        
+
         try {
             $item->forceDelete();
+
             return response()->json([
-                'message' => 'Elemento destruido permanentemente.'
+                'message' => 'Elemento destruido permanentemente.',
             ], 200);
-        } catch (\Illuminate\Database\QueryException $e) {
+        } catch (QueryException $e) {
             if ($e->getCode() == 23000) {
                 return response()->json([
-                    'message' => 'No se puede destruir permanentemente porque tiene historial u otros registros asociados en el sistema (por ej. pagos o facturas). Manténgalo en la papelera por seguridad contable.'
+                    'message' => 'No se puede destruir permanentemente porque tiene historial u otros registros asociados en el sistema (por ej. pagos o facturas). Manténgalo en la papelera por seguridad contable.',
                 ], 422);
             }
+
             return response()->json([
                 'message' => 'Error al intentar destruir el elemento.',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }

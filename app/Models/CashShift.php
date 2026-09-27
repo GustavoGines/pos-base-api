@@ -39,28 +39,25 @@ class CashShift extends Model
     ];
 
     protected $casts = [
-        'opened_at'        => 'datetime',
-        'closed_at'        => 'datetime',
+        'opened_at' => 'datetime',
+        'closed_at' => 'datetime',
         // Casteos estrictos a decimal para precisión financiera
-        'opening_balance'  => 'decimal:2',
+        'opening_balance' => 'decimal:2',
         'expected_balance' => 'decimal:2',
-        'actual_balance'   => 'decimal:2',
-        'difference'       => 'decimal:2',
-        'cash_sales'       => 'decimal:2',
-        'card_sales'       => 'decimal:2',
-        'transfer_sales'   => 'decimal:2',
-        'total_surcharge'  => 'decimal:2',
-        'cc_sales'         => 'decimal:2',
-        'total_expenses'    => 'decimal:2',
+        'actual_balance' => 'decimal:2',
+        'difference' => 'decimal:2',
+        'cash_sales' => 'decimal:2',
+        'card_sales' => 'decimal:2',
+        'transfer_sales' => 'decimal:2',
+        'total_surcharge' => 'decimal:2',
+        'cc_sales' => 'decimal:2',
+        'total_expenses' => 'decimal:2',
         'total_withdrawals' => 'decimal:2',
-        'total_deposits'    => 'decimal:2',
+        'total_deposits' => 'decimal:2',
         'total_supplier_payments' => 'decimal:2',
-        'total_refunds'     => 'decimal:2',
+        'total_refunds' => 'decimal:2',
     ];
 
-    /**
-     * @return BelongsTo
-     */
     public function cashRegister(): BelongsTo
     {
         return $this->belongsTo(CashRegister::class);
@@ -71,17 +68,11 @@ class CashShift extends Model
         return $this->belongsTo(User::class);
     }
 
-    /**
-     * @return BelongsTo
-     */
     public function closedByUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'closed_by_user_id');
     }
 
-    /**
-     * @return HasMany
-     */
     public function sales(): HasMany
     {
         return $this->hasMany(Sale::class);
@@ -98,40 +89,40 @@ class CashShift extends Model
             return $value;
         }
 
-        $cashSales = \App\Models\SalePayment::whereHas('sale', function($q) {
-                $q->where('cash_shift_id', $this->id)->where('status', 'completed');
-            })
-            ->whereHas('paymentMethod', function($q) {
+        $cashSales = SalePayment::whereHas('sale', function ($q) {
+            $q->where('cash_shift_id', $this->id)->where('status', 'completed');
+        })
+            ->whereHas('paymentMethod', function ($q) {
                 $q->where('is_cash', true);
             })
             ->sum('total_amount');
-            
-        $cashSales += \App\Models\CustomerTransaction::where('cash_shift_id', $this->id)
+
+        $cashSales += CustomerTransaction::where('cash_shift_id', $this->id)
             ->where('type', 'payment')
             ->where('payment_method', 'cash')
             ->sum('amount');
-            
-        $cashDeposits = \App\Models\CashMovement::where('cash_shift_id', $this->id)
+
+        $cashDeposits = CashMovement::where('cash_shift_id', $this->id)
             ->where('payment_method', 'cash')
             ->where('type', 'deposit')
             ->sum('amount');
-            
-        $cashExpenses = \App\Models\CashMovement::where('cash_shift_id', $this->id)
+
+        $cashExpenses = CashMovement::where('cash_shift_id', $this->id)
             ->where('payment_method', 'cash')
             ->where('type', 'expense')
             ->sum('amount');
-            
-        $cashWithdrawals = \App\Models\CashMovement::where('cash_shift_id', $this->id)
+
+        $cashWithdrawals = CashMovement::where('cash_shift_id', $this->id)
             ->where('payment_method', 'cash')
             ->where('type', 'withdrawal')
             ->sum('amount');
 
-        $cashSupplierPayments = \App\Models\CashMovement::where('cash_shift_id', $this->id)
+        $cashSupplierPayments = CashMovement::where('cash_shift_id', $this->id)
             ->where('payment_method', 'cash')
             ->where('type', 'supplier_payment')
             ->sum('amount');
 
-        $cashRefunds = \App\Models\CustomerTransaction::where('cash_shift_id', $this->id)
+        $cashRefunds = CustomerTransaction::where('cash_shift_id', $this->id)
             ->where('type', 'refund')
             ->where('payment_method', 'cash')
             ->sum('amount');

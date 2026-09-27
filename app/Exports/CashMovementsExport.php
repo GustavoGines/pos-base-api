@@ -3,8 +3,8 @@
 namespace App\Exports;
 
 use App\Models\CashMovement;
-use Maatwebsite\Excel\Concerns\FromQuery;
 use Maatwebsite\Excel\Concerns\Exportable;
+use Maatwebsite\Excel\Concerns\FromQuery;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithMapping;
 
@@ -13,9 +13,13 @@ class CashMovementsExport implements FromQuery, WithHeadings, WithMapping
     use Exportable;
 
     protected $shiftId;
+
     protected $category;
+
     protected $expenseCategoryId;
+
     protected $startDate;
+
     protected $endDate;
 
     public function __construct($shiftId, $category = null, $expenseCategoryId = null, $startDate = null, $endDate = null)
@@ -33,17 +37,17 @@ class CashMovementsExport implements FromQuery, WithHeadings, WithMapping
         if ($this->shiftId) {
             $query->where('cash_shift_id', $this->shiftId);
         }
-            
+
         if ($this->category) {
             $query->where('category', $this->category);
         }
-        
+
         if ($this->expenseCategoryId) {
             $query->where('expense_category_id', $this->expenseCategoryId);
         }
-        
+
         if ($this->startDate && $this->endDate) {
-            $query->whereBetween('created_at', [$this->startDate . ' 00:00:00', $this->endDate . ' 23:59:59']);
+            $query->whereBetween('created_at', [$this->startDate.' 00:00:00', $this->endDate.' 23:59:59']);
         }
 
         return $query->latest();

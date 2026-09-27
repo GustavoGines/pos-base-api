@@ -2,8 +2,8 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -17,7 +17,9 @@ return new class extends Migration
         });
 
         // Add 'purchase' to type enum
-        if (\Illuminate\Support\Facades\DB::getDriverName() !== 'sqlite') { DB::statement("ALTER TABLE stock_movements MODIFY COLUMN type ENUM('in', 'out', 'adjustment', 'sale', 'purchase') NOT NULL"); }
+        if (DB::getDriverName() !== 'sqlite') {
+            DB::statement("ALTER TABLE stock_movements MODIFY COLUMN type ENUM('in', 'out', 'adjustment', 'sale', 'purchase') NOT NULL");
+        }
     }
 
     /**
@@ -25,7 +27,9 @@ return new class extends Migration
      */
     public function down(): void
     {
-        if (\Illuminate\Support\Facades\DB::getDriverName() !== 'sqlite') { DB::statement("ALTER TABLE stock_movements MODIFY COLUMN type ENUM('in', 'out', 'adjustment', 'sale') NOT NULL"); }
+        if (DB::getDriverName() !== 'sqlite') {
+            DB::statement("ALTER TABLE stock_movements MODIFY COLUMN type ENUM('in', 'out', 'adjustment', 'sale') NOT NULL");
+        }
 
         Schema::table('stock_movements', function (Blueprint $table) {
             $table->dropForeign(['supplier_invoice_id']);

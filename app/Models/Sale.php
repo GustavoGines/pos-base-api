@@ -19,10 +19,10 @@ class Sale extends Model
     ];
 
     protected $casts = [
-        'total'           => 'decimal:2',
+        'total' => 'decimal:2',
         'total_surcharge' => 'decimal:2',
-        'amount_due'      => 'decimal:2',
-        'shipping_cost'   => 'decimal:2',
+        'amount_due' => 'decimal:2',
+        'shipping_cost' => 'decimal:2',
     ];
 
     public function isVoided(): bool
@@ -49,7 +49,7 @@ class Sale extends Model
     {
         return $this->belongsTo(User::class);
     }
-    
+
     public function cashier(): BelongsTo
     {
         return $this->belongsTo(User::class, 'cashier_id');
@@ -79,9 +79,9 @@ class Sale extends Model
      */
     public function hasDeductedStock(): bool
     {
-        return \App\Models\StockMovement::where('sale_id', $this->id)
+        return StockMovement::where('sale_id', $this->id)
             ->where('type', 'sale')
-            ->where('notes', 'like', '%Ticket #' . $this->id . '%')
+            ->where('notes', 'like', '%Ticket #'.$this->id.'%')
             ->exists();
     }
 }

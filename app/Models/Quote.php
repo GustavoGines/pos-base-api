@@ -16,8 +16,8 @@ class Quote extends Model
     ];
 
     protected $casts = [
-        'subtotal'    => 'decimal:2',
-        'total'       => 'decimal:2',
+        'subtotal' => 'decimal:2',
+        'total' => 'decimal:2',
         'valid_until' => 'date',
     ];
 
@@ -37,15 +37,17 @@ class Quote extends Model
     public static function nextQuoteNumber(): string
     {
         $last = static::orderByDesc('id')->lockForUpdate()->value('quote_number');
-        if (!$last) {
+        if (! $last) {
             return 'PRES-0001';
         }
         if (preg_match('/(\d+)$/', $last, $matches)) {
             $num = (int) $matches[1];
             $len = strlen($matches[1]);
             $prefix = substr($last, 0, -strlen($matches[1]));
-            return $prefix . str_pad($num + 1, max(4, $len), '0', STR_PAD_LEFT);
+
+            return $prefix.str_pad($num + 1, max(4, $len), '0', STR_PAD_LEFT);
         }
+
         return 'PRES-0001';
     }
 }

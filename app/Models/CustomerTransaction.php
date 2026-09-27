@@ -27,25 +27,16 @@ class CustomerTransaction extends Model
         'balance_after' => 'decimal:2',
     ];
 
-    /**
-     * @return BelongsTo
-     */
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class);
     }
 
-    /**
-     * @return BelongsTo
-     */
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
     }
 
-    /**
-     * @return BelongsTo
-     */
     public function sale(): BelongsTo
     {
         return $this->belongsTo(Sale::class);

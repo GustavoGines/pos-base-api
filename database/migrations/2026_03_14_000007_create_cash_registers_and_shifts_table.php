@@ -25,22 +25,22 @@ return new class extends Migration
             $table->id();
             $table->foreignId('cash_register_id')->constrained('cash_registers');
             $table->foreignId('user_id')->constrained('users');
-            
+
             // Fechas
             $table->timestamp('opened_at');
             $table->timestamp('closed_at')->nullable();
-            
+
             // Saldos (en decimal 10,2) para precisión contable
             $table->decimal('opening_balance', 10, 2)->default(0);
             $table->decimal('expected_balance', 10, 2)->nullable();
             $table->decimal('actual_balance', 10, 2)->nullable();
             $table->decimal('difference', 10, 2)->nullable();
-            
+
             // Totales por medios de pago (generados dinámicamente)
             $table->decimal('cash_sales', 10, 2)->default(0);
             $table->decimal('card_sales', 10, 2)->default(0);
             $table->decimal('transfer_sales', 10, 2)->default(0);
-            
+
             $table->enum('status', ['open', 'closed'])->default('open');
             $table->timestamps();
         });

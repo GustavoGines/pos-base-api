@@ -1,21 +1,21 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
-use App\Http\Controllers\Api\PosController;
-use App\Http\Controllers\Api\CatalogController;
-use App\Http\Controllers\Api\SettingController;
-use App\Http\Controllers\Api\ProductController;
-use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\BrandController;
-use App\Http\Controllers\Api\CashShiftController;
 use App\Http\Controllers\Api\CashRegisterController;
+use App\Http\Controllers\Api\CashShiftController;
+use App\Http\Controllers\Api\CatalogController;
+use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\CustomerController;
+use App\Http\Controllers\Api\PosController;
+use App\Http\Controllers\Api\ProductController;
+use App\Http\Controllers\Api\QuoteController;
 use App\Http\Controllers\Api\SalesController;
+use App\Http\Controllers\Api\SettingController;
 use App\Http\Controllers\Api\StockController;
 use App\Http\Controllers\Api\TrashController;
-use App\Http\Controllers\Api\QuoteController;
 use App\Http\Controllers\DeliveryNoteController;
+use Illuminate\Support\Facades\Route;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // RUTAS PÚBLICAS — No requieren sesión activa
@@ -36,14 +36,22 @@ Route::prefix('auth')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
 });
 
-
 // Lectura de configuración pública — necesaria en el arranque de la app ANTES del login
 Route::get('/settings', [SettingController::class, 'index']);
 // Escritura de licencia pública — se necesita sin sesión para activar/sincronizar licencias
 Route::post('/settings/license', [SettingController::class, 'updateLicense']);
 Route::post('/settings/license/sync', [SettingController::class, 'syncLicense']);
 
+use App\Http\Controllers\Api\CashMovementController;
+use App\Http\Controllers\Api\ExpenseCategoryController;
+use App\Http\Controllers\Api\MobileScannerController;
+use App\Http\Controllers\Api\PaymentMethodController;
+use App\Http\Controllers\Api\ReportController;
+use App\Http\Controllers\Api\SupplierController;
+use App\Http\Controllers\Api\SupplierInvoiceController;
 use App\Http\Controllers\Api\SystemController;
+use App\Http\Controllers\Api\ThirdPartyCheckController;
+use App\Http\Controllers\Api\UserController;
 
 // Endpoint de rescate de migraciones OTA (silencioso)
 Route::match(['get', 'post'], '/system/rescue-migrate', [SystemController::class, 'rescueMigrate']);
@@ -71,8 +79,7 @@ Route::get('/catalog/brands', [BrandController::class, 'index']);
 // FIX A-2: GET /users era pública y exponía nombres y roles sin sesión.
 // Ahora la lista de usuarios solo se puede obtener con un token válido.
 // La ruta de lectura se consolida dentro del grupo session.validate (ver más abajo).
-Route::apiResource('payment-methods', \App\Http\Controllers\Api\PaymentMethodController::class)->only(['index']);
-
+Route::apiResource('payment-methods', PaymentMethodController::class)->only(['index']);
 
 // ══════════════════════════════════════════════════════════════════════════════
 // RUTAS PROTEGIDAS — Requieren X-Session-Token válido (Single Active Session)
@@ -108,30 +115,30 @@ Route::middleware(['session.validate'])->group(function () {
     Route::get('/customers/{customer}/pending-sales', [CustomerController::class, 'getPendingSales']);
 
     // 💸 Módulo Movimientos de Caja y Gastos 💸
-    Route::get('cash-movements/export', [\App\Http\Controllers\Api\CashMovementController::class, 'export']);
-    Route::post('cash-movements/upload', [\App\Http\Controllers\Api\CashMovementController::class, 'uploadAttachment']);
-    Route::apiResource('cash-movements', \App\Http\Controllers\Api\CashMovementController::class)->only(['index', 'store']);
+    Route::get('cash-movements/export', [CashMovementController::class, 'export']);
+    Route::post('cash-movements/upload', [CashMovementController::class, 'uploadAttachment']);
+    Route::apiResource('cash-movements', CashMovementController::class)->only(['index', 'store']);
     Route::middleware(['role.or.pin'])->group(function () {
-        Route::delete('/cash-movements/{cash_movement}', [\App\Http\Controllers\Api\CashMovementController::class, 'destroy']);
+        Route::delete('/cash-movements/{cash_movement}', [CashMovementController::class, 'destroy']);
     });
     Route::middleware(['feature:expenses', 'role.admin'])->group(function () {
-        Route::apiResource('expense-categories', \App\Http\Controllers\Api\ExpenseCategoryController::class);
+        Route::apiResource('expense-categories', ExpenseCategoryController::class);
     });
 
     // ── Módulo Cartera de Cheques ────────────────────────────────────
     Route::middleware(['feature:checks'])->group(function () {
-        Route::get('/third-party-checks', [\App\Http\Controllers\Api\ThirdPartyCheckController::class, 'index']);
-        Route::patch('/third-party-checks/{check}/status', [\App\Http\Controllers\Api\ThirdPartyCheckController::class, 'updateStatus']);
+        Route::get('/third-party-checks', [ThirdPartyCheckController::class, 'index']);
+        Route::patch('/third-party-checks/{check}/status', [ThirdPartyCheckController::class, 'updateStatus']);
     });
 
     // ── Módulo Proveedores ───────────────────────────────────────────
     Route::middleware(['feature:suppliers'])->group(function () {
-        Route::apiResource('suppliers', \App\Http\Controllers\Api\SupplierController::class)->only(['index', 'show']);
+        Route::apiResource('suppliers', SupplierController::class)->only(['index', 'show']);
         Route::middleware(['role.or.pin'])->group(function () {
-            Route::apiResource('suppliers', \App\Http\Controllers\Api\SupplierController::class)->except(['index', 'show']);
-            Route::get('suppliers/{supplier}/current-account', [\App\Http\Controllers\Api\SupplierController::class, 'currentAccount']);
-            Route::post('suppliers/{supplier}/invoices', [\App\Http\Controllers\Api\SupplierInvoiceController::class, 'store']);
-            Route::post('supplier-invoices/upload', [\App\Http\Controllers\Api\SupplierInvoiceController::class, 'uploadAttachment']);
+            Route::apiResource('suppliers', SupplierController::class)->except(['index', 'show']);
+            Route::get('suppliers/{supplier}/current-account', [SupplierController::class, 'currentAccount']);
+            Route::post('suppliers/{supplier}/invoices', [SupplierInvoiceController::class, 'store']);
+            Route::post('supplier-invoices/upload', [SupplierInvoiceController::class, 'uploadAttachment']);
         });
     });
 
@@ -156,7 +163,7 @@ Route::middleware(['session.validate'])->group(function () {
 
     // FIX A-2: Usuarios — lectura Y escritura ahora protegidas por sesión activa.
     Route::middleware(['role.admin'])->group(function () {
-        Route::apiResource('users', \App\Http\Controllers\Api\UserController::class);
+        Route::apiResource('users', UserController::class);
     });
 
     // FIX S-1: Historial de turnos protegido — no puede ser consultado sin sesión activa.
@@ -164,7 +171,7 @@ Route::middleware(['session.validate'])->group(function () {
     Route::get('/shifts', [CashShiftController::class, 'index']);
 
     // ── Métodos de pago y papelera (admin) ───────────────────────────
-    Route::apiResource('payment-methods', \App\Http\Controllers\Api\PaymentMethodController::class)->except(['index']);
+    Route::apiResource('payment-methods', PaymentMethodController::class)->except(['index']);
     Route::middleware(['role.or.pin'])->prefix('trash')->group(function () {
         Route::get('/{model}', [TrashController::class, 'index']);
         Route::post('/{model}/{id}/restore', [TrashController::class, 'restore']);
@@ -189,24 +196,24 @@ Route::middleware(['session.validate'])->group(function () {
 
     // ── Módulo de Reportes Gerenciales (ADMIN) ───────────────────────
     Route::middleware(['role.admin'])->group(function () {
-        Route::get('/reports/sales-by-category/export', [\App\Http\Controllers\Api\ReportController::class, 'exportProfitByCategory']);
-        Route::get('/reports/sales-by-category/pdf',    [\App\Http\Controllers\Api\ReportController::class, 'exportPdfByCategory']);
-        Route::get('/reports/sales-by-category',        [\App\Http\Controllers\Api\ReportController::class, 'profitByCategory']);
-        Route::get('/reports/sales-by-brand',            [\App\Http\Controllers\Api\ReportController::class, 'profitByBrand']);
-        Route::get('/reports/internal-consumption',     [\App\Http\Controllers\Api\ReportController::class, 'internalConsumption']);
-        Route::get('/reports/monthly-balance/export',   [\App\Http\Controllers\Api\ReportController::class, 'exportMonthlyBalanceExcel']);
-        Route::get('/reports/monthly-balance/pdf',      [\App\Http\Controllers\Api\ReportController::class, 'exportMonthlyBalancePdf']);
-        Route::get('/reports/monthly-balance',          [\App\Http\Controllers\Api\ReportController::class, 'monthlyBalance']);
-        
+        Route::get('/reports/sales-by-category/export', [ReportController::class, 'exportProfitByCategory']);
+        Route::get('/reports/sales-by-category/pdf', [ReportController::class, 'exportPdfByCategory']);
+        Route::get('/reports/sales-by-category', [ReportController::class, 'profitByCategory']);
+        Route::get('/reports/sales-by-brand', [ReportController::class, 'profitByBrand']);
+        Route::get('/reports/internal-consumption', [ReportController::class, 'internalConsumption']);
+        Route::get('/reports/monthly-balance/export', [ReportController::class, 'exportMonthlyBalanceExcel']);
+        Route::get('/reports/monthly-balance/pdf', [ReportController::class, 'exportMonthlyBalancePdf']);
+        Route::get('/reports/monthly-balance', [ReportController::class, 'monthlyBalance']);
+
         Route::middleware(['feature:expenses'])->group(function () {
-            Route::get('/reports/expenses-analysis/export', [\App\Http\Controllers\Api\ReportController::class, 'exportExpensesAnalysisExcel']);
-            Route::get('/reports/expenses-analysis/pdf',    [\App\Http\Controllers\Api\ReportController::class, 'exportExpensesAnalysisPdf']);
-            Route::get('/reports/expenses-analysis',        [\App\Http\Controllers\Api\ReportController::class, 'expensesAnalysis']);
+            Route::get('/reports/expenses-analysis/export', [ReportController::class, 'exportExpensesAnalysisExcel']);
+            Route::get('/reports/expenses-analysis/pdf', [ReportController::class, 'exportExpensesAnalysisPdf']);
+            Route::get('/reports/expenses-analysis', [ReportController::class, 'expensesAnalysis']);
         });
     });
 
     // ── Módulo de Inteligencia de Inventario ──────────────────────────
-    Route::get('/inventory/alerts',                  [\App\Http\Controllers\Api\ProductController::class, 'inventoryAlerts']);
+    Route::get('/inventory/alerts', [ProductController::class, 'inventoryAlerts']);
 
     // ── Módulo Logística (Remitos / Corralón) ──────────────────────────
     Route::prefix('delivery-notes')->group(function () {
@@ -215,6 +222,6 @@ Route::middleware(['session.validate'])->group(function () {
         Route::put('/{id}/deliver', [DeliveryNoteController::class, 'updateDelivery']);
     });
     // Mobile Scanner Module
-    Route::post('/mobile/scan', [\App\Http\Controllers\Api\MobileScannerController::class, 'scan']);
-    Route::post('/mobile/print-label', [\App\Http\Controllers\Api\MobileScannerController::class, 'printLabel']);
+    Route::post('/mobile/scan', [MobileScannerController::class, 'scan']);
+    Route::post('/mobile/print-label', [MobileScannerController::class, 'printLabel']);
 });

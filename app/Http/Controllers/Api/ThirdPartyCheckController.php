@@ -13,7 +13,7 @@ class ThirdPartyCheckController extends Controller
         $checks = ThirdPartyCheck::with('customer:id,name')
             ->orderBy('payment_date', 'asc')
             ->get();
-            
+
         return response()->json($checks);
     }
 
@@ -33,7 +33,7 @@ class ThirdPartyCheckController extends Controller
 
         return response()->json([
             'message' => 'Estado del cheque actualizado exitosamente',
-            'check' => $check
+            'check' => $check,
         ]);
     }
 }

@@ -63,27 +63,27 @@ class InventoryAlertService
 
         // Clasificación semafórica unificada en PHP (Zero-Processing para Flutter)
         $alerts = $products->map(function ($row) {
-            $row->alert_level = match(true) {
+            $row->alert_level = match (true) {
                 $row->current_stock <= 0 => 'critical',
-                !is_null($row->min_stock) && $row->current_stock <= $row->min_stock => 'critical',
-                $row->days_of_coverage <= 3  => 'critical',
-                default                      => 'info',
+                ! is_null($row->min_stock) && $row->current_stock <= $row->min_stock => 'critical',
+                $row->days_of_coverage <= 3 => 'critical',
+                default => 'info',
             };
 
-            $row->alert_type = match(true) {
+            $row->alert_type = match (true) {
                 $row->current_stock <= 0 => 'out_of_stock',
-                !is_null($row->min_stock) && $row->current_stock <= $row->min_stock => 'low_stock',
+                ! is_null($row->min_stock) && $row->current_stock <= $row->min_stock => 'low_stock',
                 default => 'predictive',
             };
-            
+
             return $row;
         });
 
         return [
             'period_analyzed_days' => $periodDays,
-            'threshold_days'       => $threshold,
-            'generated_at'         => now()->toIso8601String(),
-            'alerts'               => $alerts,
+            'threshold_days' => $threshold,
+            'generated_at' => now()->toIso8601String(),
+            'alerts' => $alerts,
         ];
     }
 }

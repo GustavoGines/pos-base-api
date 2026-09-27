@@ -2,6 +2,7 @@
 
 namespace App\Events;
 
+use App\Models\Sale;
 use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
@@ -15,7 +16,7 @@ class SaleCompleted implements ShouldBroadcastNow
     /**
      * Create a new event instance.
      */
-    public function __construct(public \App\Models\Sale $sale)
+    public function __construct(public Sale $sale)
     {
         //
     }

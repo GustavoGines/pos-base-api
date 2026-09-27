@@ -4,28 +4,31 @@ namespace App\Exports;
 
 use App\Repositories\SalesAnalyticsRepository;
 use Maatwebsite\Excel\Concerns\FromCollection;
-use Maatwebsite\Excel\Concerns\WithHeadings;
-use Maatwebsite\Excel\Concerns\WithStyles;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
-use Maatwebsite\Excel\Concerns\WithMapping;
-use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
-use PhpOffice\PhpSpreadsheet\Style\Fill;
-use PhpOffice\PhpSpreadsheet\Style\Color;
-use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 use Maatwebsite\Excel\Concerns\WithColumnFormatting;
+use Maatwebsite\Excel\Concerns\WithHeadings;
+use Maatwebsite\Excel\Concerns\WithMapping;
+use Maatwebsite\Excel\Concerns\WithStyles;
+use PhpOffice\PhpSpreadsheet\Style\Color;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
+use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
-class ProfitByCategoryExport implements FromCollection, WithHeadings, WithStyles, ShouldAutoSize, WithMapping, WithColumnFormatting
+class ProfitByCategoryExport implements FromCollection, ShouldAutoSize, WithColumnFormatting, WithHeadings, WithMapping, WithStyles
 {
     protected $startDate;
+
     protected $endDate;
+
     protected $type;
+
     protected SalesAnalyticsRepository $repository;
 
     public function __construct($startDate, $endDate, $type = 'category', ?SalesAnalyticsRepository $repository = null)
     {
-        $this->startDate  = $startDate;
-        $this->endDate    = $endDate;
-        $this->type       = $type;
+        $this->startDate = $startDate;
+        $this->endDate = $endDate;
+        $this->type = $type;
         $this->repository = $repository ?? app(SalesAnalyticsRepository::class);
     }
 
@@ -41,7 +44,7 @@ class ProfitByCategoryExport implements FromCollection, WithHeadings, WithStyles
             'Cantidad Vendida',
             'Facturación',
             'Ganancia Neta',
-            'Margen Promedio (%)'
+            'Margen Promedio (%)',
         ];
     }
 
@@ -57,7 +60,7 @@ class ProfitByCategoryExport implements FromCollection, WithHeadings, WithStyles
             (int) ($data['items_sold'] ?? 0),
             (float) ($data['total_revenue'] ?? 0),
             (float) ($data['total_profit'] ?? 0),
-            $margin
+            $margin,
         ];
     }
 

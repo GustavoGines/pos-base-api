@@ -15,6 +15,7 @@ use App\Models\Sale;
 use App\Models\User;
 use App\Services\CashShiftService;
 use App\Services\SaleService;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -24,7 +25,9 @@ class ChallengerFinancialIntegrityTest extends TestCase
     use RefreshDatabase;
 
     private PaymentMethod $cashMethod;
+
     private PaymentMethod $cardMethod;
+
     private User $admin;
 
     protected function setUp(): void
@@ -47,12 +50,12 @@ class ChallengerFinancialIntegrityTest extends TestCase
     private function createProduct(string $code = 'PROD1', float $price = 100.0, float $cost = 50.0): Product
     {
         return Product::create([
-            'name'          => "Producto {$code}",
+            'name' => "Producto {$code}",
             'internal_code' => $code,
             'selling_price' => $price,
-            'cost_price'    => $cost,
-            'stock'         => 100,
-            'active'        => true,
+            'cost_price' => $cost,
+            'stock' => 100,
+            'active' => true,
         ]);
     }
 
@@ -66,20 +69,20 @@ class ChallengerFinancialIntegrityTest extends TestCase
     public function test_customer_transaction_supports_refund_payment_and_charge(): void
     {
         $customer = Customer::create([
-            'name'            => 'Test Customer',
-            'document_type'   => 'DNI',
+            'name' => 'Test Customer',
+            'document_type' => 'DNI',
             'document_number' => '11223344',
-            'balance'         => 0.0,
+            'balance' => 0.0,
         ]);
 
         foreach (['charge', 'payment', 'refund'] as $type) {
             $trx = CustomerTransaction::create([
-                'customer_id'    => $customer->id,
-                'user_id'        => $this->admin->id,
-                'type'           => $type,
-                'amount'         => 150.00,
-                'balance_after'  => 150.00,
-                'description'    => "Test {$type}",
+                'customer_id' => $customer->id,
+                'user_id' => $this->admin->id,
+                'type' => $type,
+                'amount' => 150.00,
+                'balance_after' => 150.00,
+                'description' => "Test {$type}",
                 'payment_method' => 'cash',
             ]);
 
@@ -98,14 +101,14 @@ class ChallengerFinancialIntegrityTest extends TestCase
             $mysql = DB::connection('mysql');
             $mysql->getPdo();
         } catch (\Throwable $e) {
-            $this->markTestSkipped('MySQL connection not available: ' . $e->getMessage());
+            $this->markTestSkipped('MySQL connection not available: '.$e->getMessage());
         }
 
         // 1. Inspect MySQL schema definition
         $column = $mysql->select("SHOW COLUMNS FROM customer_transactions WHERE Field = 'type'");
         $this->assertNotEmpty($column, 'Column type must exist in customer_transactions');
         $columnType = $column[0]->Type ?? '';
-        
+
         $this->assertStringContainsString("'charge'", $columnType);
         $this->assertStringContainsString("'payment'", $columnType);
         $this->assertStringContainsString("'refund'", $columnType);
@@ -119,14 +122,14 @@ class ChallengerFinancialIntegrityTest extends TestCase
 
             if ($user && $customer) {
                 $id = $mysql->table('customer_transactions')->insertGetId([
-                    'customer_id'    => $customer->id,
-                    'user_id'        => $user->id,
-                    'type'           => 'refund',
-                    'amount'         => 99.99,
-                    'balance_after'  => 0.00,
-                    'description'    => 'MySQL strict test refund',
-                    'created_at'     => now(),
-                    'updated_at'     => now(),
+                    'customer_id' => $customer->id,
+                    'user_id' => $user->id,
+                    'type' => 'refund',
+                    'amount' => 99.99,
+                    'balance_after' => 0.00,
+                    'description' => 'MySQL strict test refund',
+                    'created_at' => now(),
+                    'updated_at' => now(),
                 ]);
 
                 $saved = $mysql->table('customer_transactions')->where('id', $id)->first();
@@ -134,15 +137,15 @@ class ChallengerFinancialIntegrityTest extends TestCase
                 $this->assertEquals('refund', $saved->type);
 
                 // 3. Test that an invalid enum value triggers MySQL truncation/strict mode error
-                $this->expectException(\Illuminate\Database\QueryException::class);
+                $this->expectException(QueryException::class);
                 $mysql->table('customer_transactions')->insert([
-                    'customer_id'    => $customer->id,
-                    'user_id'        => $user->id,
-                    'type'           => 'invalid_bogus_type',
-                    'amount'         => 10.00,
-                    'balance_after'  => 0.00,
-                    'created_at'     => now(),
-                    'updated_at'     => now(),
+                    'customer_id' => $customer->id,
+                    'user_id' => $user->id,
+                    'type' => 'invalid_bogus_type',
+                    'amount' => 10.00,
+                    'balance_after' => 0.00,
+                    'created_at' => now(),
+                    'updated_at' => now(),
                 ]);
             }
         } finally {
@@ -159,29 +162,29 @@ class ChallengerFinancialIntegrityTest extends TestCase
 
         // Customer with $500 credit (balance = -500.00)
         $customer = Customer::create([
-            'name'            => 'Cliente Con Saldo a Favor',
-            'document_type'   => 'DNI',
+            'name' => 'Cliente Con Saldo a Favor',
+            'document_type' => 'DNI',
             'document_number' => '22334455',
-            'balance'         => -500.00,
+            'balance' => -500.00,
         ]);
 
         $this->actingAsAdmin($this->admin);
 
         // 1. Attempt refund exceeding balance ($600 > $500) -> Should fail with 422
         $resOver = $this->postJson("/api/customers/{$customer->id}/payments", [
-            'amount'         => 600.00,
-            'is_refund'      => true,
+            'amount' => 600.00,
+            'is_refund' => true,
             'payment_method' => 'cash',
-            'cash_shift_id'  => $shift->id,
+            'cash_shift_id' => $shift->id,
         ]);
         $resOver->assertStatus(422)->assertJsonValidationErrors(['amount']);
 
         // 2. Process partial refund of $200
         $resValid = $this->postJson("/api/customers/{$customer->id}/payments", [
-            'amount'         => 200.00,
-            'is_refund'      => true,
+            'amount' => 200.00,
+            'is_refund' => true,
             'payment_method' => 'cash',
-            'cash_shift_id'  => $shift->id,
+            'cash_shift_id' => $shift->id,
         ]);
         $resValid->assertStatus(200);
 
@@ -190,20 +193,20 @@ class ChallengerFinancialIntegrityTest extends TestCase
 
         // 3. Process remaining refund of $300 -> balance becomes 0.00
         $resFinal = $this->postJson("/api/customers/{$customer->id}/payments", [
-            'amount'         => 300.00,
-            'is_refund'      => true,
+            'amount' => 300.00,
+            'is_refund' => true,
             'payment_method' => 'cash',
-            'cash_shift_id'  => $shift->id,
+            'cash_shift_id' => $shift->id,
         ]);
         $resFinal->assertStatus(200);
         $this->assertEquals(0.00, (float) $customer->fresh()->balance);
 
         // 4. Attempt refund now that balance is 0.00 -> Should fail with 422
         $resZero = $this->postJson("/api/customers/{$customer->id}/payments", [
-            'amount'         => 50.00,
-            'is_refund'      => true,
+            'amount' => 50.00,
+            'is_refund' => true,
             'payment_method' => 'cash',
-            'cash_shift_id'  => $shift->id,
+            'cash_shift_id' => $shift->id,
         ]);
         $resZero->assertStatus(422)->assertJsonValidationErrors(['amount']);
     }
@@ -219,38 +222,38 @@ class ChallengerFinancialIntegrityTest extends TestCase
         // Make a cash sale of $500 in this shift
         $product = $this->createProduct('PROD_CASH', 500.0, 250.0);
         $sale = Sale::create([
-            'total'           => 500.00,
+            'total' => 500.00,
             'total_surcharge' => 0,
-            'payment_status'  => 'paid',
-            'amount_due'      => 0,
-            'status'          => 'completed',
-            'cash_shift_id'   => $shift->id,
-            'user_id'         => $cashier->id,
-            'cashier_id'      => $cashier->id,
+            'payment_status' => 'paid',
+            'amount_due' => 0,
+            'status' => 'completed',
+            'cash_shift_id' => $shift->id,
+            'user_id' => $cashier->id,
+            'cashier_id' => $cashier->id,
         ]);
         $sale->payments()->create([
             'payment_method_id' => $this->cashMethod->id,
-            'base_amount'       => 500.00,
-            'surcharge_amount'  => 0,
-            'total_amount'      => 500.00,
+            'base_amount' => 500.00,
+            'surcharge_amount' => 0,
+            'total_amount' => 500.00,
         ]);
 
         // Customer receives cash refund of $150 in this shift
         $customer = Customer::create([
-            'name'            => 'Cliente Reintegro Shift',
-            'document_type'   => 'DNI',
+            'name' => 'Cliente Reintegro Shift',
+            'document_type' => 'DNI',
             'document_number' => '99887766',
-            'balance'         => -300.00,
+            'balance' => -300.00,
         ]);
 
         CustomerTransaction::create([
-            'customer_id'    => $customer->id,
-            'user_id'        => $cashier->id,
-            'cash_shift_id'  => $shift->id,
-            'type'           => 'refund',
-            'amount'         => 150.00,
-            'balance_after'  => -150.00,
-            'description'    => 'Reintegro en efectivo',
+            'customer_id' => $customer->id,
+            'user_id' => $cashier->id,
+            'cash_shift_id' => $shift->id,
+            'type' => 'refund',
+            'amount' => 150.00,
+            'balance_after' => -150.00,
+            'description' => 'Reintegro en efectivo',
             'payment_method' => 'cash',
         ]);
 
@@ -282,34 +285,34 @@ class ChallengerFinancialIntegrityTest extends TestCase
         $register2 = CashRegister::firstOrCreate(['id' => 9], ['name' => 'Caja 2', 'is_active' => true]);
         $shift2 = CashShift::create([
             'cash_register_id' => $register2->id,
-            'user_id'          => $cashier2->id,
-            'opened_at'        => now(),
-            'opening_balance'  => 800.00,
-            'status'           => 'open',
+            'user_id' => $cashier2->id,
+            'opened_at' => now(),
+            'opening_balance' => 800.00,
+            'status' => 'open',
         ]);
 
         $product = $this->createProduct('PROD_PENDING', 400.0, 200.0);
 
         // Step 1: Create pending sale in Shift 1 by Waiter Juan
         $sale = Sale::create([
-            'total'           => 400.00,
+            'total' => 400.00,
             'total_surcharge' => 0,
-            'payment_status'  => 'pending',
-            'amount_due'      => 400.00,
-            'status'          => 'pending',
-            'cash_shift_id'   => $shift1->id,
-            'user_id'         => $waiter->id,
-            'cashier_id'      => $waiter->id,
-            'price_list'      => 'lista_salon',
+            'payment_status' => 'pending',
+            'amount_due' => 400.00,
+            'status' => 'pending',
+            'cash_shift_id' => $shift1->id,
+            'user_id' => $waiter->id,
+            'cashier_id' => $waiter->id,
+            'price_list' => 'lista_salon',
         ]);
 
         $sale->items()->create([
-            'product_id'      => $product->id,
-            'product_name'    => $product->name,
-            'quantity'        => 1,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
             'unit_cost_price' => 200.00,
-            'unit_price'      => 400.00,
-            'subtotal'        => 400.00,
+            'unit_price' => 400.00,
+            'subtotal' => 400.00,
         ]);
 
         // Step 2: Pay pending sale in Shift 2 by Cashier Carlos
@@ -317,13 +320,13 @@ class ChallengerFinancialIntegrityTest extends TestCase
         $payDto = PaySaleDTO::fromArray([
             'payments' => [[
                 'payment_method_id' => $this->cashMethod->id,
-                'base_amount'       => 400.00,
-                'surcharge_amount'  => 0,
-                'total_amount'      => 400.00,
+                'base_amount' => 400.00,
+                'surcharge_amount' => 0,
+                'total_amount' => 400.00,
             ]],
             'total_surcharge' => 0,
             'tendered_amount' => 400.00,
-            'change_amount'   => 0,
+            'change_amount' => 0,
         ]);
 
         $payContext = new SaleContextDTO(
@@ -373,11 +376,11 @@ class ChallengerFinancialIntegrityTest extends TestCase
 
         // Completed sale
         $completedSale = Sale::create([
-            'total'          => 100.0,
-            'status'         => 'completed',
+            'total' => 100.0,
+            'status' => 'completed',
             'payment_status' => 'paid',
-            'cash_shift_id'  => $shift->id,
-            'user_id'        => $this->admin->id,
+            'cash_shift_id' => $shift->id,
+            'user_id' => $this->admin->id,
         ]);
 
         $payDto = PaySaleDTO::fromArray([
@@ -405,19 +408,19 @@ class ChallengerFinancialIntegrityTest extends TestCase
 
         // Scenario A: Custom Price List specified
         $dtoA = ProcessSaleDTO::fromArray([
-            'total'           => 250.00,
+            'total' => 250.00,
             'total_surcharge' => 0,
-            'payments'        => [[
+            'payments' => [[
                 'payment_method_id' => $this->cashMethod->id,
-                'base_amount'       => 250.00,
-                'surcharge_amount'  => 0,
-                'total_amount'      => 250.00,
+                'base_amount' => 250.00,
+                'surcharge_amount' => 0,
+                'total_amount' => 250.00,
             ]],
             'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 1,
+                'quantity' => 1,
                 'unit_price' => 250.00,
-                'subtotal'   => 250.00,
+                'subtotal' => 250.00,
             ]],
         ]);
 
@@ -457,26 +460,26 @@ class ChallengerFinancialIntegrityTest extends TestCase
         $shift = $this->crearTurnoAbierto(user: $this->admin);
         $product = $this->createProduct('PROD_HTTP_PL', 300.0);
 
-        $token = 'test-token-' . uniqid();
+        $token = 'test-token-'.uniqid();
         $this->admin->update(['session_token' => $token]);
 
         $response = $this->withHeader('X-Session-Token', $token)
             ->postJson('/api/pos/sales', [
-                'total'           => 300.00,
+                'total' => 300.00,
                 'total_surcharge' => 0,
-                'cash_shift_id'   => $shift->id,
-                'price_list'      => 'tarifa_mayorista_tier2',
-                'payments'        => [[
+                'cash_shift_id' => $shift->id,
+                'price_list' => 'tarifa_mayorista_tier2',
+                'payments' => [[
                     'payment_method_id' => $this->cashMethod->id,
-                    'base_amount'       => 300.00,
-                    'surcharge_amount'  => 0,
-                    'total_amount'      => 300.00,
+                    'base_amount' => 300.00,
+                    'surcharge_amount' => 0,
+                    'total_amount' => 300.00,
                 ]],
                 'items' => [[
                     'product_id' => $product->id,
-                    'quantity'   => 1,
+                    'quantity' => 1,
                     'unit_price' => 300.00,
-                    'subtotal'   => 300.00,
+                    'subtotal' => 300.00,
                 ]],
             ]);
 
@@ -484,7 +487,7 @@ class ChallengerFinancialIntegrityTest extends TestCase
         $saleId = $response->json('sale.id');
 
         $this->assertDatabaseHas('sales', [
-            'id'         => $saleId,
+            'id' => $saleId,
             'price_list' => 'tarifa_mayorista_tier2',
         ]);
 
@@ -509,31 +512,31 @@ class ChallengerFinancialIntegrityTest extends TestCase
         $reg2 = CashRegister::firstOrCreate(['id' => 15], ['name' => 'Caja Split', 'is_active' => true]);
         $shift2 = CashShift::create([
             'cash_register_id' => $reg2->id,
-            'user_id'          => $cashier2->id,
-            'opened_at'        => now(),
-            'opening_balance'  => 1000.00,
-            'status'           => 'open',
+            'user_id' => $cashier2->id,
+            'opened_at' => now(),
+            'opening_balance' => 1000.00,
+            'status' => 'open',
         ]);
 
         $prod = $this->createProduct('PROD_SPLIT', 1000.0, 500.0);
 
         // Sale opened in Shift 1
         $sale = Sale::create([
-            'total'          => 1000.00,
-            'status'         => 'pending',
+            'total' => 1000.00,
+            'status' => 'pending',
             'payment_status' => 'pending',
-            'amount_due'     => 1000.00,
-            'cash_shift_id'  => $shift1->id,
-            'user_id'        => $waiter->id,
-            'cashier_id'     => $waiter->id,
+            'amount_due' => 1000.00,
+            'cash_shift_id' => $shift1->id,
+            'user_id' => $waiter->id,
+            'cashier_id' => $waiter->id,
         ]);
         $sale->items()->create([
-            'product_id'      => $prod->id,
-            'product_name'    => $prod->name,
-            'quantity'        => 1,
+            'product_id' => $prod->id,
+            'product_name' => $prod->name,
+            'quantity' => 1,
             'unit_cost_price' => 500.00,
-            'unit_price'      => 1000.00,
-            'subtotal'        => 1000.00,
+            'unit_price' => 1000.00,
+            'subtotal' => 1000.00,
         ]);
 
         // Pay in Shift 2: $600 Cash + $400 Card
@@ -542,20 +545,20 @@ class ChallengerFinancialIntegrityTest extends TestCase
             'payments' => [
                 [
                     'payment_method_id' => $this->cashMethod->id,
-                    'base_amount'       => 600.00,
-                    'surcharge_amount'  => 0,
-                    'total_amount'      => 600.00,
+                    'base_amount' => 600.00,
+                    'surcharge_amount' => 0,
+                    'total_amount' => 600.00,
                 ],
                 [
                     'payment_method_id' => $this->cardMethod->id,
-                    'base_amount'       => 400.00,
-                    'surcharge_amount'  => 0,
-                    'total_amount'      => 400.00,
+                    'base_amount' => 400.00,
+                    'surcharge_amount' => 0,
+                    'total_amount' => 400.00,
                 ],
             ],
             'total_surcharge' => 0,
             'tendered_amount' => 600.00,
-            'change_amount'   => 0,
+            'change_amount' => 0,
         ]);
 
         $context = new SaleContextDTO(
@@ -601,19 +604,19 @@ class ChallengerFinancialIntegrityTest extends TestCase
 
         $specialName = 'Lista N° 1 - Gremio & Distribución (Promoción @ Otoño/Invierno)';
         $dto = ProcessSaleDTO::fromArray([
-            'total'           => 120.00,
+            'total' => 120.00,
             'total_surcharge' => 0,
-            'payments'        => [[
+            'payments' => [[
                 'payment_method_id' => $this->cashMethod->id,
-                'base_amount'       => 120.00,
-                'surcharge_amount'  => 0,
-                'total_amount'      => 120.00,
+                'base_amount' => 120.00,
+                'surcharge_amount' => 0,
+                'total_amount' => 120.00,
             ]],
             'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 1,
+                'quantity' => 1,
                 'unit_price' => 120.00,
-                'subtotal'   => 120.00,
+                'subtotal' => 120.00,
             ]],
         ]);
 

@@ -24,8 +24,8 @@ class ThirdPartyCheck extends Model
     ];
 
     protected $casts = [
-        'amount'       => 'decimal:2',
-        'issue_date'   => 'date',
+        'amount' => 'decimal:2',
+        'issue_date' => 'date',
         'payment_date' => 'date',
     ];
 

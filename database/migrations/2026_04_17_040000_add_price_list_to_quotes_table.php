@@ -15,8 +15,8 @@ return new class extends Migration
     {
         Schema::table('quotes', function (Blueprint $table) {
             $table->string('price_list')->nullable()->default('base')
-                  ->comment('Lista de precios aplicada al presupuesto. base = Contado/Efectivo.')
-                  ->after('notes');
+                ->comment('Lista de precios aplicada al presupuesto. base = Contado/Efectivo.')
+                ->after('notes');
         });
     }
 

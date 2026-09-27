@@ -3,7 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\CashMovement;
 use App\Models\Supplier;
+use App\Models\SupplierInvoice;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -16,10 +18,10 @@ class SupplierController extends Controller
 
         if ($request->filled('search')) {
             $search = $request->input('search');
-            $query->where(function($q) use ($search) {
+            $query->where(function ($q) use ($search) {
                 $q->where('name', 'LIKE', "%{$search}%")
-                  ->orWhere('cuit', 'LIKE', "%{$search}%")
-                  ->orWhere('contact_name', 'LIKE', "%{$search}%");
+                    ->orWhere('cuit', 'LIKE', "%{$search}%")
+                    ->orWhere('contact_name', 'LIKE', "%{$search}%");
             });
         }
 
@@ -37,7 +39,7 @@ class SupplierController extends Controller
             'email' => 'nullable|email|max:255',
             'address' => 'nullable|string|max:255',
             'balance' => 'nullable|numeric',
-            'is_active' => 'boolean'
+            'is_active' => 'boolean',
         ]);
 
         if ($validator->fails()) {
@@ -49,6 +51,7 @@ class SupplierController extends Controller
         $data['is_active'] = $data['is_active'] ?? true;
 
         $supplier = Supplier::create($data);
+
         return response()->json($supplier, 201);
     }
 
@@ -68,7 +71,7 @@ class SupplierController extends Controller
             'email' => 'nullable|email|max:255',
             'address' => 'nullable|string|max:255',
             'balance' => 'nullable|numeric',
-            'is_active' => 'boolean'
+            'is_active' => 'boolean',
         ]);
 
         if ($validator->fails()) {
@@ -76,6 +79,7 @@ class SupplierController extends Controller
         }
 
         $supplier->update($validator->validated());
+
         return response()->json($supplier, 200);
     }
 
@@ -89,15 +93,17 @@ class SupplierController extends Controller
         }
 
         $supplier->delete();
+
         return response()->json(['message' => 'Proveedor eliminado con éxito'], 200);
     }
+
     public function currentAccount(Supplier $supplier)
     {
-        $invoices = \App\Models\SupplierInvoice::where('supplier_id', $supplier->id)
+        $invoices = SupplierInvoice::where('supplier_id', $supplier->id)
             ->select('id', 'amount', 'type', 'issue_date as date', 'invoice_number', \DB::raw("'invoice' as source"))
             ->get();
 
-        $payments = \App\Models\CashMovement::where('supplier_id', $supplier->id)
+        $payments = CashMovement::where('supplier_id', $supplier->id)
             ->whereIn('type', ['expense', 'supplier_payment', 'deposit'])
             ->select('id', 'amount', 'type', 'created_at as date', 'receipt_number as invoice_number', \DB::raw("'payment' as source"))
             ->get();
@@ -106,22 +112,27 @@ class SupplierController extends Controller
 
         $runningBalance = 0;
         $history = $combined->map(function ($item) use (&$runningBalance) {
-            $isIncrease = ($item->source === 'invoice' && $item->type === 'invoice') || 
+            $isIncrease = ($item->source === 'invoice' && $item->type === 'invoice') ||
                           ($item->source === 'payment' && $item->type === 'deposit');
-            
-            $isDecrease = ($item->source === 'invoice' && $item->type === 'credit_note') || 
+
+            $isDecrease = ($item->source === 'invoice' && $item->type === 'credit_note') ||
                           ($item->source === 'payment' && in_array($item->type, ['expense', 'supplier_payment']));
 
-            if ($isIncrease) $runningBalance += $item->amount;
-            if ($isDecrease) $runningBalance -= $item->amount;
+            if ($isIncrease) {
+                $runningBalance += $item->amount;
+            }
+            if ($isDecrease) {
+                $runningBalance -= $item->amount;
+            }
 
             $item->running_balance = $runningBalance;
+
             return $item;
         });
 
         return response()->json([
             'supplier' => $supplier,
-            'history' => $history->reverse()->values() // Más recientes primero
+            'history' => $history->reverse()->values(), // Más recientes primero
         ], 200);
     }
 }

@@ -2,10 +2,11 @@
 
 namespace Tests\Feature;
 
-use Illuminate\Foundation\Testing\RefreshDatabase;
-use Tests\TestCase;
+use App\Models\BulkPriceHistory;
 use App\Models\Product;
 use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\TestCase;
 
 class CatalogBulkTest extends TestCase
 {
@@ -23,13 +24,13 @@ class CatalogBulkTest extends TestCase
     public function test_c01_bulk_delete_products()
     {
         $products = collect();
-        for($i=1; $i<=3; $i++){
+        for ($i = 1; $i <= 3; $i++) {
             $products->push(Product::create(['name' => "Prod $i", 'internal_code' => "B0$i", 'cost_price' => 10, 'selling_price' => 20, 'stock' => 10]));
         }
         $ids = $products->pluck('id')->toArray();
 
         $response = $this->postJson('/api/catalog/products/bulk-delete', [
-            'product_ids' => $ids
+            'product_ids' => $ids,
         ]);
 
         $response->assertStatus(200);
@@ -41,14 +42,14 @@ class CatalogBulkTest extends TestCase
     public function test_c02_bulk_update_products()
     {
         $products = collect();
-        for($i=4; $i<=5; $i++){
+        for ($i = 4; $i <= 5; $i++) {
             $products->push(Product::create(['name' => "Prod $i", 'internal_code' => "B0$i", 'cost_price' => 10, 'selling_price' => 20, 'stock' => 10, 'active' => true]));
         }
         $ids = $products->pluck('id')->toArray();
 
         $response = $this->putJson('/api/catalog/products/bulk-update', [
             'product_ids' => $ids,
-            'active' => false
+            'active' => false,
         ]);
 
         $response->assertStatus(200);
@@ -64,14 +65,14 @@ class CatalogBulkTest extends TestCase
             'internal_code' => 'B06',
             'cost_price' => 100,
             'selling_price' => 150,
-            'stock' => 10
+            'stock' => 10,
         ]);
 
         $previewResponse = $this->postJson('/api/catalog/products/bulk-price-preview', [
             'percentage' => 10,
             'product_ids' => [$product->id],
             'target_field' => 'selling_price',
-            'rounding_rule' => 'none'
+            'rounding_rule' => 'none',
         ]);
 
         $previewResponse->assertStatus(200);
@@ -81,18 +82,18 @@ class CatalogBulkTest extends TestCase
             'percentage' => 10,
             'product_ids' => [$product->id],
             'target_field' => 'selling_price',
-            'rounding_rule' => 'none'
+            'rounding_rule' => 'none',
         ]);
 
         $updateResponse->assertStatus(200);
         $this->assertDatabaseHas('products', [
             'id' => $product->id,
-            'selling_price' => 165
+            'selling_price' => 165,
         ]);
-        
+
         $this->assertDatabaseHas('bulk_price_histories', [
             'percentage' => 10,
-            'affected_count' => 1
+            'affected_count' => 1,
         ]);
     }
 
@@ -103,29 +104,29 @@ class CatalogBulkTest extends TestCase
             'internal_code' => 'B07',
             'cost_price' => 100,
             'selling_price' => 150,
-            'stock' => 10
+            'stock' => 10,
         ]);
 
         $this->putJson('/api/catalog/products/bulk-price-update', [
             'percentage' => 10,
             'product_ids' => [$product->id],
             'target_field' => 'selling_price',
-            'rounding_rule' => 'none'
+            'rounding_rule' => 'none',
         ]);
 
-        $history = \App\Models\BulkPriceHistory::first();
+        $history = BulkPriceHistory::first();
 
         $revertResponse = $this->postJson("/api/catalog/bulk-price-history/{$history->id}/revert");
         $revertResponse->assertStatus(200);
 
         $this->assertDatabaseHas('products', [
             'id' => $product->id,
-            'selling_price' => 150
+            'selling_price' => 150,
         ]);
-        
+
         $this->assertDatabaseHas('bulk_price_histories', [
             'id' => $history->id,
-            'reverted' => true
+            'reverted' => true,
         ]);
     }
 }

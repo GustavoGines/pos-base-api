@@ -2,15 +2,19 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Exports\CashMovementsExport;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreCashMovementRequest;
 use App\Models\CashMovement;
-use App\Models\CashShift;
 use App\Models\Supplier;
 use App\Models\ThirdPartyCheck;
+use App\Models\User;
 use App\Services\CashShiftService;
+use App\Services\ReportCacheService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Maatwebsite\Excel\Facades\Excel;
 
 class CashMovementController extends Controller
 {
@@ -27,12 +31,12 @@ class CashMovementController extends Controller
 
         if ($request->query('all') !== '1') {
             $shift = $this->shiftService->getCurrentShift();
-            if (!$shift) {
+            if (! $shift) {
                 return response()->json([
                     'data' => [],
                     'current_page' => 1,
                     'last_page' => 1,
-                    'total' => 0
+                    'total' => 0,
                 ]);
             }
             $query->where('cash_shift_id', $shift->id);
@@ -42,7 +46,7 @@ class CashMovementController extends Controller
         if ($request->has('category')) {
             $query->where('category', $request->query('category'));
         }
-        
+
         // Optional filtering by expense_category_id
         if ($request->has('expense_category_id')) {
             $query->where('expense_category_id', $request->query('expense_category_id'));
@@ -51,8 +55,8 @@ class CashMovementController extends Controller
         // Optional filtering by date range
         if ($request->has('start_date') && $request->has('end_date')) {
             $query->whereBetween('created_at', [
-                $request->query('start_date') . ' 00:00:00',
-                $request->query('end_date') . ' 23:59:59'
+                $request->query('start_date').' 00:00:00',
+                $request->query('end_date').' 23:59:59',
             ]);
         }
 
@@ -79,7 +83,7 @@ class CashMovementController extends Controller
         $shiftId = null;
         if ($request->query('all') !== '1') {
             $shift = $this->shiftService->getCurrentShift();
-            if (!$shift) {
+            if (! $shift) {
                 return response()->json(['message' => 'No hay turno abierto para exportar.'], 400);
             }
             $shiftId = $shift->id;
@@ -90,17 +94,17 @@ class CashMovementController extends Controller
         $startDate = $request->query('start_date');
         $endDate = $request->query('end_date');
 
-        return \Maatwebsite\Excel\Facades\Excel::download(
-            new \App\Exports\CashMovementsExport($shiftId, $category, $expenseCategoryId, $startDate, $endDate), 
-            'cash_movements_' . now()->format('Ymd_His') . '.xlsx'
+        return Excel::download(
+            new CashMovementsExport($shiftId, $category, $expenseCategoryId, $startDate, $endDate),
+            'cash_movements_'.now()->format('Ymd_His').'.xlsx'
         );
     }
 
     public function store(StoreCashMovementRequest $request)
     {
         $shift = $this->shiftService->getCurrentShift();
-        
-        if (!$shift) {
+
+        if (! $shift) {
             return response()->json(['message' => 'No hay turno abierto para registrar el movimiento.'], 403);
         }
 
@@ -118,15 +122,15 @@ class CashMovementController extends Controller
             if ($user->role !== 'admin') {
                 // Verificar si mandó el PIN en la cabecera
                 $adminPin = $request->header('X-Admin-Pin');
-                if (!$adminPin) {
+                if (! $adminPin) {
                     return response()->json(['message' => 'Los retiros de dinero requieren PIN de administrador.'], 403);
                 }
-                
-                $admin = \App\Models\User::where('role', 'admin')->whereNotNull('pin')->get()->first(function($a) use ($adminPin) {
-                    return \Illuminate\Support\Facades\Hash::check($adminPin, $a->pin);
+
+                $admin = User::where('role', 'admin')->whereNotNull('pin')->get()->first(function ($a) use ($adminPin) {
+                    return Hash::check($adminPin, $a->pin);
                 });
 
-                if (!$admin) {
+                if (! $admin) {
                     return response()->json(['message' => 'PIN de administrador inválido para retiro.'], 403);
                 }
                 $authorizedBy = $admin->id;
@@ -145,22 +149,22 @@ class CashMovementController extends Controller
                     $amount = $payment['amount'];
                     $method = $payment['payment_method'];
                     $checkId = $payment['check_id'] ?? null;
-                    
+
                     $totalAmountPaid += $amount;
 
                     $movement = CashMovement::create([
-                        'cash_shift_id'  => $shift->id,
-                        'user_id'        => $user->id,
-                        'authorized_by'  => $authorizedBy,
-                        'supplier_id'    => $validated['supplier_id'] ?? null,
-                        'check_id'       => $checkId,
-                        'amount'         => $amount,
+                        'cash_shift_id' => $shift->id,
+                        'user_id' => $user->id,
+                        'authorized_by' => $authorizedBy,
+                        'supplier_id' => $validated['supplier_id'] ?? null,
+                        'check_id' => $checkId,
+                        'amount' => $amount,
                         'payment_method' => $method,
-                        'type'           => $validated['type'],
-                        'category'       => $validated['category'] ?? null,
+                        'type' => $validated['type'],
+                        'category' => $validated['category'] ?? null,
                         'expense_category_id' => $validated['expense_category_id'] ?? null,
                         'receipt_file_url' => $validated['receipt_file_url'] ?? null,
-                        'description'    => $validated['description'] ?? null,
+                        'description' => $validated['description'] ?? null,
                         'receipt_number' => $validated['receipt_number'] ?? null,
                     ]);
 
@@ -174,7 +178,7 @@ class CashMovementController extends Controller
                 }
 
                 // Si es pago o reembolso de proveedor, actualizar deuda total
-                if (!empty($validated['supplier_id'])) {
+                if (! empty($validated['supplier_id'])) {
                     $supplier = Supplier::find($validated['supplier_id']);
                     if ($supplier) {
                         if (in_array($validated['type'], ['supplier_payment', 'expense'])) {
@@ -186,21 +190,25 @@ class CashMovementController extends Controller
                 }
             });
 
+            if ($validated['type'] === 'expense') {
+                ReportCacheService::flush();
+            }
+
             return response()->json([
-                'message'   => 'Movimientos registrados exitosamente.',
+                'message' => 'Movimientos registrados exitosamente.',
                 'movements' => collect($createdMovements)->map(fn ($m) => [
-                    'id'             => $m->id,
-                    'amount'         => $m->amount,
+                    'id' => $m->id,
+                    'amount' => $m->amount,
                     'payment_method' => $m->payment_method,
-                    'type'           => $m->type,
-                    'category'       => $m->category,
-                    'created_at'     => $m->created_at->toIso8601String(),
+                    'type' => $m->type,
+                    'category' => $m->category,
+                    'created_at' => $m->created_at->toIso8601String(),
                 ])->values(),
             ], 201);
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Error crítico al procesar el movimiento.',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -238,11 +246,15 @@ class CashMovementController extends Controller
                 $movement->delete();
             });
 
+            if ($movement->type === 'expense') {
+                ReportCacheService::flush();
+            }
+
             return response()->json(['message' => 'Movimiento anulado exitosamente.']);
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Error al anular el movimiento.',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -250,22 +262,22 @@ class CashMovementController extends Controller
     public function uploadAttachment(Request $request)
     {
         $request->validate([
-            'file' => 'required|file|max:5120|mimes:jpeg,png,jpg,pdf'
+            'file' => 'required|file|max:5120|mimes:jpeg,png,jpg,pdf',
         ]);
 
         try {
             $file = $request->file('file');
             $path = $file->store('cash_receipts', 'public');
-            
+
             return response()->json([
                 'message' => 'Archivo subido correctamente.',
                 'path' => $path,
-                'url' => asset('storage/' . $path)
+                'url' => asset('storage/'.$path),
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Error al subir el archivo.',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }

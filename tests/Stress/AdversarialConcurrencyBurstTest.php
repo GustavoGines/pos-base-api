@@ -6,11 +6,10 @@
  * Systematically tests varying concurrency levels
  * to evaluate the headroom and failure threshold of the 5-attempt retry with jitter.
  */
-
-if (!isset($app)) {
-    require_once __DIR__ . '/../../vendor/autoload.php';
-    $app = require_once __DIR__ . '/../../bootstrap/app.php';
-    $kernel = $app->make(\Illuminate\Contracts\Console\Kernel::class);
+if (! isset($app)) {
+    require_once __DIR__.'/../../vendor/autoload.php';
+    $app = require_once __DIR__.'/../../bootstrap/app.php';
+    $kernel = $app->make(Kernel::class);
     $kernel->bootstrap();
 }
 
@@ -18,21 +17,23 @@ config([
     'database.default' => 'mysql',
     'database.connections.mysql.database' => 'sistema_pos_stress_test',
 ]);
-\Illuminate\Support\Facades\DB::purge('mysql');
-\Illuminate\Support\Facades\DB::reconnect('mysql');
-\Illuminate\Support\Facades\DB::setDefaultConnection('mysql');
+DB::purge('mysql');
+DB::reconnect('mysql');
+DB::setDefaultConnection('mysql');
 
-use Illuminate\Support\Facades\DB;
 use App\Models\Quote;
+use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Support\Facades\DB;
 
-function runBurst(int $concurrency): array {
+function runBurst(int $concurrency): array
+{
     // Reset table cleanly
     DB::table('quote_items')->delete();
     DB::table('quotes')->delete();
 
     $syncTime = microtime(true) + 0.6;
     $phpBinary = PHP_BINARY;
-    $workerScript = __DIR__ . '/StressWorker.php';
+    $workerScript = __DIR__.'/StressWorker.php';
 
     $procs = [];
     $pipes = [];
@@ -71,8 +72,8 @@ function runBurst(int $concurrency): array {
 
         $results[$i] = [
             'exit_code' => $exitCode,
-            'parsed'    => $parsed,
-            'stderr'    => $stderr,
+            'parsed' => $parsed,
+            'stderr' => $stderr,
         ];
     }
 
@@ -99,14 +100,14 @@ function runBurst(int $concurrency): array {
     $uniqueCount = count(array_unique($dbQuotes));
 
     return [
-        'concurrency'      => $concurrency,
-        'successes'        => $successCount,
-        'failures'         => $failCount,
+        'concurrency' => $concurrency,
+        'successes' => $successCount,
+        'failures' => $failCount,
         'deadlocks_leaked' => $deadlockCount,
-        'statuses'         => $statuses,
-        'db_count'         => count($dbQuotes),
-        'unique_count'     => $uniqueCount,
-        'db_numbers'       => $dbQuotes,
+        'statuses' => $statuses,
+        'db_count' => count($dbQuotes),
+        'unique_count' => $uniqueCount,
+        'db_numbers' => $dbQuotes,
     ];
 }
 

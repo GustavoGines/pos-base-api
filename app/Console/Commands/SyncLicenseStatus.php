@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 
@@ -29,6 +30,7 @@ class SyncLicenseStatus extends Command
         if (empty($apiKey)) {
             // Sin API Key configurada — modo sin licencia, no hacer nada
             $this->info('Sin API Key configurada. Saltando sincronización.');
+
             return self::SUCCESS;
         }
 
@@ -36,7 +38,7 @@ class SyncLicenseStatus extends Command
 
         try {
             $response = Http::timeout(30)->post("{$serverUrl}/api/check-license", [
-                'api_key' => $apiKey
+                'api_key' => $apiKey,
             ]);
 
             if ($response->successful()) {
@@ -60,7 +62,7 @@ class SyncLicenseStatus extends Command
                 $this->warn("Respuesta inesperada del servidor ({$response->status()}). Estado local sin modificar.");
             }
 
-        } catch (\Illuminate\Http\Client\ConnectionException $e) {
+        } catch (ConnectionException $e) {
             // Sin internet — modo offline, el estado local se mantiene intacto
             $this->info('Sin conexión al servidor. El sistema continúa en modo offline.');
 

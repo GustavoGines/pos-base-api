@@ -5,8 +5,11 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Quote;
 use App\Models\QuoteItem;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Módulo de Presupuestos — solo activo cuando business_type = 'hardware_store'.
@@ -25,21 +28,21 @@ class QuoteController extends Controller
         if ($search = $request->query('search')) {
             $query->where(function ($q) use ($search) {
                 $q->where('quote_number', 'like', "%{$search}%")
-                  ->orWhere('customer_name', 'like', "%{$search}%")
-                  ->orWhere('customer_phone', 'like', "%{$search}%");
+                    ->orWhere('customer_name', 'like', "%{$search}%")
+                    ->orWhere('customer_phone', 'like', "%{$search}%");
             });
         }
 
         if ($status = $request->query('status')) {
             if ($status === 'expired') {
                 $query->where('status', 'pending')
-                      ->where('valid_until', '<', now()->toDateString());
+                    ->where('valid_until', '<', now()->toDateString());
             } elseif ($status === 'pending') {
                 $query->where('status', 'pending')
-                      ->where(function ($q) {
-                          $q->whereNull('valid_until')
+                    ->where(function ($q) {
+                        $q->whereNull('valid_until')
                             ->orWhere('valid_until', '>=', now()->toDateString());
-                      });
+                    });
             } else {
                 $query->where('status', $status);
             }
@@ -76,24 +79,24 @@ class QuoteController extends Controller
     {
         try {
             $validated = $request->validate([
-                'customer_name'  => 'nullable|string|max:255',
+                'customer_name' => 'nullable|string|max:255',
                 'customer_phone' => 'nullable|string|max:50',
-                'notes'          => 'nullable|string|max:1000',
-                'valid_until'    => 'nullable|date|after_or_equal:today',
-                'user_id'        => 'nullable|exists:users,id',
+                'notes' => 'nullable|string|max:1000',
+                'valid_until' => 'nullable|date|after_or_equal:today',
+                'user_id' => 'nullable|exists:users,id',
                 // Lista de precios aplicada (base | wholesale | card | custom label)
-                'price_list'     => 'nullable|string|max:100',
-                'items'          => 'required|array|min:1',
-                'items.*.product_id'   => 'nullable|integer',
+                'price_list' => 'nullable|string|max:100',
+                'items' => 'required|array|min:1',
+                'items.*.product_id' => 'nullable|integer',
                 'items.*.product_name' => 'required|string|max:255',
-                'items.*.unit_price'   => 'required|numeric|min:0',
-                'items.*.quantity'     => 'required|numeric|min:0.001',
+                'items.*.unit_price' => 'required|numeric|min:0',
+                'items.*.quantity' => 'required|numeric|min:0.001',
             ]);
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            \Illuminate\Support\Facades\Log::error('Validation Failed in QuoteController: ' . json_encode($e->errors()));
+        } catch (ValidationException $e) {
+            Log::error('Validation Failed in QuoteController: '.json_encode($e->errors()));
             throw $e;
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::error('Unknown error in QuoteController store validation: ' . $e->getMessage());
+            Log::error('Unknown error in QuoteController store validation: '.$e->getMessage());
             throw $e;
         }
 
@@ -110,33 +113,33 @@ class QuoteController extends Controller
                 });
 
                 $quote = Quote::create([
-                    'quote_number'   => Quote::nextQuoteNumber(),
-                    'status'         => 'pending',
-                    'subtotal'       => $subtotal,
-                    'total'          => $subtotal, // Sin impuestos en esta versión MVP
-                    'customer_name'  => $validated['customer_name'] ?? null,
+                    'quote_number' => Quote::nextQuoteNumber(),
+                    'status' => 'pending',
+                    'subtotal' => $subtotal,
+                    'total' => $subtotal, // Sin impuestos en esta versión MVP
+                    'customer_name' => $validated['customer_name'] ?? null,
                     'customer_phone' => $validated['customer_phone'] ?? null,
-                    'notes'          => $validated['notes'] ?? null,
-                    'valid_until'    => $validated['valid_until'] ?? now()->addDays(7)->toDateString(),
-                    'user_id'        => $validated['user_id'] ?? null,
-                    'price_list'     => $validated['price_list'] ?? 'base',
+                    'notes' => $validated['notes'] ?? null,
+                    'valid_until' => $validated['valid_until'] ?? now()->addDays(7)->toDateString(),
+                    'user_id' => $validated['user_id'] ?? null,
+                    'price_list' => $validated['price_list'] ?? 'base',
                 ]);
 
                 foreach ($validated['items'] as $item) {
                     QuoteItem::create([
-                        'quote_id'     => $quote->id,
-                        'product_id'   => $item['product_id'] ?? null,
+                        'quote_id' => $quote->id,
+                        'product_id' => $item['product_id'] ?? null,
                         'product_name' => $item['product_name'],
-                        'unit_price'   => $item['unit_price'],
-                        'quantity'     => $item['quantity'],
-                        'subtotal'     => round($item['unit_price'] * $item['quantity'], 2),
+                        'unit_price' => $item['unit_price'],
+                        'quantity' => $item['quantity'],
+                        'subtotal' => round($item['unit_price'] * $item['quantity'], 2),
                     ]);
                 }
 
                 DB::commit();
 
                 return response()->json($quote->load('items'), 201);
-            } catch (\Illuminate\Database\QueryException $e) {
+            } catch (QueryException $e) {
                 DB::rollBack();
                 $isRetryable = in_array($e->getCode(), [23000, '23000', 40001, '40001', 1213])
                     || str_contains($e->getMessage(), 'Duplicate entry')
@@ -146,15 +149,18 @@ class QuoteController extends Controller
 
                 if ($isRetryable && $attempt < $maxAttempts) {
                     usleep(random_int(10000, 30000) * $attempt);
+
                     continue;
                 }
 
-                \Illuminate\Support\Facades\Log::error('Database Error in QuoteController store: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
-                return response()->json(['message' => 'Error al guardar el presupuesto: ' . $e->getMessage()], 500);
+                Log::error('Database Error in QuoteController store: '.$e->getMessage()."\n".$e->getTraceAsString());
+
+                return response()->json(['message' => 'Error al guardar el presupuesto: '.$e->getMessage()], 500);
             } catch (\Throwable $e) {
                 DB::rollBack();
-                \Illuminate\Support\Facades\Log::error('Database Error in QuoteController store: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
-                return response()->json(['message' => 'Error al guardar el presupuesto: ' . $e->getMessage()], 500);
+                Log::error('Database Error in QuoteController store: '.$e->getMessage()."\n".$e->getTraceAsString());
+
+                return response()->json(['message' => 'Error al guardar el presupuesto: '.$e->getMessage()], 500);
             }
         }
     }
@@ -184,10 +190,10 @@ class QuoteController extends Controller
         }
 
         $validated = $request->validate([
-            'customer_name'  => 'nullable|string|max:255',
+            'customer_name' => 'nullable|string|max:255',
             'customer_phone' => 'nullable|string|max:50',
-            'notes'          => 'nullable|string|max:1000',
-            'valid_until'    => 'nullable|date',
+            'notes' => 'nullable|string|max:1000',
+            'valid_until' => 'nullable|date',
         ]);
 
         $quote->update($validated);

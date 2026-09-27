@@ -2,10 +2,10 @@
 
 namespace App\Console\Commands;
 
-use Illuminate\Console\Command;
 use App\Models\Customer;
 use App\Models\Product;
 use Carbon\Carbon;
+use Illuminate\Console\Command;
 
 class PruneTrashCommand extends Command
 {
@@ -37,16 +37,16 @@ class PruneTrashCommand extends Command
         $customersDeleted = Customer::onlyTrashed()
             ->where('deleted_at', '<', $date)
             ->forceDelete();
-            
+
         $this->info("Deleted {$customersDeleted} customers.");
 
         // Prune Products
         $productsDeleted = Product::onlyTrashed()
             ->where('deleted_at', '<', $date)
             ->forceDelete();
-            
+
         $this->info("Deleted {$productsDeleted} products.");
 
-        $this->info("Trash pruning completed.");
+        $this->info('Trash pruning completed.');
     }
 }

@@ -7,7 +7,6 @@ use App\Models\Quote;
 use App\Models\User;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class AdversarialQuoteDeadlockRetryTest extends TestCase
@@ -24,7 +23,7 @@ class AdversarialQuoteDeadlockRetryTest extends TestCase
         $this->actingAsAdmin($this->user);
 
         BusinessSetting::create([
-            'key'   => 'license_features_dict',
+            'key' => 'license_features_dict',
             'value' => json_encode(['quotes' => true]),
         ]);
     }
@@ -36,6 +35,7 @@ class AdversarialQuoteDeadlockRetryTest extends TestCase
     {
         $pdoException = new \PDOException($errorMessage, (int) $errorCode);
         $pdoException->errorInfo = [$sqlState, $errorCode, $errorMessage];
+
         return new QueryException('mysql', 'INSERT INTO quotes ...', [], $pdoException);
     }
 

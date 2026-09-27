@@ -8,7 +8,7 @@ class BulkPriceHistory extends Model
 {
     protected $fillable = [
         'user_id', 'percentage', 'rounding_rule', 'target_field',
-        'filters', 'affected_count', 'reverted', 'reverted_at'
+        'filters', 'affected_count', 'reverted', 'reverted_at',
     ];
 
     protected $casts = [

@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
@@ -19,7 +20,7 @@ return new class extends Migration
         // `optimize:clear` y `optimize` vacían el config cache, lo que resetea
         // todas las conexiones de BD al .env real (MySQL), rompiendo el entorno
         // in-memory de los tests. En SQLite de testing esta migración es un no-op.
-        if (\Illuminate\Support\Facades\DB::getDriverName() === 'sqlite') {
+        if (DB::getDriverName() === 'sqlite') {
             return;
         }
 

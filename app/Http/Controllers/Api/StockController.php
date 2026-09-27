@@ -3,9 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\AdjustStockRequest;
 use App\Models\Product;
 use App\Models\StockMovement;
-use App\Http\Requests\AdjustStockRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -40,10 +40,10 @@ class StockController extends Controller
                 // Registrar el movimiento solo si hubo cambio físico de stock
                 StockMovement::create([
                     'product_id' => $product->id,
-                    'user_id'    => $validated['user_id'] ?? $request->attributes->get('authenticated_user')?->id,
-                    'type'       => $type,
-                    'quantity'   => $validated['quantity'],
-                    'notes'      => $validated['notes'] ?? 'Ajuste manual desde panel de control',
+                    'user_id' => $validated['user_id'] ?? $request->attributes->get('authenticated_user')?->id,
+                    'type' => $type,
+                    'quantity' => $validated['quantity'],
+                    'notes' => $validated['notes'] ?? 'Ajuste manual desde panel de control',
                 ]);
             }
 
@@ -57,9 +57,9 @@ class StockController extends Controller
         $product->refresh();
 
         return response()->json([
-            'message'      => 'Gestión de stock procesada con éxito.',
-            'product'      => $product->load(['category', 'brand', 'supplier']), // Enviamos el objeto completo para el frontend
-            'new_stock'    => $product->stock,
+            'message' => 'Gestión de stock procesada con éxito.',
+            'product' => $product->load(['category', 'brand', 'supplier']), // Enviamos el objeto completo para el frontend
+            'new_stock' => $product->stock,
         ]);
     }
 
@@ -77,8 +77,8 @@ class StockController extends Controller
 
         if ($request->has('start_date') && $request->has('end_date')) {
             $query->whereBetween('created_at', [
-                $request->start_date . ' 00:00:00',
-                $request->end_date . ' 23:59:59'
+                $request->start_date.' 00:00:00',
+                $request->end_date.' 23:59:59',
             ]);
         }
 

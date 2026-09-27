@@ -8,9 +8,11 @@ use App\Models\Customer;
 use App\Models\CustomerTransaction;
 use App\Models\Sale;
 use App\Models\ThirdPartyCheck;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class CustomerController extends Controller
 {
@@ -21,11 +23,11 @@ class CustomerController extends Controller
     {
         $query = Customer::query();
 
-        if ($request->has('search') && !empty($request->search)) {
-            $searchTerm = '%' . $request->input('search') . '%';
+        if ($request->has('search') && ! empty($request->search)) {
+            $searchTerm = '%'.$request->input('search').'%';
             $query->where(function ($q) use ($searchTerm) {
                 $q->where('name', 'like', $searchTerm)
-                  ->orWhere('document_number', 'like', $searchTerm);
+                    ->orWhere('document_number', 'like', $searchTerm);
             });
         }
 
@@ -38,26 +40,26 @@ class CustomerController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'name'            => 'required|string|max:255',
-            'phone'           => 'nullable|string|max:20',
+            'name' => 'required|string|max:255',
+            'phone' => 'nullable|string|max:20',
             'document_number' => [
                 'required',
                 'string',
                 'max:50',
-                Rule::unique('customers')->whereNull('deleted_at')
+                Rule::unique('customers')->whereNull('deleted_at'),
             ],
-            'credit_limit'    => 'nullable|numeric|min:0',
-            'balance'         => 'nullable|numeric',
+            'credit_limit' => 'nullable|numeric|min:0',
+            'balance' => 'nullable|numeric',
             'default_price_tier' => 'nullable|string|in:base,wholesale,card',
             'delivery_address' => 'nullable|string|max:500',
             'is_internal_account' => 'nullable|boolean',
         ], [
-            'name.required'            => 'El nombre del cliente es obligatorio.',
+            'name.required' => 'El nombre del cliente es obligatorio.',
             'document_number.required' => 'El número de documento es obligatorio.',
-            'document_number.unique'   => 'Ya existe un cliente con ese número de documento (DNI/RUT). Verificá los datos.',
+            'document_number.unique' => 'Ya existe un cliente con ese número de documento (DNI/RUT). Verificá los datos.',
         ]);
 
-        if (!isset($validated['balance'])) {
+        if (! isset($validated['balance'])) {
             $validated['balance'] = 0.00;
         }
 
@@ -84,24 +86,24 @@ class CustomerController extends Controller
     public function update(Request $request, Customer $customer)
     {
         $validated = $request->validate([
-            'name'            => 'sometimes|required|string|max:255',
-            'phone'           => 'nullable|string|max:20',
+            'name' => 'sometimes|required|string|max:255',
+            'phone' => 'nullable|string|max:20',
             'document_number' => [
                 'sometimes',
                 'required',
                 'string',
                 'max:50',
-                Rule::unique('customers')->ignore($customer->id)->whereNull('deleted_at')
+                Rule::unique('customers')->ignore($customer->id)->whereNull('deleted_at'),
             ],
-            'credit_limit'    => 'nullable|numeric|min:0',
-            'is_active'       => 'sometimes|boolean',
+            'credit_limit' => 'nullable|numeric|min:0',
+            'is_active' => 'sometimes|boolean',
             'default_price_tier' => 'nullable|string|in:base,wholesale,card',
             'delivery_address' => 'nullable|string|max:500',
             'is_internal_account' => 'sometimes|boolean',
         ], [
-            'name.required'            => 'El nombre del cliente es obligatorio.',
+            'name.required' => 'El nombre del cliente es obligatorio.',
             'document_number.required' => 'El número de documento es obligatorio.',
-            'document_number.unique'   => 'Ya existe otro cliente con ese número de documento (DNI/RUT).',
+            'document_number.unique' => 'Ya existe otro cliente con ese número de documento (DNI/RUT).',
         ]);
 
         $customer->update($validated);
@@ -116,11 +118,12 @@ class CustomerController extends Controller
     {
         if ($customer->balance > 0) {
             return response()->json([
-                'message' => 'No se puede eliminar un cliente con saldo pendiente (deudor).'
+                'message' => 'No se puede eliminar un cliente con saldo pendiente (deudor).',
             ], 403);
         }
 
         $customer->delete();
+
         return response()->json(null, 204);
     }
 
@@ -150,18 +153,18 @@ class CustomerController extends Controller
     public function registerPayment(Request $request, Customer $customer)
     {
         $request->validate([
-            'payments'          => 'sometimes|array',
+            'payments' => 'sometimes|array',
             'payments.*.method' => 'required_with:payments|string|in:cash,card,transfer,cheque',
             'payments.*.amount' => 'required_with:payments|numeric|gt:0',
             'payments.*.check_details' => 'nullable|array',
-            'amount'            => 'required_without:payments|numeric|gt:0',
-            'payment_method'    => 'required_without:payments|string|in:cash,card,transfer,cheque',
-            'description'       => 'nullable|string|max:255',
-            'sale_ids'          => 'nullable|array',
-            'sale_ids.*'        => 'integer|exists:sales,id',
-            'check_details'     => 'nullable|array|required_if:payment_method,cheque',
-            'cash_shift_id'     => 'nullable|integer|exists:cash_shifts,id',
-            'is_refund'         => 'nullable|boolean',
+            'amount' => 'required_without:payments|numeric|gt:0',
+            'payment_method' => 'required_without:payments|string|in:cash,card,transfer,cheque',
+            'description' => 'nullable|string|max:255',
+            'sale_ids' => 'nullable|array',
+            'sale_ids.*' => 'integer|exists:sales,id',
+            'check_details' => 'nullable|array|required_if:payment_method,cheque',
+            'cash_shift_id' => 'nullable|integer|exists:cash_shifts,id',
+            'is_refund' => 'nullable|boolean',
         ]);
 
         $isRefund = $request->input('is_refund', false);
@@ -170,8 +173,8 @@ class CustomerController extends Controller
             [
                 'method' => $request->payment_method,
                 'amount' => (float) $request->amount,
-                'check_details' => $request->check_details
-            ]
+                'check_details' => $request->check_details,
+            ],
         ];
 
         $totalAmount = array_sum(array_column($payments, 'amount'));
@@ -182,19 +185,19 @@ class CustomerController extends Controller
 
                 if ($isRefund) {
                     if ($lockedCustomer->balance >= 0) {
-                        throw \Illuminate\Validation\ValidationException::withMessages([
-                            'amount' => ["No se puede procesar un reintegro porque el cliente no tiene saldo a favor."]
+                        throw ValidationException::withMessages([
+                            'amount' => ['No se puede procesar un reintegro porque el cliente no tiene saldo a favor.'],
                         ]);
                     }
                     if ($totalAmount > abs($lockedCustomer->balance)) {
-                        throw \Illuminate\Validation\ValidationException::withMessages([
-                            'amount' => ["El monto del reintegro (\${$totalAmount}) no puede superar el saldo a favor actual (\$" . abs($lockedCustomer->balance) . ")."]
+                        throw ValidationException::withMessages([
+                            'amount' => ["El monto del reintegro (\${$totalAmount}) no puede superar el saldo a favor actual (\$".abs($lockedCustomer->balance).').'],
                         ]);
                     }
                 } else {
                     if ($totalAmount > $lockedCustomer->balance) {
-                        throw \Illuminate\Validation\ValidationException::withMessages([
-                            'amount' => ["El monto del abono (\${$totalAmount}) no puede superar el saldo actual de la deuda (\${$lockedCustomer->balance})."]
+                        throw ValidationException::withMessages([
+                            'amount' => ["El monto del abono (\${$totalAmount}) no puede superar el saldo actual de la deuda (\${$lockedCustomer->balance})."],
                         ]);
                     }
                 }
@@ -209,43 +212,45 @@ class CustomerController extends Controller
                 $remainingAmount = $totalAmount;
                 $processedSales = [];
 
-                if (!$isRefund) {
+                if (! $isRefund) {
                     // ── Distribuir a tickets específicos o a los más antiguos pendientes ──────────────────────
                     if ($request->filled('sale_ids')) {
                         $sales = Sale::whereIn('id', $request->sale_ids)
-                                     ->where('customer_id', $lockedCustomer->id)
-                                     ->lockForUpdate()
-                                     ->orderBy('created_at', 'asc')
-                                     ->get();
+                            ->where('customer_id', $lockedCustomer->id)
+                            ->lockForUpdate()
+                            ->orderBy('created_at', 'asc')
+                            ->get();
                     } else {
                         $sales = Sale::where('customer_id', $lockedCustomer->id)
-                                     ->whereIn('payment_status', ['pending', 'partial'])
-                                     ->lockForUpdate()
-                                     ->orderBy('created_at', 'asc')
-                                     ->get();
+                            ->whereIn('payment_status', ['pending', 'partial'])
+                            ->lockForUpdate()
+                            ->orderBy('created_at', 'asc')
+                            ->get();
                     }
 
-                    /** @var \Illuminate\Database\Eloquent\Collection<int, Sale> $sales */
+                    /** @var Collection<int, Sale> $sales */
                     foreach ($sales as $sale) {
-                        if ($remainingAmount <= 0) break;
+                        if ($remainingAmount <= 0) {
+                            break;
+                        }
 
-                        $payForThisSale = min((float)$sale->amount_due, $remainingAmount);
-                        
+                        $payForThisSale = min((float) $sale->amount_due, $remainingAmount);
+
                         if ($payForThisSale > 0) {
                             $sale->amount_due -= $payForThisSale;
                             $sale->payment_status = $sale->amount_due <= 0 ? 'paid' : 'partial';
                             $sale->save();
-                            
+
                             $remainingAmount -= $payForThisSale;
                             $processedSales[] = $sale->id;
                         }
                     }
 
-                    if (!empty($processedSales) && !$request->filled('description')) {
+                    if (! empty($processedSales) && ! $request->filled('description')) {
                         if ($request->filled('sale_ids')) {
-                            $description = "Pago de Tickets: #" . implode(', #', $processedSales);
+                            $description = 'Pago de Tickets: #'.implode(', #', $processedSales);
                         } else {
-                            $description = "Abono Global aplicado a Tickets: #" . implode(', #', $processedSales);
+                            $description = 'Abono Global aplicado a Tickets: #'.implode(', #', $processedSales);
                         }
                     }
                 }
@@ -264,32 +269,32 @@ class CustomerController extends Controller
                     $paymentMethod = $payment['method'];
 
                     $trx = CustomerTransaction::create([
-                        'customer_id'            => $lockedCustomer->id,
-                        'user_id'                => $request->attributes->get('authenticated_user')?->id ?? User::first()?->id ?? 1,
-                        'cash_shift_id'          => $activeShift ? $activeShift->id : null,
-                        'sale_id'                => count($processedSales) === 1 ? $processedSales[0] : null,
-                        'type'                   => $isRefund ? 'refund' : 'payment',
-                        'payment_method'         => $paymentMethod,
-                        'amount'                 => $paymentAmount,
-                        'balance_after'          => $lockedCustomer->balance, // Refleja el final
-                        'description'            => $description,
+                        'customer_id' => $lockedCustomer->id,
+                        'user_id' => $request->attributes->get('authenticated_user')?->id ?? User::first()?->id ?? 1,
+                        'cash_shift_id' => $activeShift ? $activeShift->id : null,
+                        'sale_id' => count($processedSales) === 1 ? $processedSales[0] : null,
+                        'type' => $isRefund ? 'refund' : 'payment',
+                        'payment_method' => $paymentMethod,
+                        'amount' => $paymentAmount,
+                        'balance_after' => $lockedCustomer->balance, // Refleja el final
+                        'description' => $description,
                     ]);
 
                     // ── Crear cheque si aplica ───────────────────────────────────
                     if ($paymentMethod === 'cheque' && isset($payment['check_details'])) {
                         $cd = $payment['check_details'];
                         ThirdPartyCheck::create([
-                            'cash_shift_id'   => $activeShift ? $activeShift->id : null,
-                            'customer_id'     => $lockedCustomer->id,
-                            'sale_id'         => count($processedSales) === 1 ? $processedSales[0] : null,
-                            'bank_name'       => $cd['bank_name'] ?? '',
-                            'check_number'    => $cd['check_number'] ?? '',
-                            'issuer_cuit'     => $cd['issuer_cuit'] ?? '',
-                            'issuer_name'     => $cd['issuer_name'] ?? '',
-                            'issue_date'      => $cd['issue_date'] ?? now()->toDateString(),
-                            'payment_date'    => $cd['payment_date'] ?? now()->toDateString(),
-                            'amount'          => $paymentAmount,
-                            'status'          => 'in_wallet',
+                            'cash_shift_id' => $activeShift ? $activeShift->id : null,
+                            'customer_id' => $lockedCustomer->id,
+                            'sale_id' => count($processedSales) === 1 ? $processedSales[0] : null,
+                            'bank_name' => $cd['bank_name'] ?? '',
+                            'check_number' => $cd['check_number'] ?? '',
+                            'issuer_cuit' => $cd['issuer_cuit'] ?? '',
+                            'issuer_name' => $cd['issuer_name'] ?? '',
+                            'issue_date' => $cd['issue_date'] ?? now()->toDateString(),
+                            'payment_date' => $cd['payment_date'] ?? now()->toDateString(),
+                            'amount' => $paymentAmount,
+                            'status' => 'in_wallet',
                         ]);
                     }
                 }
@@ -300,19 +305,19 @@ class CustomerController extends Controller
             $customer->refresh();
 
             return response()->json([
-                'message'     => 'Abono registrado exitosamente.',
+                'message' => 'Abono registrado exitosamente.',
                 'transaction' => $transaction,
                 'new_balance' => $customer->balance,
             ]);
 
-        } catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'message' => 'Error de validación.',
-                'errors'  => $e->errors(),
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
-                'error'   => 'Error al procesar el pago.',
+                'error' => 'Error al procesar el pago.',
                 'details' => $e->getMessage(),
             ], 500);
         }

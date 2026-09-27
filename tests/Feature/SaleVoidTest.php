@@ -42,37 +42,37 @@ class SaleVoidTest extends TestCase
         ?Customer $customer = null,
         ?PaymentMethod $metodo = null
     ): Sale {
-        $user   = User::factory()->create(['role' => 'admin']);
-        $shift  = $this->crearTurnoAbierto(user: $user);
+        $user = User::factory()->create(['role' => 'admin']);
+        $shift = $this->crearTurnoAbierto(user: $user);
         $metodo = $metodo ?? $this->crearMetodoEfectivo();
 
         $sale = Sale::create([
-            'total'           => $product->selling_price * $qty,
+            'total' => $product->selling_price * $qty,
             'total_surcharge' => 0,
-            'payment_status'  => 'paid',
-            'amount_due'      => 0,
-            'status'          => 'completed',
-            'cash_shift_id'   => $shift->id,
-            'user_id'         => $user->id,
-            'customer_id'     => $customer?->id,
+            'payment_status' => 'paid',
+            'amount_due' => 0,
+            'status' => 'completed',
+            'cash_shift_id' => $shift->id,
+            'user_id' => $user->id,
+            'customer_id' => $customer?->id,
         ]);
 
         SaleItem::create([
-            'sale_id'        => $sale->id,
-            'product_id'     => $product->id,
-            'product_name'   => $product->name,
-            'quantity'       => $qty,
-            'unit_price'     => $product->selling_price,
-            'unit_cost_price'=> $product->cost_price,
-            'subtotal'       => $product->selling_price * $qty,
+            'sale_id' => $sale->id,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => $qty,
+            'unit_price' => $product->selling_price,
+            'unit_cost_price' => $product->cost_price,
+            'subtotal' => $product->selling_price * $qty,
         ]);
 
         SalePayment::create([
-            'sale_id'           => $sale->id,
+            'sale_id' => $sale->id,
             'payment_method_id' => $metodo->id,
-            'base_amount'       => $product->selling_price * $qty,
-            'surcharge_amount'  => 0,
-            'total_amount'      => $product->selling_price * $qty,
+            'base_amount' => $product->selling_price * $qty,
+            'surcharge_amount' => 0,
+            'total_amount' => $product->selling_price * $qty,
         ]);
 
         return $sale;
@@ -80,17 +80,17 @@ class SaleVoidTest extends TestCase
 
     // ── AN-01: Anular venta → devuelve stock ──────────────────────────────────
 
-    public function test_AN01_anular_venta_devuelve_stock_al_producto(): void
+    public function test_a_n01_anular_venta_devuelve_stock_al_producto(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
         $product = Product::create([
-            'name'          => 'Producto Anulable',
+            'name' => 'Producto Anulable',
             'internal_code' => 'AN001',
             'selling_price' => 100.00,
-            'cost_price'    => 50.00,
-            'stock'         => 8, // Ya descontado (había 10, se vendieron 2)
-            'active'        => true,
-            'sales_count'   => 2,
+            'cost_price' => 50.00,
+            'stock' => 8, // Ya descontado (había 10, se vendieron 2)
+            'active' => true,
+            'sales_count' => 2,
         ]);
 
         $sale = $this->crearVentaCompletada($product, qty: 2);
@@ -99,7 +99,7 @@ class SaleVoidTest extends TestCase
             ->postJson("/api/sales/{$sale->id}/void", ['cash_shift_id' => $sale->cash_shift_id]);
 
         $response->assertStatus(200)
-                 ->assertJsonPath('message', fn($msg) => str_contains($msg, 'anulada'));
+            ->assertJsonPath('message', fn ($msg) => str_contains($msg, 'anulada'));
 
         // Stock restaurado: 8 + 2 = 10
         $this->assertEquals(10, (float) $product->fresh()->stock,
@@ -111,42 +111,42 @@ class SaleVoidTest extends TestCase
         // Se creó el movimiento de reversión
         $this->assertDatabaseHas('stock_movements', [
             'product_id' => $product->id,
-            'type'       => 'in',
-            'quantity'   => 2,
+            'type' => 'in',
+            'quantity' => 2,
         ]);
     }
 
     // ── AN-02: Anular COMBO → devuelve stock a hijos ──────────────────────────
 
-    public function test_AN02_anular_combo_devuelve_stock_a_hijos(): void
+    public function test_a_n02_anular_combo_devuelve_stock_a_hijos(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
 
         $ingrediente = Product::create([
-            'name'          => 'Ingrediente',
+            'name' => 'Ingrediente',
             'internal_code' => 'ING-AN',
             'selling_price' => 10.00,
-            'cost_price'    => 5.00,
-            'stock'         => 14, // 20 originales - 6 vendidos (2 combos × 3 unidades)
-            'active'        => true,
+            'cost_price' => 5.00,
+            'stock' => 14, // 20 originales - 6 vendidos (2 combos × 3 unidades)
+            'active' => true,
         ]);
 
         $combo = Product::create([
-            'name'          => 'Combo Anulable',
+            'name' => 'Combo Anulable',
             'internal_code' => 'COMBO-AN',
             'selling_price' => 500.00,
-            'cost_price'    => 0.00,
-            'stock'         => 99,
-            'active'        => true,
-            'is_combo'      => true,
+            'cost_price' => 0.00,
+            'stock' => 99,
+            'active' => true,
+            'is_combo' => true,
         ]);
 
         DB::table('product_combos')->insert([
             'parent_product_id' => $combo->id,
-            'child_product_id'  => $ingrediente->id,
-            'quantity'          => 3,
-            'created_at'        => now(),
-            'updated_at'        => now(),
+            'child_product_id' => $ingrediente->id,
+            'quantity' => 3,
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
 
         $sale = $this->crearVentaCompletada($combo, qty: 2);
@@ -167,37 +167,37 @@ class SaleVoidTest extends TestCase
 
     // ── AN-03: Anular CC → revierte balance del cliente ──────────────────────
 
-    public function test_AN03_anular_venta_cc_revierte_balance_del_cliente(): void
+    public function test_a_n03_anular_venta_cc_revierte_balance_del_cliente(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
-        $cc    = $this->crearMetodoCuentaCorriente();
+        $cc = $this->crearMetodoCuentaCorriente();
 
         $customer = Customer::create([
-            'name'            => 'Cliente CC',
+            'name' => 'Cliente CC',
             'document_number' => '44444444',
-            'balance'         => 500.00, // Tiene deuda de $500
+            'balance' => 500.00, // Tiene deuda de $500
         ]);
 
         $product = Product::create([
-            'name'          => 'Producto CC',
+            'name' => 'Producto CC',
             'internal_code' => 'CC-AN',
             'selling_price' => 500.00,
-            'cost_price'    => 250.00,
-            'stock'         => 3,
-            'active'        => true,
+            'cost_price' => 250.00,
+            'stock' => 3,
+            'active' => true,
         ]);
 
         $sale = $this->crearVentaCompletada($product, qty: 1, customer: $customer, metodo: $cc);
 
         // Crear la transacción de cargo que generó la venta en CC
         CustomerTransaction::create([
-            'customer_id'   => $customer->id,
-            'user_id'       => $admin->id,
-            'sale_id'       => $sale->id,
-            'type'          => 'charge',
-            'amount'        => 500.00,
+            'customer_id' => $customer->id,
+            'user_id' => $admin->id,
+            'sale_id' => $sale->id,
+            'type' => 'charge',
+            'amount' => 500.00,
             'balance_after' => 500.00,
-            'description'   => "Venta en Cta. Cte. — Ticket #{$sale->id}",
+            'description' => "Venta en Cta. Cte. — Ticket #{$sale->id}",
         ]);
 
         $response = $this->actingAsAdmin($admin)
@@ -212,24 +212,24 @@ class SaleVoidTest extends TestCase
         // Se creó la transacción de reversión en el ledger
         $this->assertDatabaseHas('customer_transactions', [
             'customer_id' => $customer->id,
-            'sale_id'     => $sale->id,
-            'type'        => 'payment',
-            'amount'      => 500.00,
+            'sale_id' => $sale->id,
+            'type' => 'payment',
+            'amount' => 500.00,
         ]);
     }
 
     // ── AN-04: Venta ya anulada → 422 ─────────────────────────────────────────
 
-    public function test_AN04_anular_venta_ya_anulada_retorna_422(): void
+    public function test_a_n04_anular_venta_ya_anulada_retorna_422(): void
     {
-        $admin   = User::factory()->create(['role' => 'admin']);
+        $admin = User::factory()->create(['role' => 'admin']);
         $product = Product::create([
-            'name'          => 'Producto Anulado',
+            'name' => 'Producto Anulado',
             'internal_code' => 'AN004',
             'selling_price' => 100.00,
-            'cost_price'    => 50.00,
-            'stock'         => 10,
-            'active'        => true,
+            'cost_price' => 50.00,
+            'stock' => 10,
+            'active' => true,
         ]);
 
         $sale = $this->crearVentaCompletada($product, qty: 1);
@@ -240,23 +240,22 @@ class SaleVoidTest extends TestCase
             ->postJson("/api/sales/{$sale->id}/void", ['cash_shift_id' => $sale->cash_shift_id]);
 
         $response->assertStatus(422)
-                 ->assertJsonPath('message', fn($msg) =>
-                     str_contains($msg, 'anulada') || str_contains($msg, 'ya está')
-                 );
+            ->assertJsonPath('message', fn ($msg) => str_contains($msg, 'anulada') || str_contains($msg, 'ya está')
+            );
     }
 
     // ── AN-05 + AN-06: Anular con remito → solo devuelve stock entregado ──────
 
-    public function test_AN05_AN06_anular_con_remito_solo_devuelve_stock_entregado_y_cancela_remito(): void
+    public function test_a_n05_a_n06_anular_con_remito_solo_devuelve_stock_entregado_y_cancela_remito(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
         $product = Product::create([
-            'name'          => 'Producto Remito',
+            'name' => 'Producto Remito',
             'internal_code' => 'REM-AN',
             'selling_price' => 100.00,
-            'cost_price'    => 50.00,
-            'stock'         => 7, // 10 - 3 entregados (de 5 comprados)
-            'active'        => true,
+            'cost_price' => 50.00,
+            'stock' => 7, // 10 - 3 entregados (de 5 comprados)
+            'active' => true,
         ]);
 
         $sale = $this->crearVentaCompletada($product, qty: 5);
@@ -264,13 +263,13 @@ class SaleVoidTest extends TestCase
         // Crear remito: se compraron 5 pero solo se entregaron 3
         $deliveryNote = DeliveryNote::create([
             'sale_id' => $sale->id,
-            'status'  => 'pending',
-            'notes'   => 'Entrega parcial',
+            'status' => 'pending',
+            'notes' => 'Entrega parcial',
         ]);
 
         DeliveryNoteItem::create([
-            'delivery_note_id'   => $deliveryNote->id,
-            'product_id'         => $product->id,
+            'delivery_note_id' => $deliveryNote->id,
+            'product_id' => $product->id,
             'quantity_purchased' => 5,
             'quantity_delivered' => 3, // Solo 3 fueron entregados y descontados del stock
         ]);

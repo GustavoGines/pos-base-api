@@ -13,8 +13,8 @@ class QuoteItem extends Model
 
     protected $casts = [
         'unit_price' => 'decimal:2',
-        'quantity'   => 'decimal:3',
-        'subtotal'   => 'decimal:2',
+        'quantity' => 'decimal:3',
+        'subtotal' => 'decimal:2',
     ];
 
     public function quote()

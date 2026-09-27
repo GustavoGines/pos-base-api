@@ -2,11 +2,9 @@
 
 namespace App\Http\Requests;
 
+use App\Models\ThirdPartyCheck;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
-use App\Models\CashShift;
-use App\Models\ThirdPartyCheck;
 
 class StoreCashMovementRequest extends FormRequest
 {
@@ -21,7 +19,7 @@ class StoreCashMovementRequest extends FormRequest
     /**
      * Get the validation rules that apply to the request.
      *
-     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
+     * @return array<string, ValidationRule|array<mixed>|string>
      */
     public function rules(): array
     {
@@ -32,21 +30,21 @@ class StoreCashMovementRequest extends FormRequest
             'description' => ['nullable', 'string', 'max:500'],
             'receipt_number' => ['nullable', 'string', 'max:100'],
             'receipt_file_url' => ['nullable', 'string', 'max:255'],
-            
+
             // Proveedor
             'supplier_id' => [
-                'nullable', 
+                'nullable',
                 'integer',
-                'exists:suppliers,id', 
+                'exists:suppliers,id',
                 'required_if:type,supplier_payment',
-                'prohibited_if:type,expense'
+                'prohibited_if:type,expense',
             ],
-            
+
             // Array de pagos (para pagos mixtos)
             'payments' => ['required', 'array', 'min:1'],
             'payments.*.amount' => ['required', 'numeric', 'min:0.01'],
             'payments.*.payment_method' => ['required', 'string', 'in:cash,transfer,check'],
-            
+
             // Validación específica si el pago incluye cheque
             'payments.*.check_id' => [
                 'nullable',
@@ -56,13 +54,13 @@ class StoreCashMovementRequest extends FormRequest
                 function ($attribute, $value, $fail) {
                     if ($value) {
                         $check = ThirdPartyCheck::find($value);
-                        if (!$check) {
+                        if (! $check) {
                             $fail('El cheque seleccionado no existe.');
                         } elseif ($check->status !== 'in_wallet') {
                             $fail('El cheque seleccionado ya no se encuentra en cartera.');
                         }
                     }
-                }
+                },
             ],
         ];
     }

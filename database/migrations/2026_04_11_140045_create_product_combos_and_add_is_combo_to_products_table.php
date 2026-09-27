@@ -33,7 +33,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::dropIfExists('product_combos');
-        
+
         Schema::table('products', function (Blueprint $table) {
             $table->dropColumn('is_combo');
         });

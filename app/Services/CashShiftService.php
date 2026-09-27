@@ -3,10 +3,15 @@
 namespace App\Services;
 
 use App\Models\BusinessSetting;
+use App\Models\CashMovement;
 use App\Models\CashRegister;
 use App\Models\CashShift;
-use Illuminate\Support\Facades\DB;
+use App\Models\CustomerTransaction;
+use App\Models\Sale;
+use App\Models\SalePayment;
+use App\Models\ThirdPartyCheck;
 use Exception;
+use Illuminate\Support\Facades\DB;
 
 class CashShiftService
 {
@@ -17,9 +22,9 @@ class CashShiftService
     {
         // 1. Revisar el diccionario de features explícitas (SaaS)
         $featuresJson = BusinessSetting::where('key', 'license_features_dict')->value('value');
-        if (!empty($featuresJson)) {
+        if (! empty($featuresJson)) {
             $decoded = json_decode($featuresJson, true);
-            if (is_array($decoded) && !empty($decoded['multi_caja'])) {
+            if (is_array($decoded) && ! empty($decoded['multi_caja'])) {
                 return true;
             }
         }
@@ -45,7 +50,7 @@ class CashShiftService
     }
 
     /**
-     * Abre un turno validando la licencia, aislando concurrencia (Locking) 
+     * Abre un turno validando la licencia, aislando concurrencia (Locking)
      * y limitando cajas según plan.
      */
     public function openShift(int $userId, float $openingBalance, ?int $registerId = null): CashShift
@@ -53,7 +58,7 @@ class CashShiftService
         return DB::transaction(function () use ($userId, $openingBalance, $registerId) {
             $isPro = $this->hasMultiCajaPermission();
 
-            if (!$isPro) {
+            if (! $isPro) {
                 // Plan Básico: Forzar apertura en Caja Principal
                 $register = $this->getPrimaryRegister();
             } else {
@@ -61,7 +66,7 @@ class CashShiftService
                 $register = $registerId ? CashRegister::findOrFail($registerId) : $this->getPrimaryRegister();
             }
 
-            // PESSIMISTIC LOCK: Bloquea la Caja Física para que nadie más la modifique 
+            // PESSIMISTIC LOCK: Bloquea la Caja Física para que nadie más la modifique
             // mientras consultamos si tiene turnos abiertos y creamos el nuevo.
             $lockedRegister = CashRegister::where('id', $register->id)->lockForUpdate()->first();
 
@@ -71,30 +76,30 @@ class CashShiftService
                 ->first();
 
             if ($openShift) {
-                throw new Exception("Ya existe un turno abierto en esta caja.", 403);
+                throw new Exception('Ya existe un turno abierto en esta caja.', 403);
             }
 
             // Límite Básico Global: Prohibir a toda costa más de 1 turno en todo el local
-            if (!$isPro) {
+            if (! $isPro) {
                 $globalOpenCount = CashShift::where('status', 'open')->count();
                 if ($globalOpenCount > 0) {
-                    throw new Exception("Límite de cajas alcanzado. Actualice su plan a PRO para abrir turnos paralelos.", 403);
+                    throw new Exception('Límite de cajas alcanzado. Actualice su plan a PRO para abrir turnos paralelos.', 403);
                 }
             }
 
             return CashShift::create([
                 'cash_register_id' => $lockedRegister->id,
-                'user_id'          => $userId,
-                'opened_at'        => now(),
-                'opening_balance'  => $openingBalance,
-                'status'           => 'open',
+                'user_id' => $userId,
+                'opened_at' => now(),
+                'opening_balance' => $openingBalance,
+                'status' => 'open',
             ]);
         });
     }
 
     /**
      * Obtiene el turno activo según reglas del Plan.
-     * 
+     *
      * Plan Básico: Siempre busca en la Caja Principal.
      * Plan PRO:    Si se pasa $registerId, busca en esa caja específica.
      *              Si NO se pasa $registerId (ej: login de empleado sin selector de caja),
@@ -104,9 +109,10 @@ class CashShiftService
     {
         $isPro = $this->hasMultiCajaPermission();
 
-        if (!$isPro) {
+        if (! $isPro) {
             // Plan Básico: Una sola caja, turno global del local
             $register = $this->getPrimaryRegister();
+
             return CashShift::where('cash_register_id', $register->id)
                 ->where('status', 'open')
                 ->first();
@@ -120,6 +126,7 @@ class CashShiftService
             // Plan PRO sin caja indicada: fallback a Caja Principal
             // Esto evita que un empleado nuevo quede huérfano y abra un turno paralelo
             $register = $this->getPrimaryRegister();
+
             return CashShift::where('cash_register_id', $register->id)
                 ->where('status', 'open')
                 ->first();
@@ -139,101 +146,101 @@ class CashShiftService
                 ->lockForUpdate()
                 ->first();
 
-            if (!$shift) {
-                throw new Exception("El turno no existe o ya está cerrado.", 404);
+            if (! $shift) {
+                throw new Exception('El turno no existe o ya está cerrado.', 404);
             }
 
             // Sumatoria Financiera: Solo ventas COMPLETADAS
             // Recorremos los pagos cruzados con métodos de pago para saber qué es efectivo
-            $cashSales = \App\Models\SalePayment::whereHas('sale', fn($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
-                ->whereHas('paymentMethod', fn($q) => $q->where('is_cash', true))
+            $cashSales = SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+                ->whereHas('paymentMethod', fn ($q) => $q->where('is_cash', true))
                 ->sum('total_amount');
-            $cashSales += \App\Models\CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'cash')->sum('amount');
+            $cashSales += CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'cash')->sum('amount');
 
-            $cardSales = \App\Models\SalePayment::whereHas('sale', fn($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
-                ->whereHas('paymentMethod', fn($q) => $q->where('code', 'like', 'card_%'))
+            $cardSales = SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+                ->whereHas('paymentMethod', fn ($q) => $q->where('code', 'like', 'card_%'))
                 ->sum('total_amount');
-            $cardSales += \App\Models\CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'card')->sum('amount');
+            $cardSales += CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'card')->sum('amount');
 
-            $transferSales = \App\Models\SalePayment::whereHas('sale', fn($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
-                ->whereHas('paymentMethod', fn($q) => $q->where('code', 'transfer'))
+            $transferSales = SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+                ->whereHas('paymentMethod', fn ($q) => $q->where('code', 'transfer'))
                 ->sum('total_amount');
-            $transferSales += \App\Models\CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'transfer')->sum('amount');
+            $transferSales += CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'transfer')->sum('amount');
 
-            $totalSurcharge = \App\Models\Sale::where('cash_shift_id', $shiftId)
+            $totalSurcharge = Sale::where('cash_shift_id', $shiftId)
                 ->where('status', 'completed')
                 ->sum('total_surcharge');
 
             // Cheques recibidos en el turno
-            $checkSales = \App\Models\ThirdPartyCheck::where('cash_shift_id', $shiftId)->sum('amount');
-            $checkCount = \App\Models\ThirdPartyCheck::where('cash_shift_id', $shiftId)->count();
-            $checkDetails = \App\Models\ThirdPartyCheck::where('cash_shift_id', $shiftId)
+            $checkSales = ThirdPartyCheck::where('cash_shift_id', $shiftId)->sum('amount');
+            $checkCount = ThirdPartyCheck::where('cash_shift_id', $shiftId)->count();
+            $checkDetails = ThirdPartyCheck::where('cash_shift_id', $shiftId)
                 ->get(['id', 'bank_name', 'check_number', 'amount', 'payment_date', 'issuer_name'])
                 ->toArray();
 
             // Ventas en Cuenta Corriente (deuda registrada, no flujo de caja inmediato)
-            $ccSales = \App\Models\SalePayment::whereHas('sale', fn($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
-                ->whereHas('paymentMethod', fn($q) => $q->where('code', 'cuenta_corriente'))
+            $ccSales = SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+                ->whereHas('paymentMethod', fn ($q) => $q->where('code', 'cuenta_corriente'))
                 ->sum('total_amount');
 
-            $ccSalesCount = \App\Models\Sale::where('cash_shift_id', $shiftId)
+            $ccSalesCount = Sale::where('cash_shift_id', $shiftId)
                 ->where('status', 'completed')
-                ->whereHas('payments.paymentMethod', fn($q) => $q->where('code', 'cuenta_corriente'))
+                ->whereHas('payments.paymentMethod', fn ($q) => $q->where('code', 'cuenta_corriente'))
                 ->count();
 
             // Movimientos manuales de caja (Gastos, Retiros, Ingresos extra)
-            $cashDeposits = \App\Models\CashMovement::where('cash_shift_id', $shiftId)
+            $cashDeposits = CashMovement::where('cash_shift_id', $shiftId)
                 ->where('payment_method', 'cash')
                 ->where('type', 'deposit')
                 ->sum('amount');
-                
-            $cashExpenses = \App\Models\CashMovement::where('cash_shift_id', $shiftId)
+
+            $cashExpenses = CashMovement::where('cash_shift_id', $shiftId)
                 ->where('payment_method', 'cash')
                 ->where('type', 'expense')
                 ->sum('amount');
-                
-            $cashWithdrawals = \App\Models\CashMovement::where('cash_shift_id', $shiftId)
+
+            $cashWithdrawals = CashMovement::where('cash_shift_id', $shiftId)
                 ->where('payment_method', 'cash')
                 ->where('type', 'withdrawal')
                 ->sum('amount');
 
-            $cashSupplierPayments = \App\Models\CashMovement::where('cash_shift_id', $shiftId)
+            $cashSupplierPayments = CashMovement::where('cash_shift_id', $shiftId)
                 ->where('payment_method', 'cash')
                 ->where('type', 'supplier_payment')
                 ->sum('amount');
 
-            $cashRefunds = \App\Models\CustomerTransaction::where('cash_shift_id', $shiftId)
+            $cashRefunds = CustomerTransaction::where('cash_shift_id', $shiftId)
                 ->where('type', 'refund')
                 ->where('payment_method', 'cash')
                 ->sum('amount');
 
             // El efectivo físico esperado en la gaveta = Fondo Inicial + Ventas Efectivo + Ingresos Extra - Gastos - Retiros - Pagos Proveedor - Reintegros
             $expectedBalance = $shift->opening_balance + $cashSales + $cashDeposits - $cashExpenses - $cashWithdrawals - $cashSupplierPayments - $cashRefunds;
-            
+
             // Desfase (Sobrante/Faltante) comparado contra lo físico contado
             $difference = $actualBalance - $expectedBalance;
 
             $shift->update([
-                'closed_at'               => now(),
-                'expected_balance'        => $expectedBalance,
-                'actual_balance'          => $actualBalance,
-                'difference'              => $difference,
-                'cash_sales'              => $cashSales,
-                'card_sales'              => $cardSales,
-                'transfer_sales'          => $transferSales,
-                'total_surcharge'         => $totalSurcharge,
-                'check_sales'             => $checkSales,
-                'check_count'             => $checkCount,
-                'check_details'           => json_encode($checkDetails),
-                'cc_sales'                => $ccSales,
-                'cc_sales_count'          => $ccSalesCount,
-                'total_expenses'          => $cashExpenses,
-                'total_withdrawals'       => $cashWithdrawals,
-                'total_deposits'          => $cashDeposits,
+                'closed_at' => now(),
+                'expected_balance' => $expectedBalance,
+                'actual_balance' => $actualBalance,
+                'difference' => $difference,
+                'cash_sales' => $cashSales,
+                'card_sales' => $cardSales,
+                'transfer_sales' => $transferSales,
+                'total_surcharge' => $totalSurcharge,
+                'check_sales' => $checkSales,
+                'check_count' => $checkCount,
+                'check_details' => json_encode($checkDetails),
+                'cc_sales' => $ccSales,
+                'cc_sales_count' => $ccSalesCount,
+                'total_expenses' => $cashExpenses,
+                'total_withdrawals' => $cashWithdrawals,
+                'total_deposits' => $cashDeposits,
                 'total_supplier_payments' => $cashSupplierPayments,
-                'total_refunds'           => $cashRefunds,
-                'status'                  => 'closed',
-                'closed_by_user_id'       => $closerUserId,
+                'total_refunds' => $cashRefunds,
+                'status' => 'closed',
+                'closed_by_user_id' => $closerUserId,
             ]);
 
             return $shift;

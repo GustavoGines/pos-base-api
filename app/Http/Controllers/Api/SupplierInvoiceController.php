@@ -3,12 +3,11 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
-
-use App\Models\Supplier;
 use App\Models\Product;
-use App\Models\SupplierInvoice;
 use App\Models\StockMovement;
+use App\Models\Supplier;
+use App\Models\SupplierInvoice;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -44,7 +43,7 @@ class SupplierInvoiceController extends Controller
                 ->exists();
             if ($exists) {
                 return response()->json([
-                    'message' => 'El número de comprobante ya existe para este proveedor.'
+                    'message' => 'El número de comprobante ya existe para este proveedor.',
                 ], 422);
             }
         }
@@ -52,13 +51,13 @@ class SupplierInvoiceController extends Controller
         try {
             DB::transaction(function () use ($validated, $supplier, $request) {
                 $user = $request->attributes->get('authenticated_user');
-                
+
                 $tax = $validated['tax_amount'] ?? 0;
                 $freight = $validated['freight_amount'] ?? 0;
                 $discount = $validated['discount_amount'] ?? 0;
-                
+
                 $subtotal = 0;
-                if (!empty($validated['items'])) {
+                if (! empty($validated['items'])) {
                     $subtotal = array_sum(array_column($validated['items'], 'subtotal'));
                 } else {
                     $subtotal = $validated['amount'] ?? 0;
@@ -83,35 +82,35 @@ class SupplierInvoiceController extends Controller
                 ]);
 
                 // 2. Procesar ítems si existen
-                if (!empty($validated['items'])) {
+                if (! empty($validated['items'])) {
                     foreach ($validated['items'] as $itemData) {
                         // Crear el detalle
                         $invoice->items()->create([
                             'product_id' => $itemData['product_id'],
-                            'quantity'   => $itemData['quantity'],
-                            'unit_cost'  => $itemData['unit_cost'],
-                            'subtotal'   => $itemData['subtotal'],
+                            'quantity' => $itemData['quantity'],
+                            'unit_cost' => $itemData['unit_cost'],
+                            'subtotal' => $itemData['subtotal'],
                         ]);
 
                         $product = Product::find($itemData['product_id']);
                         $isCreditNote = $validated['type'] === 'credit_note';
                         $quantityModifier = $isCreditNote ? -$itemData['quantity'] : $itemData['quantity'];
-                        
+
                         // Generar movimiento de stock
                         StockMovement::create([
                             'product_id' => $product->id,
-                            'user_id'    => $user->id ?? null,
+                            'user_id' => $user->id ?? null,
                             'supplier_invoice_id' => $invoice->id,
-                            'type'       => $isCreditNote ? 'out' : 'purchase',
-                            'quantity'   => $quantityModifier,
-                            'notes'      => ($isCreditNote ? 'Devolución: Nota de Crédito ' : 'Ingreso por Compra: Factura ') . ($validated['invoice_number'] ?? 'S/N'),
+                            'type' => $isCreditNote ? 'out' : 'purchase',
+                            'quantity' => $quantityModifier,
+                            'notes' => ($isCreditNote ? 'Devolución: Nota de Crédito ' : 'Ingreso por Compra: Factura ').($validated['invoice_number'] ?? 'S/N'),
                         ]);
 
                         // Incrementar o decrementar stock físico
                         $product->increment('stock', $quantityModifier);
 
                         // Si es factura (compra), actualizamos el costo
-                        if (!$isCreditNote) {
+                        if (! $isCreditNote) {
                             $updateData = ['cost_price' => $itemData['unit_cost']];
 
                             // Si el usuario decidió cambiar el PVP en el modal de alertas, actualizarlo
@@ -134,10 +133,10 @@ class SupplierInvoiceController extends Controller
 
             return response()->json([
                 'message' => 'Factura/Remito cargado exitosamente',
-                'supplier' => $supplier->fresh()
+                'supplier' => $supplier->fresh(),
             ]);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Error al registrar la factura: ' . $e->getMessage()], 500);
+            return response()->json(['message' => 'Error al registrar la factura: '.$e->getMessage()], 500);
         }
     }
 
@@ -150,12 +149,12 @@ class SupplierInvoiceController extends Controller
         if ($request->hasFile('file')) {
             $file = $request->file('file');
             $extension = $file->getClientOriginalExtension();
-            $safeName = Str::random(40) . ($extension ? '.' . strtolower($extension) : '');
+            $safeName = Str::random(40).($extension ? '.'.strtolower($extension) : '');
             $path = $file->storeAs('supplier_invoices', $safeName, 'public');
 
             return response()->json([
                 'message' => 'Archivo subido correctamente',
-                'file_url' => '/storage/' . $path
+                'file_url' => '/storage/'.$path,
             ]);
         }
 

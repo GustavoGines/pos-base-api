@@ -15,9 +15,9 @@ return new class extends Migration
     {
         Schema::table('products', function (Blueprint $table) {
             $table->decimal('price_wholesale', 10, 2)->nullable()->default(null)->after('selling_price')
-                  ->comment('Precio Mayorista — solo activo en modo Ferretería');
+                ->comment('Precio Mayorista — solo activo en modo Ferretería');
             $table->decimal('price_card', 10, 2)->nullable()->default(null)->after('price_wholesale')
-                  ->comment('Precio Tarjeta — solo activo en modo Ferretería');
+                ->comment('Precio Tarjeta — solo activo en modo Ferretería');
         });
     }
 

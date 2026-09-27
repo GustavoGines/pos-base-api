@@ -2,9 +2,9 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Seeder;
-use App\Models\Product;
 use App\Models\Category;
+use App\Models\Product;
+use Illuminate\Database\Seeder;
 
 class HardwareStoreSeeder extends Seeder
 {
@@ -116,10 +116,10 @@ class HardwareStoreSeeder extends Seeder
         // 3. Iterar, calcular precios y guardar
         foreach ($products as $data) {
             $basePrice = $data['selling_price'];
-            
+
             // Mayorista: 10% más barato
             $data['price_wholesale'] = round($basePrice * 0.90, 2);
-            
+
             // Tarjeta: 15% más caro (sobre el precio base)
             $data['price_card'] = round($basePrice * 1.15, 2);
 

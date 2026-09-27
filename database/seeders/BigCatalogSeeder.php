@@ -2,9 +2,9 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Seeder;
 use App\Models\Category;
 use App\Models\Product;
+use Illuminate\Database\Seeder;
 
 /**
  * BigCatalogSeeder - 100 productos en 8 categorías
@@ -28,7 +28,7 @@ class BigCatalogSeeder extends Seeder
             ['Panadería',        'Pan, facturas, galletitas y tostadas'],
             ['Fiambres',         'Fiambres y carnes frías en mostrador'],
             ['Almacén Seco',     'Pastas, arroz, legumbres, aceites y conservas'],
-            ['Dietética / Granel','Harinas, azúcares, semillas y frutos secos al peso'],
+            ['Dietética / Granel', 'Harinas, azúcares, semillas y frutos secos al peso'],
             ['Limpieza',         'Artículos de limpieza del hogar'],
             ['Perfumería',       'Higiene personal y cosmética'],
             ['Carnicería',       'Cortes de carne vacuna, cerdo, pollo y achuras'],
@@ -73,29 +73,29 @@ class BigCatalogSeeder extends Seeder
             ['Energizante Monster 473ml',   '5099873046884', 1200, 1900,   50],
         ];
         foreach ($bebidas as [$name, $bar, $cost, $sell, $stock]) {
-            Product::create(['name'=>$name,'barcode'=>$bar,'internal_code'=>$next(),
-                'cost_price'=>$cost,'selling_price'=>$sell,'stock'=>$stock,
-                'active'=>true,'is_sold_by_weight'=>false,'category_id'=>$b]);
+            Product::create(['name' => $name, 'barcode' => $bar, 'internal_code' => $next(),
+                'cost_price' => $cost, 'selling_price' => $sell, 'stock' => $stock,
+                'active' => true, 'is_sold_by_weight' => false, 'category_id' => $b]);
         }
 
         // ── LÁCTEOS (10) ─────────────────────────────────────────
         $l = $cats['Lácteos']->id;
         $lacteos = [
             ['Leche Entera La Serenísima 1L',   '7790315000007',  700, 1050, 100],
-            ['Leche Descremada La Serenísima 1L','7790315000014',  730, 1100,  80],
+            ['Leche Descremada La Serenísima 1L', '7790315000014',  730, 1100,  80],
             ['Leche Entera Sancor 1L',           '7793312000001',  680, 1020,  90],
             ['Yogur Entero Vainilla 200g',        '7790315003001',  350,  550,  60],
             ['Yogur Bebible Frutilla 200ml',      '7790315003018',  300,  480,  70],
             ['Queso Cremoso Buffet x 100g',       '7790315004001',  600,  950,  40],
             ['Queso de Mano Rallado 200g',        '7791234568201',  700, 1100,  35],
-            ['Crema de Leche La Serenísima 200ml','7790315005001',  600,  950,  50],
+            ['Crema de Leche La Serenísima 200ml', '7790315005001',  600,  950,  50],
             ['Manteca La Serenísima 200g',        '7790315006001',  900, 1400,  45],
             ['Ricota Serenísima 250g',            '7790315007001',  500,  800,  30],
         ];
         foreach ($lacteos as [$name,$bar,$cost,$sell,$stock]) {
-            Product::create(['name'=>$name,'barcode'=>$bar,'internal_code'=>$next(),
-                'cost_price'=>$cost,'selling_price'=>$sell,'stock'=>$stock,
-                'active'=>true,'is_sold_by_weight'=>false,'category_id'=>$l]);
+            Product::create(['name' => $name, 'barcode' => $bar, 'internal_code' => $next(),
+                'cost_price' => $cost, 'selling_price' => $sell, 'stock' => $stock,
+                'active' => true, 'is_sold_by_weight' => false, 'category_id' => $l]);
         }
 
         // ── PANADERÍA (8) ────────────────────────────────────────
@@ -111,9 +111,9 @@ class BigCatalogSeeder extends Seeder
             ['Bizcochos Grases x12',              '7791234568403',  500,  800,  40],
         ];
         foreach ($panaderia as [$name,$bar,$cost,$sell,$stock]) {
-            Product::create(['name'=>$name,'barcode'=>$bar,'internal_code'=>$next(),
-                'cost_price'=>$cost,'selling_price'=>$sell,'stock'=>$stock,
-                'active'=>true,'is_sold_by_weight'=>false,'category_id'=>$p]);
+            Product::create(['name' => $name, 'barcode' => $bar, 'internal_code' => $next(),
+                'cost_price' => $cost, 'selling_price' => $sell, 'stock' => $stock,
+                'active' => true, 'is_sold_by_weight' => false, 'category_id' => $p]);
         }
 
         // ── FIAMBRES (8) ─────────────────────────────────────────
@@ -129,9 +129,9 @@ class BigCatalogSeeder extends Seeder
             ['Chorizo para Asado x Kg',       '7791234568508', 2500, 3800, 10],
         ];
         foreach ($fiambres as [$name,$bar,$cost,$sell,$stock]) {
-            Product::create(['name'=>$name,'barcode'=>$bar,'internal_code'=>$next(),
-                'cost_price'=>$cost,'selling_price'=>$sell,'stock'=>$stock,
-                'active'=>true,'is_sold_by_weight'=>false,'category_id'=>$f]);
+            Product::create(['name' => $name, 'barcode' => $bar, 'internal_code' => $next(),
+                'cost_price' => $cost, 'selling_price' => $sell, 'stock' => $stock,
+                'active' => true, 'is_sold_by_weight' => false, 'category_id' => $f]);
         }
 
         // ── ALMACÉN SECO (20) ────────────────────────────────────
@@ -147,7 +147,7 @@ class BigCatalogSeeder extends Seeder
             ['Aceite de Oliva Conosur 500ml',     '7791234568603', 2500, 3900, 25],
             ['Azúcar Ledesma 1Kg',               '7791234568604',  700, 1100, 90],
             ['Sal Fina Celusal 1Kg',              '7791234568605',  400,  650, 80],
-            ['Tomates Perita en Lata La Merced 400g','7791234568606',  450,  700, 60],
+            ['Tomates Perita en Lata La Merced 400g', '7791234568606',  450,  700, 60],
             ['Choclo en Lata Arcor 300g',         '7791234568607',  500,  780, 45],
             ['Atún al Natural La Fragata 170g',   '7791234568608',  800, 1250, 50],
             ['Mermelada Arcor Frutilla 390g',     '7791234568609',  600,  950, 40],
@@ -159,9 +159,9 @@ class BigCatalogSeeder extends Seeder
             ['Puré de Tomate Mutti 500g',         '7791234568615',  700, 1100, 40],
         ];
         foreach ($almacen as [$name,$bar,$cost,$sell,$stock]) {
-            Product::create(['name'=>$name,'barcode'=>$bar,'internal_code'=>$next(),
-                'cost_price'=>$cost,'selling_price'=>$sell,'stock'=>$stock,
-                'active'=>true,'is_sold_by_weight'=>false,'category_id'=>$a]);
+            Product::create(['name' => $name, 'barcode' => $bar, 'internal_code' => $next(),
+                'cost_price' => $cost, 'selling_price' => $sell, 'stock' => $stock,
+                'active' => true, 'is_sold_by_weight' => false, 'category_id' => $a]);
         }
 
         // ── DIETÉTICA / GRANEL — por peso (14) ──────────────────
@@ -183,9 +183,9 @@ class BigCatalogSeeder extends Seeder
             ['Coco Rallado',       1200, 1900, 10.0],
         ];
         foreach ($granel as [$name,$cost,$sell,$stock]) {
-            Product::create(['name'=>$name,'barcode'=>null,'internal_code'=>$next(),
-                'cost_price'=>$cost,'selling_price'=>$sell,'stock'=>$stock,
-                'active'=>true,'is_sold_by_weight'=>true,'unit_type'=>'kg','category_id'=>$d]);
+            Product::create(['name' => $name, 'barcode' => null, 'internal_code' => $next(),
+                'cost_price' => $cost, 'selling_price' => $sell, 'stock' => $stock,
+                'active' => true, 'is_sold_by_weight' => true, 'unit_type' => 'kg', 'category_id' => $d]);
         }
 
         // ── LIMPIEZA (12) ────────────────────────────────────────
@@ -205,9 +205,9 @@ class BigCatalogSeeder extends Seeder
             ['Esponja Rejilla Pack x2',         '7792226000118',  350,  550, 80],
         ];
         foreach ($limpieza as [$name,$bar,$cost,$sell,$stock]) {
-            Product::create(['name'=>$name,'barcode'=>$bar,'internal_code'=>$next(),
-                'cost_price'=>$cost,'selling_price'=>$sell,'stock'=>$stock,
-                'active'=>true,'is_sold_by_weight'=>false,'category_id'=>$lim]);
+            Product::create(['name' => $name, 'barcode' => $bar, 'internal_code' => $next(),
+                'cost_price' => $cost, 'selling_price' => $sell, 'stock' => $stock,
+                'active' => true, 'is_sold_by_weight' => false, 'category_id' => $lim]);
         }
 
         // ── PERFUMERÍA (10) ──────────────────────────────────────
@@ -225,9 +225,9 @@ class BigCatalogSeeder extends Seeder
             ['Algodón Farmacéutico 100g',       '7791234568702',  400,  650, 40],
         ];
         foreach ($perfumeria as [$name,$bar,$cost,$sell,$stock]) {
-            Product::create(['name'=>$name,'barcode'=>$bar,'internal_code'=>$next(),
-                'cost_price'=>$cost,'selling_price'=>$sell,'stock'=>$stock,
-                'active'=>true,'is_sold_by_weight'=>false,'category_id'=>$per]);
+            Product::create(['name' => $name, 'barcode' => $bar, 'internal_code' => $next(),
+                'cost_price' => $cost, 'selling_price' => $sell, 'stock' => $stock,
+                'active' => true, 'is_sold_by_weight' => false, 'category_id' => $per]);
         }
 
         // ── CARNICERÍA — por peso (17) ──────────────────────────
@@ -252,11 +252,11 @@ class BigCatalogSeeder extends Seeder
             ['Milanesas de Pollo Preparadas', 3500, 5200, 30.0],
         ];
         foreach ($carnes as [$name, $cost, $sell, $stock]) {
-            Product::create(['name'=>$name,'barcode'=>null,'internal_code'=>$next(),
-                'cost_price'=>$cost,'selling_price'=>$sell,'stock'=>$stock,
-                'active'=>true,'is_sold_by_weight'=>true,'unit_type'=>'kg','category_id'=>$carni]);
+            Product::create(['name' => $name, 'barcode' => null, 'internal_code' => $next(),
+                'cost_price' => $cost, 'selling_price' => $sell, 'stock' => $stock,
+                'active' => true, 'is_sold_by_weight' => true, 'unit_type' => 'kg', 'category_id' => $carni]);
         }
 
-        $this->command->info('✅ BigCatalogSeeder: ' . Product::count() . ' productos creados en ' . Category::count() . ' categorías.');
+        $this->command->info('✅ BigCatalogSeeder: '.Product::count().' productos creados en '.Category::count().' categorías.');
     }
 }

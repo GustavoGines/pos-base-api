@@ -47,48 +47,48 @@ class CashShiftTest extends TestCase
         $user = User::factory()->create(['role' => 'cashier']);
 
         $sale = Sale::create([
-            'total'           => $monto,
+            'total' => $monto,
             'total_surcharge' => 0,
-            'payment_status'  => 'paid',
-            'amount_due'      => 0,
-            'status'          => 'completed',
-            'cash_shift_id'   => $shift->id,
-            'user_id'         => $user->id,
+            'payment_status' => 'paid',
+            'amount_due' => 0,
+            'status' => 'completed',
+            'cash_shift_id' => $shift->id,
+            'user_id' => $user->id,
         ]);
 
         SalePayment::create([
-            'sale_id'           => $sale->id,
+            'sale_id' => $sale->id,
             'payment_method_id' => $metodo->id,
-            'base_amount'       => $monto,
-            'surcharge_amount'  => 0,
-            'total_amount'      => $monto,
+            'base_amount' => $monto,
+            'surcharge_amount' => 0,
+            'total_amount' => $monto,
         ]);
     }
 
     // ── T-01: Abrir turno ─────────────────────────────────────────────────────
 
-    public function test_T01_abrir_turno_correctamente(): void
+    public function test_t01_abrir_turno_correctamente(): void
     {
         $this->setPlanBasico();
         $user = User::factory()->create(['role' => 'admin']);
 
         $this->actingAsAdmin($user)->postJson('/api/shifts/open', [
-            'user_id'          => $user->id,
-            'opening_balance'  => 1500.00,
+            'user_id' => $user->id,
+            'opening_balance' => 1500.00,
             'cash_register_id' => null,
         ])->assertStatus(200)
-          ->assertJsonPath('shift.status', 'open')
-          ->assertJsonPath('shift.opening_balance', '1500.00');
+            ->assertJsonPath('shift.status', 'open')
+            ->assertJsonPath('shift.opening_balance', '1500.00');
 
         $this->assertDatabaseHas('cash_shifts', [
-            'status'          => 'open',
+            'status' => 'open',
             'opening_balance' => 1500.00,
         ]);
     }
 
     // ── T-02: Plan Básico no permite 2 turnos ─────────────────────────────────
 
-    public function test_T02_plan_basico_no_permite_dos_turnos_simultaneos(): void
+    public function test_t02_plan_basico_no_permite_dos_turnos_simultaneos(): void
     {
         $this->setPlanBasico();
         $user = User::factory()->create(['role' => 'admin']);
@@ -98,14 +98,13 @@ class CashShiftTest extends TestCase
 
         // Intentar abrir un segundo turno
         $response = $this->actingAsAdmin($user)->postJson('/api/shifts/open', [
-            'user_id'         => $user->id,
+            'user_id' => $user->id,
             'opening_balance' => 500.00,
         ]);
 
         $response->assertStatus(403)
-                 ->assertJsonPath('message', fn($msg) =>
-                     str_contains($msg, 'turno') || str_contains($msg, 'abierto')
-                 );
+            ->assertJsonPath('message', fn ($msg) => str_contains($msg, 'turno') || str_contains($msg, 'abierto')
+            );
 
         // Solo debe existir 1 turno abierto en total
         $this->assertEquals(1, CashShift::where('status', 'open')->count());
@@ -113,13 +112,13 @@ class CashShiftTest extends TestCase
 
     // ── T-03 + T-05: expected_balance solo suma efectivo, NO tarjeta ──────────
 
-    public function test_T03_T05_expected_balance_solo_incluye_pagos_en_efectivo(): void
+    public function test_t03_t05_expected_balance_solo_incluye_pagos_en_efectivo(): void
     {
         $this->setPlanBasico();
-        $user  = User::factory()->create(['role' => 'admin']);
+        $user = User::factory()->create(['role' => 'admin']);
         $shift = $this->crearTurnoAbierto(fondoInicial: 1000.00, user: $user);
-        $cash  = $this->crearMetodoEfectivo();
-        $card  = $this->crearMetodoTarjeta();
+        $cash = $this->crearMetodoEfectivo();
+        $card = $this->crearMetodoTarjeta();
 
         // Venta en efectivo: $500
         $this->crearVentaEnTurno($shift, $cash, 500.00);
@@ -128,7 +127,7 @@ class CashShiftTest extends TestCase
         $this->crearVentaEnTurno($shift, $card, 200.00);
 
         $service = app(CashShiftService::class);
-        $result  = $service->closeShift($shift->id, 1500.00, $user->id);
+        $result = $service->closeShift($shift->id, 1500.00, $user->id);
 
         // expected_balance = fondo (1000) + efectivo (500) = 1500
         $this->assertEquals('1500.00', $result->expected_balance,
@@ -141,12 +140,12 @@ class CashShiftTest extends TestCase
 
     // ── T-04: difference correcta cuando hay sobrante ─────────────────────────
 
-    public function test_T04_difference_correcta_cuando_hay_sobrante(): void
+    public function test_t04_difference_correcta_cuando_hay_sobrante(): void
     {
         $this->setPlanBasico();
-        $user  = User::factory()->create(['role' => 'admin']);
+        $user = User::factory()->create(['role' => 'admin']);
         $shift = $this->crearTurnoAbierto(fondoInicial: 500.00, user: $user);
-        $cash  = $this->crearMetodoEfectivo();
+        $cash = $this->crearMetodoEfectivo();
 
         $this->crearVentaEnTurno($shift, $cash, 300.00);
 
@@ -155,15 +154,15 @@ class CashShiftTest extends TestCase
         $result = $service->closeShift($shift->id, 850.00, $user->id);
 
         $this->assertEquals('800.00', $result->expected_balance);
-        $this->assertEquals('50.00',  $result->difference, 'Sobrante de $50');
+        $this->assertEquals('50.00', $result->difference, 'Sobrante de $50');
     }
 
     // ── T-06: Turno ya cerrado no puede cerrarse de nuevo ─────────────────────
 
-    public function test_T06_turno_ya_cerrado_lanza_excepcion(): void
+    public function test_t06_turno_ya_cerrado_lanza_excepcion(): void
     {
         $this->setPlanBasico();
-        $user    = User::factory()->create(['role' => 'admin']);
+        $user = User::factory()->create(['role' => 'admin']);
         $register = CashRegister::firstOrCreate(
             ['id' => 1],
             ['name' => 'Caja Principal', 'is_active' => true]
@@ -171,11 +170,11 @@ class CashShiftTest extends TestCase
 
         $shiftCerrado = CashShift::create([
             'cash_register_id' => $register->id,
-            'user_id'          => $user->id,
-            'opened_at'        => now()->subHour(),
-            'closed_at'        => now(),
-            'opening_balance'  => 0,
-            'status'           => 'closed',
+            'user_id' => $user->id,
+            'opened_at' => now()->subHour(),
+            'closed_at' => now(),
+            'opening_balance' => 0,
+            'status' => 'closed',
         ]);
 
         $this->expectException(\Exception::class);
@@ -185,14 +184,13 @@ class CashShiftTest extends TestCase
 
     // ── T-07: GET /shifts/current → 404 cuando no hay turno abierto ──────────
 
-    public function test_T07_current_retorna_404_sin_turno_abierto(): void
+    public function test_t07_current_retorna_404_sin_turno_abierto(): void
     {
         // No creamos ningún turno abierto
         $response = $this->getJson('/api/shifts/current');
 
         $response->assertStatus(404)
-                 ->assertJsonPath('message', fn($msg) =>
-                     str_contains($msg, 'caja') || str_contains($msg, 'abierta')
-                 );
+            ->assertJsonPath('message', fn ($msg) => str_contains($msg, 'caja') || str_contains($msg, 'abierta')
+            );
     }
 }

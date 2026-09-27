@@ -2,15 +2,18 @@
 
 namespace Tests\Feature;
 
-use Illuminate\Foundation\Testing\RefreshDatabase;
-use Tests\TestCase;
-use App\Models\User;
-use App\Models\Customer;
+use App\Http\Middleware\ValidateSessionToken;
+use App\Models\CashRegister;
 use App\Models\CashShift;
-use App\Models\Product;
+use App\Models\Customer;
+use App\Models\CustomerTransaction;
 use App\Models\PaymentMethod;
+use App\Models\Product;
 use App\Models\Sale;
-use Illuminate\Support\Facades\DB;
+use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Schema;
+use Tests\TestCase;
 
 class RefactorIntegrationTest extends TestCase
 {
@@ -19,9 +22,9 @@ class RefactorIntegrationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->withoutMiddleware([\App\Http\Middleware\ValidateSessionToken::class]);
-        \Illuminate\Support\Facades\Schema::disableForeignKeyConstraints();
-        
+        $this->withoutMiddleware([ValidateSessionToken::class]);
+        Schema::disableForeignKeyConstraints();
+
         // Setup initial POS environment
         $this->user = User::create([
             'name' => 'Cajero Test',
@@ -29,8 +32,7 @@ class RefactorIntegrationTest extends TestCase
             'password' => bcrypt('password'),
         ]);
 
-
-        $register = \App\Models\CashRegister::create(['name' => 'Caja Principal', 'is_active' => true]);
+        $register = CashRegister::create(['name' => 'Caja Principal', 'is_active' => true]);
 
         $this->shift = CashShift::create([
             'user_id' => $this->user->id,
@@ -74,7 +76,7 @@ class RefactorIntegrationTest extends TestCase
                     'quantity' => 1,
                     'unit_price' => -1000,
                     'subtotal' => -1000,
-                ]
+                ],
             ],
             'payments' => [
                 [
@@ -82,8 +84,8 @@ class RefactorIntegrationTest extends TestCase
                     'base_amount' => -1000,
                     'surcharge_amount' => 0,
                     'total_amount' => -1000,
-                ]
-            ]
+                ],
+            ],
         ];
 
         $response = $this->actingAs($this->user)->postJson('/api/pos/sales', $payload);
@@ -105,7 +107,7 @@ class RefactorIntegrationTest extends TestCase
                     'quantity' => 1,
                     'unit_price' => 1000,
                     'subtotal' => 1000,
-                ]
+                ],
             ],
             'payments' => [
                 [
@@ -113,8 +115,8 @@ class RefactorIntegrationTest extends TestCase
                     'base_amount' => 1000,
                     'surcharge_amount' => 0,
                     'total_amount' => 1000,
-                ]
-            ]
+                ],
+            ],
         ];
 
         $response = $this->actingAs($this->user)->postJson('/api/pos/sales', $payload);
@@ -124,7 +126,7 @@ class RefactorIntegrationTest extends TestCase
         // 2. With Customer -> Should pass and update balance
         $payload['customer_id'] = $this->customer->id;
         $response = $this->actingAs($this->user)->postJson('/api/pos/sales', $payload);
-        
+
         $response->assertStatus(201);
         $this->assertEquals(1000, $this->customer->fresh()->balance);
         $this->assertDatabaseHas('customer_transactions', [
@@ -161,7 +163,7 @@ class RefactorIntegrationTest extends TestCase
             'unit_price' => 1000,
             'subtotal' => 1000,
         ]);
-        
+
         // Ensure stock was 100 initially, now it's 99 (assume it was deducted manually or by pending)
         // Wait, pending sales usually deduct stock on creation in this POS.
         $this->productA->update(['stock' => 99]);
@@ -176,7 +178,7 @@ class RefactorIntegrationTest extends TestCase
                     'quantity' => 2,
                     'unit_price' => 1000,
                     'subtotal' => 2000,
-                ]
+                ],
             ],
             'payments' => [
                 [
@@ -190,7 +192,7 @@ class RefactorIntegrationTest extends TestCase
                     'base_amount' => 1000,
                     'surcharge_amount' => 0,
                     'total_amount' => 1000,
-                ]
+                ],
             ],
             'check_details' => [
                 [
@@ -208,8 +210,8 @@ class RefactorIntegrationTest extends TestCase
                     'payment_date' => '2026-10-26',
                     'issuer_name' => 'Test',
                     'issuer_cuit' => '20123456789',
-                ]
-            ]
+                ],
+            ],
         ];
 
         $response = $this->actingAs($this->user)->putJson("/api/sales/{$sale->id}/pay", $payload);
@@ -252,7 +254,7 @@ class RefactorIntegrationTest extends TestCase
         $this->productA->update(['stock' => 99]);
 
         // Create the charge transaction
-        \App\Models\CustomerTransaction::create([
+        CustomerTransaction::create([
             'customer_id' => $this->customer->id,
             'sale_id' => $sale->id,
             'user_id' => $this->user->id,
@@ -278,13 +280,13 @@ class RefactorIntegrationTest extends TestCase
             'type' => 'payment', // Reversal of charge
             'amount' => 1000,
         ]);
-        
+
         // Assert API Contract
         $response->assertJsonStructure([
             'message',
             'sale' => [
-                'cashier' => ['id', 'name'] // Ensure cashier is present!
-            ]
+                'cashier' => ['id', 'name'], // Ensure cashier is present!
+            ],
         ]);
     }
 }

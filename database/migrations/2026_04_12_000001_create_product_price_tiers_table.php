@@ -23,8 +23,8 @@ return new class extends Migration
         Schema::create('product_price_tiers', function (Blueprint $table) {
             $table->id();
             $table->foreignId('product_id')
-                  ->constrained('products')
-                  ->cascadeOnDelete(); // Si se borra el producto, se borran sus tramos
+                ->constrained('products')
+                ->cascadeOnDelete(); // Si se borra el producto, se borran sus tramos
             $table->decimal('min_quantity', 10, 3)->unsigned();  // Soporta kg/lt también
             $table->decimal('unit_price', 12, 2)->unsigned();
             $table->timestamps();

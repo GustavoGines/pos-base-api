@@ -19,17 +19,17 @@ class StoreProductRequest extends FormRequest
                 'required',
                 'string',
                 'max:255',
-                Rule::unique('products')->whereNull('deleted_at')
+                Rule::unique('products')->whereNull('deleted_at'),
             ],
             'barcode' => [
                 'nullable',
                 'string',
-                Rule::unique('products')->whereNull('deleted_at')
+                Rule::unique('products')->whereNull('deleted_at'),
             ],
             'cost_price' => 'numeric|min:0',
             'selling_price' => 'numeric|min:0|gte:cost_price',
             'price_wholesale' => 'nullable|numeric|min:0',
-            'price_card'      => 'nullable|numeric|min:0',
+            'price_card' => 'nullable|numeric|min:0',
             'stock' => 'numeric',
             'min_stock' => 'nullable|numeric|min:0',
             'active' => 'boolean',
@@ -43,9 +43,9 @@ class StoreProductRequest extends FormRequest
             'combo_ingredients' => 'nullable|array|required_if:is_combo,true',
             'combo_ingredients.*.id' => 'required_with:combo_ingredients|exists:products,id',
             'combo_ingredients.*.quantity' => 'required_with:combo_ingredients|numeric|min:0.001',
-            'price_tiers'                => 'nullable|array',
+            'price_tiers' => 'nullable|array',
             'price_tiers.*.min_quantity' => 'required_with:price_tiers|numeric|min:1',
-            'price_tiers.*.unit_price'   => 'required_with:price_tiers|numeric|min:0',
+            'price_tiers.*.unit_price' => 'required_with:price_tiers|numeric|min:0',
             'internal_code' => 'nullable|string',
         ];
     }

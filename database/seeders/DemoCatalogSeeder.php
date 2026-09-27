@@ -2,10 +2,9 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Seeder;
 use App\Models\Category;
 use App\Models\Product;
-use Illuminate\Support\Str;
+use Illuminate\Database\Seeder;
 
 class DemoCatalogSeeder extends Seeder
 {
@@ -19,19 +18,19 @@ class DemoCatalogSeeder extends Seeder
         // 1. Crear Categorías
         $catBebidas = Category::create([
             'name' => 'Bebidas',
-            'description' => 'Gaseosas, aguas y jugos'
+            'description' => 'Gaseosas, aguas y jugos',
         ]);
 
         $catInsumos = Category::create([
             'name' => 'Insumos Pastelería',
-            'description' => 'Harinas, azúcares y repostería general'
+            'description' => 'Harinas, azúcares y repostería general',
         ]);
 
         // 2. Crear Productos Unitarios con Barcode Ficticio
         Product::create([
             'name' => 'Coca Cola 1.5L',
             'barcode' => '7791234567890',
-            'internal_code' => '00001', 
+            'internal_code' => '00001',
             'cost_price' => 800.00,
             'selling_price' => 1200.00,
             'stock' => 50,
@@ -43,7 +42,7 @@ class DemoCatalogSeeder extends Seeder
         Product::create([
             'name' => 'Esencia de Vainilla 100ml',
             'barcode' => '7799876543210',
-            'internal_code' => '00002', 
+            'internal_code' => '00002',
             'cost_price' => 300.00,
             'selling_price' => 550.00,
             'stock' => 20,

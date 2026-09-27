@@ -3,14 +3,12 @@
 namespace Tests\Feature;
 
 use App\DTOs\PaySaleDTO;
-use App\DTOs\ProcessSaleDTO;
 use App\DTOs\SaleContextDTO;
 use App\Exports\MonthlyBalanceExport;
 use App\Exports\ProfitByCategoryExport;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\StockController;
 use App\Models\CashMovement;
-use App\Models\CashRegister;
 use App\Models\CashShift;
 use App\Models\Category;
 use App\Models\Customer;
@@ -21,11 +19,9 @@ use App\Models\SaleItem;
 use App\Models\StockMovement;
 use App\Models\User;
 use App\Repositories\SalesAnalyticsRepository;
-use App\Services\PaymentService;
 use App\Services\SaleService;
-use App\Services\StockService;
-use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
@@ -45,7 +41,9 @@ class AdversarialChallenger2Test extends TestCase
     use RefreshDatabase;
 
     protected User $admin;
+
     protected CashShift $shift;
+
     protected PaymentMethod $cashMethod;
 
     protected function setUp(): void
@@ -65,12 +63,12 @@ class AdversarialChallenger2Test extends TestCase
     public function test_p2_2_extreme_fractional_quantities_and_atomic_subtotal_calculation(): void
     {
         $product = Product::create([
-            'name'          => 'Producto Fraccionable',
+            'name' => 'Producto Fraccionable',
             'internal_code' => 'FRAC01',
             'selling_price' => 15.75,
-            'cost_price'    => 5.00,
-            'stock'         => 100.0,
-            'active'        => true,
+            'cost_price' => 5.00,
+            'stock' => 100.0,
+            'active' => true,
         ]);
 
         // Extreme fractional quantity: 2.335 kg at $15.75/kg
@@ -78,21 +76,21 @@ class AdversarialChallenger2Test extends TestCase
         // Client attempts to send forged subtotal of $0.05
         $saleTotal = 36.78;
         $payload = [
-            'total'           => $saleTotal,
+            'total' => $saleTotal,
             'total_surcharge' => 0,
-            'cash_shift_id'   => $this->shift->id,
-            'user_id'         => $this->admin->id,
-            'payments'        => [[
+            'cash_shift_id' => $this->shift->id,
+            'user_id' => $this->admin->id,
+            'payments' => [[
                 'payment_method_id' => $this->cashMethod->id,
-                'base_amount'       => $saleTotal,
-                'surcharge_amount'  => 0,
-                'total_amount'      => $saleTotal,
+                'base_amount' => $saleTotal,
+                'surcharge_amount' => 0,
+                'total_amount' => $saleTotal,
             ]],
             'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 2.335,
+                'quantity' => 2.335,
                 'unit_price' => 15.75,
-                'subtotal'   => 0.05, // Forged subtotal by malicious client
+                'subtotal' => 0.05, // Forged subtotal by malicious client
             ]],
         ];
 
@@ -108,30 +106,30 @@ class AdversarialChallenger2Test extends TestCase
 
         // Another extreme boundary: quantity = 0.001 at $1,000.00/unit -> subtotal = 1.00
         $expensive = Product::create([
-            'name'          => 'Azafran Gramos',
+            'name' => 'Azafran Gramos',
             'internal_code' => 'AZAF01',
             'selling_price' => 1000.00,
-            'cost_price'    => 400.00,
-            'stock'         => 10.0,
-            'active'        => true,
+            'cost_price' => 400.00,
+            'stock' => 10.0,
+            'active' => true,
         ]);
 
         $payload2 = [
-            'total'           => 1.00,
+            'total' => 1.00,
             'total_surcharge' => 0,
-            'cash_shift_id'   => $this->shift->id,
-            'user_id'         => $this->admin->id,
-            'payments'        => [[
+            'cash_shift_id' => $this->shift->id,
+            'user_id' => $this->admin->id,
+            'payments' => [[
                 'payment_method_id' => $this->cashMethod->id,
-                'base_amount'       => 1.00,
-                'surcharge_amount'  => 0,
-                'total_amount'      => 1.00,
+                'base_amount' => 1.00,
+                'surcharge_amount' => 0,
+                'total_amount' => 1.00,
             ]],
             'items' => [[
                 'product_id' => $expensive->id,
-                'quantity'   => 0.001,
+                'quantity' => 0.001,
                 'unit_price' => 1000.00,
-                'subtotal'   => 999.99, // Forged
+                'subtotal' => 999.99, // Forged
             ]],
         ];
 
@@ -147,12 +145,12 @@ class AdversarialChallenger2Test extends TestCase
     public function test_p2_2_negotiated_unit_price_prevails_and_supports_raw_price_keys(): void
     {
         $product = Product::create([
-            'name'          => 'Articulo Negociable',
+            'name' => 'Articulo Negociable',
             'internal_code' => 'NEG01',
             'selling_price' => 100.00, // Catálogo
-            'cost_price'    => 40.00,
-            'stock'         => 50.0,
-            'active'        => true,
+            'cost_price' => 40.00,
+            'stock' => 50.0,
+            'active' => true,
         ]);
 
         // Client negotiates $62.50 per unit (catalog is $100.00).
@@ -161,21 +159,21 @@ class AdversarialChallenger2Test extends TestCase
         $expectedSubtotal = 187.50;
 
         $payload = [
-            'total'           => $expectedSubtotal,
+            'total' => $expectedSubtotal,
             'total_surcharge' => 0,
-            'cash_shift_id'   => $this->shift->id,
-            'user_id'         => $this->admin->id,
-            'payments'        => [[
+            'cash_shift_id' => $this->shift->id,
+            'user_id' => $this->admin->id,
+            'payments' => [[
                 'payment_method_id' => $this->cashMethod->id,
-                'base_amount'       => $expectedSubtotal,
-                'surcharge_amount'  => 0,
-                'total_amount'      => $expectedSubtotal,
+                'base_amount' => $expectedSubtotal,
+                'surcharge_amount' => 0,
+                'total_amount' => $expectedSubtotal,
             ]],
             'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => $qty,
+                'quantity' => $qty,
                 'unit_price' => $unitPrice,
-                'subtotal'   => 9999.00, // Forged subtotal
+                'subtotal' => 9999.00, // Forged subtotal
             ]],
         ];
 
@@ -207,7 +205,7 @@ class AdversarialChallenger2Test extends TestCase
             $sale,
             [['product_id' => $product->id, 'quantity' => 2.0, 'price' => 45.00]],
             $products,
-            $context
+            $context,
         ]);
 
         $createdItem = $sale->items()->first();
@@ -218,30 +216,30 @@ class AdversarialChallenger2Test extends TestCase
     public function test_p2_2_zero_price_100_percent_discount_promo(): void
     {
         $product = Product::create([
-            'name'          => 'Articulo Promocion Gratis',
+            'name' => 'Articulo Promocion Gratis',
             'internal_code' => 'FREE01',
             'selling_price' => 50.00,
-            'cost_price'    => 20.00,
-            'stock'         => 20.0,
-            'active'        => true,
+            'cost_price' => 20.00,
+            'stock' => 20.0,
+            'active' => true,
         ]);
 
         $payload = [
-            'total'           => 0.00,
+            'total' => 0.00,
             'total_surcharge' => 0,
-            'cash_shift_id'   => $this->shift->id,
-            'user_id'         => $this->admin->id,
-            'payments'        => [[
+            'cash_shift_id' => $this->shift->id,
+            'user_id' => $this->admin->id,
+            'payments' => [[
                 'payment_method_id' => $this->cashMethod->id,
-                'base_amount'       => 0.00,
-                'surcharge_amount'  => 0,
-                'total_amount'      => 0.00,
+                'base_amount' => 0.00,
+                'surcharge_amount' => 0,
+                'total_amount' => 0.00,
             ]],
             'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 5.0,
+                'quantity' => 5.0,
                 'unit_price' => 0.00, // 100% discount promo
-                'subtotal'   => 100.00, // Forged subtotal
+                'subtotal' => 100.00, // Forged subtotal
             ]],
         ];
 
@@ -256,12 +254,12 @@ class AdversarialChallenger2Test extends TestCase
     public function test_p2_2_negative_unit_price_is_clamped_to_zero_by_sale_service(): void
     {
         $product = Product::create([
-            'name'          => 'Articulo Precio Negativo',
+            'name' => 'Articulo Precio Negativo',
             'internal_code' => 'NEGPR01',
             'selling_price' => 30.00,
-            'cost_price'    => 10.00,
-            'stock'         => 10.0,
-            'active'        => true,
+            'cost_price' => 10.00,
+            'stock' => 10.0,
+            'active' => true,
         ]);
 
         $sale = Sale::create([
@@ -284,7 +282,7 @@ class AdversarialChallenger2Test extends TestCase
             $sale,
             [['product_id' => $product->id, 'quantity' => 2.0, 'unit_price' => -15.00]],
             $products,
-            $context
+            $context,
         ]);
 
         $item = $sale->items()->first();
@@ -295,12 +293,12 @@ class AdversarialChallenger2Test extends TestCase
     public function test_p2_2_price_tiers_applied_when_unit_price_not_provided_and_overridden_when_negotiated(): void
     {
         $product = Product::create([
-            'name'          => 'Articulo Con Tramos',
+            'name' => 'Articulo Con Tramos',
             'internal_code' => 'TIER01',
             'selling_price' => 100.00,
-            'cost_price'    => 40.00,
-            'stock'         => 200.0,
-            'active'        => true,
+            'cost_price' => 40.00,
+            'stock' => 200.0,
+            'active' => true,
         ]);
 
         $product->priceTiers()->createMany([
@@ -321,7 +319,7 @@ class AdversarialChallenger2Test extends TestCase
             $sale1,
             [['product_id' => $product->id, 'quantity' => 15.0]],
             $products,
-            $context
+            $context,
         ]);
         $item1 = $sale1->items()->first();
         $this->assertEquals(80.00, (float) $item1->unit_price, 'Should resolve tier price 80.00 for quantity 15');
@@ -333,7 +331,7 @@ class AdversarialChallenger2Test extends TestCase
             $sale2,
             [['product_id' => $product->id, 'quantity' => 60.0]],
             $products,
-            $context
+            $context,
         ]);
         $item2 = $sale2->items()->first();
         $this->assertEquals(60.00, (float) $item2->unit_price, 'Should resolve tier price 60.00 for quantity 60');
@@ -345,7 +343,7 @@ class AdversarialChallenger2Test extends TestCase
             $sale3,
             [['product_id' => $product->id, 'quantity' => 60.0, 'unit_price' => 72.00]],
             $products,
-            $context
+            $context,
         ]);
         $item3 = $sale3->items()->first();
         $this->assertEquals(72.00, (float) $item3->unit_price, 'Explicit negotiated unit price must prevail over tier price');
@@ -355,38 +353,38 @@ class AdversarialChallenger2Test extends TestCase
     public function test_p2_2_order_recall_recalculates_sale_total_atomically_from_items_subtotal(): void
     {
         $product1 = Product::create([
-            'name'          => 'Prod 1',
+            'name' => 'Prod 1',
             'internal_code' => 'RCL01',
             'selling_price' => 100.00,
-            'cost_price'    => 50.00,
-            'stock'         => 20.0,
-            'active'        => true,
+            'cost_price' => 50.00,
+            'stock' => 20.0,
+            'active' => true,
         ]);
         $product2 = Product::create([
-            'name'          => 'Prod 2',
+            'name' => 'Prod 2',
             'internal_code' => 'RCL02',
             'selling_price' => 50.00,
-            'cost_price'    => 20.00,
-            'stock'         => 30.0,
-            'active'        => true,
+            'cost_price' => 20.00,
+            'stock' => 30.0,
+            'active' => true,
         ]);
 
         // Create pending sale with Prod 1 (1 x $100)
         $sale = Sale::create([
-            'total'          => 100.00,
-            'status'         => 'pending',
+            'total' => 100.00,
+            'status' => 'pending',
             'payment_status' => 'pending',
-            'cashier_id'     => $this->admin->id,
-            'user_id'        => $this->admin->id,
-            'cash_shift_id'  => $this->shift->id,
+            'cashier_id' => $this->admin->id,
+            'user_id' => $this->admin->id,
+            'cash_shift_id' => $this->shift->id,
         ]);
         $sale->items()->create([
-            'product_id'      => $product1->id,
-            'product_name'    => $product1->name,
-            'quantity'        => 1.0,
-            'unit_price'      => 100.00,
+            'product_id' => $product1->id,
+            'product_name' => $product1->name,
+            'quantity' => 1.0,
+            'unit_price' => 100.00,
             'unit_cost_price' => 50.00,
-            'subtotal'        => 100.00,
+            'subtotal' => 100.00,
         ]);
 
         // Order recall: modify items to Prod 1 (qty 2 @ $80 negotiated) + Prod 2 (qty 3 @ $50)
@@ -394,9 +392,9 @@ class AdversarialChallenger2Test extends TestCase
         $payDto = new PaySaleDTO(
             payments: [[
                 'payment_method_id' => $this->cashMethod->id,
-                'base_amount'       => 310.00,
-                'surcharge_amount'  => 0,
-                'total_amount'      => 310.00,
+                'base_amount' => 310.00,
+                'surcharge_amount' => 0,
+                'total_amount' => 310.00,
             ]],
             tenderedAmount: 310.00,
             changeAmount: 0.00,
@@ -438,32 +436,32 @@ class AdversarialChallenger2Test extends TestCase
     public function test_p2_3_valid_adjust_types_in_out_increment_decrement(): void
     {
         $product = Product::create([
-            'name'          => 'Prod Multi Type',
+            'name' => 'Prod Multi Type',
             'internal_code' => 'STKTYPE01',
             'selling_price' => 100,
-            'cost_price'    => 50,
-            'stock'         => 50,
+            'cost_price' => 50,
+            'stock' => 50,
         ]);
 
         $this->actingAsAdmin($this->admin);
 
         // 1. type = 'in' (+10 -> 60)
         $resIn = $this->postJson("/api/catalog/products/{$product->id}/adjust-stock", [
-            'type'     => 'in',
+            'type' => 'in',
             'quantity' => 10,
-            'notes'    => 'Ingreso mercaderia',
+            'notes' => 'Ingreso mercaderia',
         ]);
         $resIn->assertStatus(200);
         $this->assertEquals(60, (float) $product->fresh()->stock);
         $this->assertDatabaseHas('stock_movements', [
             'product_id' => $product->id,
-            'type'       => 'in',
-            'quantity'   => 10,
+            'type' => 'in',
+            'quantity' => 10,
         ]);
 
         // 2. type = 'increment' (+5 -> 65)
         $resInc = $this->postJson("/api/catalog/products/{$product->id}/adjust-stock", [
-            'type'     => 'increment',
+            'type' => 'increment',
             'quantity' => 5,
         ]);
         $resInc->assertStatus(200);
@@ -471,20 +469,20 @@ class AdversarialChallenger2Test extends TestCase
 
         // 3. type = 'out' (-12 -> 53)
         $resOut = $this->postJson("/api/catalog/products/{$product->id}/adjust-stock", [
-            'type'     => 'out',
+            'type' => 'out',
             'quantity' => 12,
         ]);
         $resOut->assertStatus(200);
         $this->assertEquals(53, (float) $product->fresh()->stock);
         $this->assertDatabaseHas('stock_movements', [
             'product_id' => $product->id,
-            'type'       => 'out',
-            'quantity'   => 12,
+            'type' => 'out',
+            'quantity' => 12,
         ]);
 
         // 4. type = 'decrement' (-3 -> 50)
         $resDec = $this->postJson("/api/catalog/products/{$product->id}/adjust-stock", [
-            'type'     => 'decrement',
+            'type' => 'decrement',
             'quantity' => 3,
         ]);
         $resDec->assertStatus(200);
@@ -494,11 +492,11 @@ class AdversarialChallenger2Test extends TestCase
     public function test_p2_3_invalid_adjust_types_are_rejected_with_422(): void
     {
         $product = Product::create([
-            'name'          => 'Prod Invalido',
+            'name' => 'Prod Invalido',
             'internal_code' => 'STKINV01',
             'selling_price' => 100,
-            'cost_price'    => 50,
-            'stock'         => 20,
+            'cost_price' => 50,
+            'stock' => 20,
         ]);
 
         $this->actingAsAdmin($this->admin);
@@ -507,23 +505,23 @@ class AdversarialChallenger2Test extends TestCase
 
         foreach ($invalidTypes as $badType) {
             $response = $this->postJson("/api/catalog/products/{$product->id}/adjust-stock", [
-                'type'     => $badType,
+                'type' => $badType,
                 'quantity' => 5,
             ]);
             $response->assertStatus(422)
-                     ->assertJsonValidationErrors(['type']);
+                ->assertJsonValidationErrors(['type']);
         }
     }
 
     public function test_p2_3_quantity_zero_with_min_stock_update_does_not_create_phantom_movement(): void
     {
         $product = Product::create([
-            'name'          => 'Prod Min Stock Update',
+            'name' => 'Prod Min Stock Update',
             'internal_code' => 'MINSTK01',
             'selling_price' => 100,
-            'cost_price'    => 50,
-            'stock'         => 30,
-            'min_stock'     => 5,
+            'cost_price' => 50,
+            'stock' => 30,
+            'min_stock' => 5,
         ]);
 
         $this->actingAsAdmin($this->admin);
@@ -532,10 +530,10 @@ class AdversarialChallenger2Test extends TestCase
 
         // Send quantity = 0 with min_stock = 25
         $response = $this->postJson("/api/catalog/products/{$product->id}/adjust-stock", [
-            'type'      => 'in',
-            'quantity'  => 0,
+            'type' => 'in',
+            'quantity' => 0,
             'min_stock' => 25,
-            'notes'     => 'Solo actualizando stock minimo',
+            'notes' => 'Solo actualizando stock minimo',
         ]);
 
         $response->assertStatus(200);
@@ -551,11 +549,11 @@ class AdversarialChallenger2Test extends TestCase
     public function test_p2_3_notes_boundary_length_500_allowed_and_501_rejected(): void
     {
         $product = Product::create([
-            'name'          => 'Prod Notes Boundary',
+            'name' => 'Prod Notes Boundary',
             'internal_code' => 'NOTE01',
             'selling_price' => 100,
-            'cost_price'    => 50,
-            'stock'         => 20,
+            'cost_price' => 50,
+            'stock' => 20,
         ]);
 
         $this->actingAsAdmin($this->admin);
@@ -563,37 +561,37 @@ class AdversarialChallenger2Test extends TestCase
         // Exactly 500 characters
         $notes500 = str_repeat('A', 500);
         $res500 = $this->postJson("/api/catalog/products/{$product->id}/adjust-stock", [
-            'type'     => 'in',
+            'type' => 'in',
             'quantity' => 1,
-            'notes'    => $notes500,
+            'notes' => $notes500,
         ]);
         $res500->assertStatus(200);
 
         // Exactly 501 characters -> must fail with 422
         $notes501 = str_repeat('B', 501);
         $res501 = $this->postJson("/api/catalog/products/{$product->id}/adjust-stock", [
-            'type'     => 'in',
+            'type' => 'in',
             'quantity' => 1,
-            'notes'    => $notes501,
+            'notes' => $notes501,
         ]);
         $res501->assertStatus(422)
-               ->assertJsonValidationErrors(['notes']);
+            ->assertJsonValidationErrors(['notes']);
     }
 
     public function test_p2_3_out_of_stock_fails_gracefully(): void
     {
         $product = Product::create([
-            'name'          => 'Prod Limite Stock',
+            'name' => 'Prod Limite Stock',
             'internal_code' => 'LIM01',
             'selling_price' => 100,
-            'cost_price'    => 50,
-            'stock'         => 5,
+            'cost_price' => 50,
+            'stock' => 5,
         ]);
 
         $this->actingAsAdmin($this->admin);
 
         $response = $this->postJson("/api/catalog/products/{$product->id}/adjust-stock", [
-            'type'     => 'out',
+            'type' => 'out',
             'quantity' => 10, // Exceeds available stock (5)
         ]);
 
@@ -609,10 +607,10 @@ class AdversarialChallenger2Test extends TestCase
         );
 
         $route = Route::getRoutes()->getByName('products.adjust-stock');
-        if (!$route) {
+        if (! $route) {
             // Check by URI
             $route = Route::getRoutes()->match(
-                \Illuminate\Http\Request::create('/api/catalog/products/1/adjust-stock', 'POST')
+                Request::create('/api/catalog/products/1/adjust-stock', 'POST')
             );
         }
 
@@ -634,31 +632,31 @@ class AdversarialChallenger2Test extends TestCase
     {
         $category = Category::create(['name' => 'Alimentos']);
         $product = Product::create([
-            'name'          => 'Galletitas',
+            'name' => 'Galletitas',
             'internal_code' => 'GALL01',
-            'category_id'   => $category->id,
+            'category_id' => $category->id,
             'selling_price' => 100.00,
-            'cost_price'    => 40.00,
-            'stock'         => 50,
-            'active'        => true,
+            'cost_price' => 40.00,
+            'stock' => 50,
+            'active' => true,
         ]);
 
         $currentMonth = now()->format('Y-m');
 
         $sale = Sale::create([
-            'total'          => 200.00,
-            'status'         => 'completed',
+            'total' => 200.00,
+            'status' => 'completed',
             'payment_status' => 'paid',
-            'user_id'        => $this->admin->id,
-            'created_at'     => now(),
+            'user_id' => $this->admin->id,
+            'created_at' => now(),
         ]);
         $sale->items()->create([
-            'product_id'      => $product->id,
-            'product_name'    => $product->name,
-            'quantity'        => 2.0,
-            'unit_price'      => 100.00,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 2.0,
+            'unit_price' => 100.00,
             'unit_cost_price' => 40.00,
-            'subtotal'        => 200.00,
+            'subtotal' => 200.00,
         ]);
 
         $repo = app(SalesAnalyticsRepository::class);
@@ -692,60 +690,60 @@ class AdversarialChallenger2Test extends TestCase
     public function test_p2_4_monthly_balance_excludes_internal_customer_accounts(): void
     {
         $internalCustomer = Customer::create([
-            'name'                => 'Cuenta Interna Consumo Propio',
-            'document_number'     => '99990001',
+            'name' => 'Cuenta Interna Consumo Propio',
+            'document_number' => '99990001',
             'is_internal_account' => true,
         ]);
 
         $normalCustomer = Customer::create([
-            'name'                => 'Cliente Normal Comprador',
-            'document_number'     => '20123456789',
+            'name' => 'Cliente Normal Comprador',
+            'document_number' => '20123456789',
             'is_internal_account' => false,
         ]);
 
         $product = Product::create([
-            'name'          => 'Gaseosa',
+            'name' => 'Gaseosa',
             'internal_code' => 'GAS01',
             'selling_price' => 500.00,
-            'cost_price'    => 200.00,
-            'stock'         => 100,
-            'active'        => true,
+            'cost_price' => 200.00,
+            'stock' => 100,
+            'active' => true,
         ]);
 
         $currentMonth = now()->format('Y-m');
 
         // Internal account sale ($500)
         $saleInternal = Sale::create([
-            'total'          => 500.00,
-            'customer_id'    => $internalCustomer->id,
-            'status'         => 'completed',
+            'total' => 500.00,
+            'customer_id' => $internalCustomer->id,
+            'status' => 'completed',
             'payment_status' => 'paid',
-            'created_at'     => now(),
+            'created_at' => now(),
         ]);
         $saleInternal->items()->create([
-            'product_id'      => $product->id,
-            'product_name'    => $product->name,
-            'quantity'        => 1.0,
-            'unit_price'      => 500.00,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1.0,
+            'unit_price' => 500.00,
             'unit_cost_price' => 200.00,
-            'subtotal'        => 500.00,
+            'subtotal' => 500.00,
         ]);
 
         // Regular customer sale ($200)
         $saleNormal = Sale::create([
-            'total'          => 200.00,
-            'customer_id'    => $normalCustomer->id,
-            'status'         => 'completed',
+            'total' => 200.00,
+            'customer_id' => $normalCustomer->id,
+            'status' => 'completed',
             'payment_status' => 'paid',
-            'created_at'     => now(),
+            'created_at' => now(),
         ]);
         $saleNormal->items()->create([
-            'product_id'      => $product->id,
-            'product_name'    => $product->name,
-            'quantity'        => 1.0,
-            'unit_price'      => 200.00,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1.0,
+            'unit_price' => 200.00,
             'unit_cost_price' => 80.00,
-            'subtotal'        => 200.00,
+            'subtotal' => 200.00,
         ]);
 
         $repo = app(SalesAnalyticsRepository::class);
@@ -760,63 +758,63 @@ class AdversarialChallenger2Test extends TestCase
     public function test_p2_4_monthly_balance_deducts_active_cash_expenses_and_ignores_soft_deleted_and_incomes(): void
     {
         $product = Product::create([
-            'name'          => 'Herramienta',
+            'name' => 'Herramienta',
             'internal_code' => 'HERR01',
             'selling_price' => 200.00,
-            'cost_price'    => 80.00,
-            'stock'         => 10,
-            'active'        => true,
+            'cost_price' => 80.00,
+            'stock' => 10,
+            'active' => true,
         ]);
 
         $currentMonth = now()->format('Y-m');
 
         // Normal sale: Revenue = 200, Cost = 80, Gross Profit = 120
         $sale = Sale::create([
-            'total'          => 200.00,
-            'status'         => 'completed',
+            'total' => 200.00,
+            'status' => 'completed',
             'payment_status' => 'paid',
-            'created_at'     => now(),
+            'created_at' => now(),
         ]);
         $sale->items()->create([
-            'product_id'      => $product->id,
-            'product_name'    => $product->name,
-            'quantity'        => 1.0,
-            'unit_price'      => 200.00,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1.0,
+            'unit_price' => 200.00,
             'unit_cost_price' => 80.00,
-            'subtotal'        => 200.00,
+            'subtotal' => 200.00,
         ]);
 
         // 1. Active Cash Expense ($30.00) -> MUST be deducted
         CashMovement::create([
-            'cash_shift_id'  => $this->shift->id,
-            'user_id'        => $this->admin->id,
+            'cash_shift_id' => $this->shift->id,
+            'user_id' => $this->admin->id,
             'payment_method' => 'cash',
-            'type'           => 'expense',
-            'amount'         => 30.00,
-            'description'    => 'Gasto de flete',
-            'created_at'     => now(),
+            'type' => 'expense',
+            'amount' => 30.00,
+            'description' => 'Gasto de flete',
+            'created_at' => now(),
         ]);
 
         // 2. Active Cash Income ($100.00) -> MUST NOT be deducted as expense
         CashMovement::create([
-            'cash_shift_id'  => $this->shift->id,
-            'user_id'        => $this->admin->id,
+            'cash_shift_id' => $this->shift->id,
+            'user_id' => $this->admin->id,
             'payment_method' => 'cash',
-            'type'           => 'income',
-            'amount'         => 100.00,
-            'description'    => 'Ingreso extraordinario',
-            'created_at'     => now(),
+            'type' => 'income',
+            'amount' => 100.00,
+            'description' => 'Ingreso extraordinario',
+            'created_at' => now(),
         ]);
 
         // 3. Soft-deleted Cash Expense ($50.00) -> MUST NOT be deducted
         $deletedExpense = CashMovement::create([
-            'cash_shift_id'  => $this->shift->id,
-            'user_id'        => $this->admin->id,
+            'cash_shift_id' => $this->shift->id,
+            'user_id' => $this->admin->id,
             'payment_method' => 'cash',
-            'type'           => 'expense',
-            'amount'         => 50.00,
-            'description'    => 'Gasto anulado / revertido',
-            'created_at'     => now(),
+            'type' => 'expense',
+            'amount' => 50.00,
+            'description' => 'Gasto anulado / revertido',
+            'created_at' => now(),
         ]);
         $deletedExpense->delete(); // Soft delete
 
@@ -833,63 +831,63 @@ class AdversarialChallenger2Test extends TestCase
     {
         $cat = Category::create(['name' => 'Bebidas']);
         $product = Product::create([
-            'name'          => 'Cerveza Artesanal',
+            'name' => 'Cerveza Artesanal',
             'internal_code' => 'CERV01',
-            'category_id'   => $cat->id,
+            'category_id' => $cat->id,
             'selling_price' => 300.00,
-            'cost_price'    => 100.00,
-            'stock'         => 50,
-            'active'        => true,
+            'cost_price' => 100.00,
+            'stock' => 50,
+            'active' => true,
         ]);
 
         $internalCustomer = Customer::create([
-            'name'                => 'Consumo Empleados',
-            'document_number'     => '99990002',
+            'name' => 'Consumo Empleados',
+            'document_number' => '99990002',
             'is_internal_account' => true,
         ]);
 
         $normalCustomer = Customer::create([
-            'name'                => 'Cliente Bar',
-            'document_number'     => '20999888771',
+            'name' => 'Cliente Bar',
+            'document_number' => '20999888771',
             'is_internal_account' => false,
         ]);
 
         // Internal sale $600
         $saleInternal = Sale::create([
-            'total'          => 600.00,
-            'customer_id'    => $internalCustomer->id,
-            'status'         => 'completed',
+            'total' => 600.00,
+            'customer_id' => $internalCustomer->id,
+            'status' => 'completed',
             'payment_status' => 'paid',
-            'created_at'     => now(),
+            'created_at' => now(),
         ]);
         $saleInternal->items()->create([
-            'product_id'      => $product->id,
-            'product_name'    => $product->name,
-            'quantity'        => 2.0,
-            'unit_price'      => 300.00,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 2.0,
+            'unit_price' => 300.00,
             'unit_cost_price' => 100.00,
-            'subtotal'        => 600.00,
+            'subtotal' => 600.00,
         ]);
 
         // Normal sale $300
         $saleNormal = Sale::create([
-            'total'          => 300.00,
-            'customer_id'    => $normalCustomer->id,
-            'status'         => 'completed',
+            'total' => 300.00,
+            'customer_id' => $normalCustomer->id,
+            'status' => 'completed',
             'payment_status' => 'paid',
-            'created_at'     => now(),
+            'created_at' => now(),
         ]);
         $saleNormal->items()->create([
-            'product_id'      => $product->id,
-            'product_name'    => $product->name,
-            'quantity'        => 1.0,
-            'unit_price'      => 300.00,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1.0,
+            'unit_price' => 300.00,
             'unit_cost_price' => 100.00,
-            'subtotal'        => 300.00,
+            'subtotal' => 300.00,
         ]);
 
         $startDate = now()->startOfMonth()->toDateString();
-        $endDate   = now()->endOfMonth()->toDateString();
+        $endDate = now()->endOfMonth()->toDateString();
 
         $export = new ProfitByCategoryExport($startDate, $endDate, 'category');
         $collection = $export->collection();
@@ -910,16 +908,16 @@ class AdversarialChallenger2Test extends TestCase
     public function test_p2_4_profit_by_category_handles_zero_revenue_without_division_by_zero(): void
     {
         $startDate = now()->startOfMonth()->toDateString();
-        $endDate   = now()->endOfMonth()->toDateString();
+        $endDate = now()->endOfMonth()->toDateString();
 
         $export = new ProfitByCategoryExport($startDate, $endDate, 'category');
 
         // Pass row with 0 revenue
         $zeroRow = [
-            'category_name'     => 'Vacio',
-            'items_sold'        => 0,
-            'total_revenue'     => 0.0,
-            'total_profit'      => 0.0,
+            'category_name' => 'Vacio',
+            'items_sold' => 0,
+            'total_revenue' => 0.0,
+            'total_profit' => 0.0,
             'revenue_with_cost' => 0.0,
         ];
 
@@ -936,12 +934,12 @@ class AdversarialChallenger2Test extends TestCase
     public function test_p2_5_authenticated_request_populates_auth_facade_and_request_user(): void
     {
         $user = User::factory()->create([
-            'role'          => 'admin',
+            'role' => 'admin',
             'session_token' => 'adversarial-token-xyz-12345',
         ]);
 
         $response = $this->withHeader('X-Session-Token', 'adversarial-token-xyz-12345')
-                         ->getJson('/api/sales');
+            ->getJson('/api/sales');
 
         $response->assertStatus(200);
 
@@ -968,27 +966,27 @@ class AdversarialChallenger2Test extends TestCase
         $response = $this->getJson('/api/sales');
 
         $response->assertStatus(401)
-                 ->assertJson([
-                     'error_code' => 'SESSION_MISSING',
-                 ]);
+            ->assertJson([
+                'error_code' => 'SESSION_MISSING',
+            ]);
     }
 
     public function test_p2_5_invalid_token_returns_401_session_expired(): void
     {
         // Protected route with non-existent session token
         $response = $this->withHeader('X-Session-Token', 'completely-non-existent-token')
-                         ->getJson('/api/sales');
+            ->getJson('/api/sales');
 
         $response->assertStatus(401)
-                 ->assertJson([
-                     'error_code' => 'SESSION_EXPIRED',
-                 ]);
+            ->assertJson([
+                'error_code' => 'SESSION_EXPIRED',
+            ]);
     }
 
     public function test_p2_5_session_rotation_concurrent_device_login_invalidates_previous_token(): void
     {
         $user = User::factory()->create([
-            'role'          => 'admin',
+            'role' => 'admin',
             'session_token' => 'original-device-token',
         ]);
 
@@ -1002,9 +1000,9 @@ class AdversarialChallenger2Test extends TestCase
         // Request with original token now fails with SESSION_EXPIRED
         $res2 = $this->withHeader('X-Session-Token', 'original-device-token')->getJson('/api/sales');
         $res2->assertStatus(401)
-             ->assertJson([
-                 'error_code' => 'SESSION_EXPIRED',
-             ]);
+            ->assertJson([
+                'error_code' => 'SESSION_EXPIRED',
+            ]);
 
         // Request with new token succeeds
         $res3 = $this->withHeader('X-Session-Token', 'new-device-token')->getJson('/api/sales');

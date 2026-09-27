@@ -28,18 +28,18 @@ class CheckFeatureAccess
             ->value('value');
 
         $features = [];
-        if (!empty($featuresJson)) {
+        if (! empty($featuresJson)) {
             $decoded = json_decode($featuresJson, true);
             if (is_array($decoded)) {
                 $features = $decoded;
             }
         }
 
-        if (!isset($features[$feature]) || $features[$feature] !== true) {
+        if (! isset($features[$feature]) || $features[$feature] !== true) {
             return response()->json([
-                'message'    => "La licencia activa no incluye el módulo requerido: '{$feature}'. Actualice su plan.",
+                'message' => "La licencia activa no incluye el módulo requerido: '{$feature}'. Actualice su plan.",
                 'error_code' => 'FEATURE_NOT_LICENSED',
-                'required'   => $feature,
+                'required' => $feature,
             ], 403);
         }
 

@@ -2,9 +2,9 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\User;
 use Closure;
 use Illuminate\Http\Request;
-use App\Models\User;
 use Illuminate\Support\Facades\Hash;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -19,8 +19,8 @@ class EnsureRoleOrPin
     {
         // 1. Obtener usuario autenticado (del token de sesión principal)
         $user = $request->attributes->get('authenticated_user');
-        
-        if (!$user) {
+
+        if (! $user) {
             return response()->json(['message' => 'No autenticado'], 401);
         }
 
@@ -31,18 +31,19 @@ class EnsureRoleOrPin
 
         // 3. Si no es admin, buscar el header X-Admin-Pin
         $adminPin = $request->header('X-Admin-Pin');
-        
+
         if ($adminPin) {
             // Validar que el PIN corresponda a algun administrador
-            // NOTA: Como la validación en Flutter no pasa el ID del admin, 
-            // buscamos el primer admin que coincida. En un sistema muy grande 
+            // NOTA: Como la validación en Flutter no pasa el ID del admin,
+            // buscamos el primer admin que coincida. En un sistema muy grande
             // sería mejor enviar X-Admin-Id y X-Admin-Pin.
             $admins = User::where('role', 'admin')->whereNotNull('pin')->get();
-            
+
             foreach ($admins as $admin) {
                 if (Hash::check($adminPin, $admin->pin)) {
                     // PIN válido. Inyectamos al autorizador en los atributos
                     $request->attributes->set('authorized_by_admin_id', $admin->id);
+
                     return $next($request);
                 }
             }
@@ -50,7 +51,7 @@ class EnsureRoleOrPin
 
         // 4. Si llegó acá, es cajero y no tiene PIN o el PIN es inválido
         return response()->json([
-            'message' => 'Acceso denegado: Se requieren permisos de administrador o PIN válido.'
+            'message' => 'Acceso denegado: Se requieren permisos de administrador o PIN válido.',
         ], 403);
     }
 }

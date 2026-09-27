@@ -35,7 +35,7 @@ class ClearStaticPricesCommand extends Command
 
         $this->info("¡Purga completada! Se limpiaron los overrides estáticos de {$updated} productos.");
         $this->info('El sistema ahora utilizará exclusivamente el motor matemático de factores globales.');
-        
+
         return 0;
     }
 }

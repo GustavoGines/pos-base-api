@@ -22,6 +22,7 @@ class BrandController extends Controller
         ]);
 
         $brand = Brand::create($validated);
+
         return response()->json($brand, 201);
     }
 
@@ -38,12 +39,14 @@ class BrandController extends Controller
         ]);
 
         $brand->update($validated);
+
         return response()->json($brand);
     }
 
     public function destroy(Brand $brand)
     {
         $brand->delete();
+
         return response()->json(null, 204);
     }
 }

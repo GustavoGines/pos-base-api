@@ -14,8 +14,8 @@ class PaymentMethod extends Model
 
     protected $casts = [
         'surcharge_value' => 'decimal:4',
-        'is_cash'         => 'boolean',
-        'is_active'       => 'boolean',
+        'is_cash' => 'boolean',
+        'is_active' => 'boolean',
     ];
 
     public function salePayments(): HasMany
@@ -29,9 +29,9 @@ class PaymentMethod extends Model
     public function calculateSurcharge(float $baseAmount): float
     {
         return match ($this->surcharge_type) {
-            'percent' => round($baseAmount * (float)$this->surcharge_value / 100, 2),
-            'fixed'   => (float)$this->surcharge_value,
-            default   => 0.0,
+            'percent' => round($baseAmount * (float) $this->surcharge_value / 100, 2),
+            'fixed' => (float) $this->surcharge_value,
+            default => 0.0,
         };
     }
 

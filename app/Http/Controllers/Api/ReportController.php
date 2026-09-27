@@ -2,37 +2,45 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Exports\ExpensesAnalysisExport;
+use App\Exports\MonthlyBalanceExport;
+use App\Exports\ProfitByCategoryExport;
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
 use App\Models\SaleItem;
-use Carbon\Carbon;
+use App\Repositories\SalesAnalyticsRepository;
+use App\Services\ReportCacheService;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Carbon\Carbon;
+use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Cache;
+use Maatwebsite\Excel\Facades\Excel;
 
 class ReportController extends Controller
 {
     // ─── Método Privado: Motor de la Mega-Query (DRY) ────────────────────────
 
-    private \App\Repositories\SalesAnalyticsRepository $analyticsRepo;
+    private SalesAnalyticsRepository $analyticsRepo;
 
-    public function __construct(\App\Repositories\SalesAnalyticsRepository $analyticsRepo)
+    public function __construct(SalesAnalyticsRepository $analyticsRepo)
     {
         $this->analyticsRepo = $analyticsRepo;
     }
 
-    private function getProfitDataArray(string $startDate, string $endDate): \Illuminate\Support\Collection
+    private function getProfitDataArray(string $startDate, string $endDate): Collection
     {
-        $cacheKey = "profit_data_{$startDate}_{$endDate}";
-        return Cache::remember($cacheKey, 900, function () use ($startDate, $endDate) {
+        $cacheKey = ReportCacheService::key('profit_data', $startDate, $endDate);
+
+        return ReportCacheService::remember($cacheKey, 900, function () use ($startDate, $endDate) {
             return $this->analyticsRepo->getProfitReport($startDate, $endDate, 'category');
         });
     }
 
-    private function getProfitByBrandDataArray(string $startDate, string $endDate): \Illuminate\Support\Collection
+    private function getProfitByBrandDataArray(string $startDate, string $endDate): Collection
     {
-        $cacheKey = "profit_brand_{$startDate}_{$endDate}";
-        return Cache::remember($cacheKey, 900, function () use ($startDate, $endDate) {
+        $cacheKey = ReportCacheService::key('profit_brand', $startDate, $endDate);
+
+        return ReportCacheService::remember($cacheKey, 900, function () use ($startDate, $endDate) {
             return $this->analyticsRepo->getProfitReport($startDate, $endDate, 'brand');
         });
     }
@@ -41,12 +49,12 @@ class ReportController extends Controller
 
     private function getCommonStatsAndDailySales(string $startDate, string $endDate)
     {
-        $start    = Carbon::parse($startDate);
-        $end      = Carbon::parse($endDate);
+        $start = Carbon::parse($startDate);
+        $end = Carbon::parse($endDate);
         $diffDays = $start->diffInDays($end) + 1;
 
         $prevStart = $start->copy()->subDays($diffDays)->toDateString();
-        $prevEnd   = $end->copy()->subDays($diffDays)->toDateString();
+        $prevEnd = $end->copy()->subDays($diffDays)->toDateString();
 
         $prevStats = SaleItem::join('sales', 'sales.id', '=', 'sale_items.sale_id')
             ->join('products', 'products.id', '=', 'sale_items.product_id')
@@ -62,24 +70,24 @@ class ReportController extends Controller
                     END
                 ) as total_profit
             ')
-            ->whereBetween('sales.created_at', [\Carbon\Carbon::parse($prevStart)->startOfDay(), \Carbon\Carbon::parse($prevEnd)->endOfDay()])
+            ->whereBetween('sales.created_at', [Carbon::parse($prevStart)->startOfDay(), Carbon::parse($prevEnd)->endOfDay()])
             ->where('sales.status', 'completed')
             ->whereNotExists(function ($query) {
                 $query->select(DB::raw(1))
-                      ->from('customers')
-                      ->whereColumn('customers.id', 'sales.customer_id')
-                      ->where('customers.is_internal_account', true);
+                    ->from('customers')
+                    ->whereColumn('customers.id', 'sales.customer_id')
+                    ->where('customers.is_internal_account', true);
             })
             ->first();
 
         $dailySales = DB::table('sales')
-            ->whereBetween('created_at', [\Carbon\Carbon::parse($startDate)->startOfDay(), \Carbon\Carbon::parse($endDate)->endOfDay()])
+            ->whereBetween('created_at', [Carbon::parse($startDate)->startOfDay(), Carbon::parse($endDate)->endOfDay()])
             ->where('status', 'completed')
             ->whereNotExists(function ($query) {
                 $query->select(DB::raw(1))
-                      ->from('customers')
-                      ->whereColumn('customers.id', 'sales.customer_id')
-                      ->where('customers.is_internal_account', true);
+                    ->from('customers')
+                    ->whereColumn('customers.id', 'sales.customer_id')
+                    ->where('customers.is_internal_account', true);
             })
             ->selectRaw('DATE(created_at) as date, SUM(total) as daily_revenue')
             ->groupByRaw('DATE(created_at)')
@@ -97,44 +105,44 @@ class ReportController extends Controller
     public function profitByCategory(Request $request)
     {
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
-        $endDate   = $request->query('end_date',   Carbon::now()->endOfMonth()->toDateString());
+        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
 
         $common = $this->getCommonStatsAndDailySales($startDate, $endDate);
         $report = $this->getProfitDataArray($startDate, $endDate);
 
         return response()->json([
             'start_date' => $startDate,
-            'end_date'   => $endDate,
+            'end_date' => $endDate,
             'previous_period' => [
                 'start_date' => $common['prevStart'],
-                'end_date'   => $common['prevEnd'],
-                'revenue'    => (float) ($common['prevStats']->total_revenue ?? 0),
-                'profit'     => (float) ($common['prevStats']->total_profit  ?? 0),
+                'end_date' => $common['prevEnd'],
+                'revenue' => (float) ($common['prevStats']->total_revenue ?? 0),
+                'profit' => (float) ($common['prevStats']->total_profit ?? 0),
             ],
             'daily_evolution' => $common['dailySales'],
-            'data'            => $report,
+            'data' => $report,
         ]);
     }
 
     public function profitByBrand(Request $request)
     {
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
-        $endDate   = $request->query('end_date',   Carbon::now()->endOfMonth()->toDateString());
+        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
 
         $common = $this->getCommonStatsAndDailySales($startDate, $endDate);
         $report = $this->getProfitByBrandDataArray($startDate, $endDate);
 
         return response()->json([
             'start_date' => $startDate,
-            'end_date'   => $endDate,
+            'end_date' => $endDate,
             'previous_period' => [
                 'start_date' => $common['prevStart'],
-                'end_date'   => $common['prevEnd'],
-                'revenue'    => (float) ($common['prevStats']->total_revenue ?? 0),
-                'profit'     => (float) ($common['prevStats']->total_profit  ?? 0),
+                'end_date' => $common['prevEnd'],
+                'revenue' => (float) ($common['prevStats']->total_revenue ?? 0),
+                'profit' => (float) ($common['prevStats']->total_profit ?? 0),
             ],
             'daily_evolution' => $common['dailySales'],
-            'data'            => $report,
+            'data' => $report,
         ]);
     }
 
@@ -143,13 +151,13 @@ class ReportController extends Controller
     public function exportProfitByCategory(Request $request)
     {
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
-        $endDate   = $request->query('end_date',   Carbon::now()->endOfMonth()->toDateString());
-        $type      = $request->query('type', 'category');
+        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        $type = $request->query('type', 'category');
 
         $filename = $type === 'brand' ? 'reporte_ganancias_marcas.xlsx' : 'reporte_ganancias_categorias.xlsx';
 
-        return \Maatwebsite\Excel\Facades\Excel::download(
-            new \App\Exports\ProfitByCategoryExport($startDate, $endDate, $type),
+        return Excel::download(
+            new ProfitByCategoryExport($startDate, $endDate, $type),
             $filename
         );
     }
@@ -159,8 +167,8 @@ class ReportController extends Controller
     public function exportPdfByCategory(Request $request)
     {
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
-        $endDate   = $request->query('end_date',   Carbon::now()->endOfMonth()->toDateString());
-        $type      = $request->query('type', 'category');
+        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        $type = $request->query('type', 'category');
 
         if ($type === 'brand') {
             $data = $this->getProfitByBrandDataArray($startDate, $endDate);
@@ -170,48 +178,49 @@ class ReportController extends Controller
             $reportTitle = 'Reporte de Rentabilidad por Categoría';
         }
 
-        $totalRevenue    = $data->sum('total_revenue');
-        $totalProfit     = $data->sum('total_profit');
-        $totalWithCost   = $data->sum('revenue_with_cost');
-        $totalCost       = $totalWithCost - $data->sum('total_profit');
-        $avgMargin       = $totalWithCost > 0 ? ($totalProfit / $totalWithCost) * 100 : 0;
+        $totalRevenue = $data->sum('total_revenue');
+        $totalProfit = $data->sum('total_profit');
+        $totalWithCost = $data->sum('revenue_with_cost');
+        $totalCost = $totalWithCost - $data->sum('total_profit');
+        $avgMargin = $totalWithCost > 0 ? ($totalProfit / $totalWithCost) * 100 : 0;
 
         $salesByPlan = DB::table('sales')
             ->selectRaw('COALESCE(price_list, "base") as plan_name, COUNT(*) as total_tickets, SUM(total) as total_revenue')
-            ->whereBetween('created_at', [\Carbon\Carbon::parse($startDate)->startOfDay(), \Carbon\Carbon::parse($endDate)->endOfDay()])
+            ->whereBetween('created_at', [Carbon::parse($startDate)->startOfDay(), Carbon::parse($endDate)->endOfDay()])
             ->where('status', 'completed')
             ->whereNotExists(function ($query) {
                 $query->select(DB::raw(1))
-                      ->from('customers')
-                      ->whereColumn('customers.id', 'sales.customer_id')
-                      ->where('customers.is_internal_account', true);
+                    ->from('customers')
+                    ->whereColumn('customers.id', 'sales.customer_id')
+                    ->where('customers.is_internal_account', true);
             })
             ->groupByRaw('COALESCE(price_list, "base")')
             ->orderByDesc('total_revenue')
             ->get();
 
         $pdf = Pdf::loadView('reports.pdf_profit', [
-            'data'          => $data,
-            'reportTitle'   => $reportTitle,
-            'startDate'     => $startDate,
-            'endDate'       => $endDate,
-            'totalRevenue'  => $totalRevenue,
-            'totalProfit'   => $totalProfit,
-            'totalCost'     => $totalCost,
-            'avgMargin'     => $avgMargin,
-            'salesByPlan'   => $salesByPlan,
-            'generatedAt'   => Carbon::now()->format('d/m/Y H:i'),
+            'data' => $data,
+            'reportTitle' => $reportTitle,
+            'startDate' => $startDate,
+            'endDate' => $endDate,
+            'totalRevenue' => $totalRevenue,
+            'totalProfit' => $totalProfit,
+            'totalCost' => $totalCost,
+            'avgMargin' => $avgMargin,
+            'salesByPlan' => $salesByPlan,
+            'generatedAt' => Carbon::now()->format('d/m/Y H:i'),
         ])->setPaper('a4', 'portrait');
 
-        return $pdf->download('reporte_ganancias_' . $startDate . '_' . $endDate . '.pdf');
+        return $pdf->download('reporte_ganancias_'.$startDate.'_'.$endDate.'.pdf');
     }
 
     // ─── Endpoint: Balance Mensual Flexible ──────────────────────────────────
 
     private function getMonthlyBalanceData(string $startMonth, string $endMonth)
     {
-        $cacheKey = "balance_monthly_{$startMonth}_{$endMonth}";
-        return Cache::remember($cacheKey, 900, function () use ($startMonth, $endMonth) {
+        $cacheKey = ReportCacheService::key('balance_monthly', $startMonth, $endMonth);
+
+        return ReportCacheService::remember($cacheKey, 900, function () use ($startMonth, $endMonth) {
             return $this->getMonthlyBalanceDataUncached($startMonth, $endMonth);
         });
     }
@@ -224,51 +233,50 @@ class ReportController extends Controller
     public function monthlyBalance(Request $request)
     {
         $startMonth = $request->query('start_month', Carbon::now()->subMonths(5)->format('Y-m'));
-        $endMonth   = $request->query('end_month',   Carbon::now()->format('Y-m'));
+        $endMonth = $request->query('end_month', Carbon::now()->format('Y-m'));
 
         $data = $this->getMonthlyBalanceData($startMonth, $endMonth);
 
         return response()->json([
             'start_month' => $startMonth,
-            'end_month'   => $endMonth,
-            'months'      => $data['months'],
-            'totals'      => $data['totals'],
+            'end_month' => $endMonth,
+            'months' => $data['months'],
+            'totals' => $data['totals'],
         ]);
     }
 
     public function exportMonthlyBalanceExcel(Request $request)
     {
         $startMonth = $request->query('start_month', Carbon::now()->subMonths(5)->format('Y-m'));
-        $endMonth   = $request->query('end_month',   Carbon::now()->format('Y-m'));
+        $endMonth = $request->query('end_month', Carbon::now()->format('Y-m'));
 
-        return \Maatwebsite\Excel\Facades\Excel::download(
-            new \App\Exports\MonthlyBalanceExport($startMonth, $endMonth),
-            'balance_mensual_' . $startMonth . '_al_' . $endMonth . '.xlsx'
+        return Excel::download(
+            new MonthlyBalanceExport($startMonth, $endMonth),
+            'balance_mensual_'.$startMonth.'_al_'.$endMonth.'.xlsx'
         );
     }
 
     public function exportMonthlyBalancePdf(Request $request)
     {
         $startMonth = $request->query('start_month', Carbon::now()->subMonths(5)->format('Y-m'));
-        $endMonth   = $request->query('end_month',   Carbon::now()->format('Y-m'));
+        $endMonth = $request->query('end_month', Carbon::now()->format('Y-m'));
 
         $data = $this->getMonthlyBalanceData($startMonth, $endMonth);
 
         $pdf = Pdf::loadView('reports.pdf_monthly_balance', [
-            'data'        => $data,
-            'startMonth'  => $startMonth,
-            'endMonth'    => $endMonth,
+            'data' => $data,
+            'startMonth' => $startMonth,
+            'endMonth' => $endMonth,
             'generatedAt' => Carbon::now()->format('d/m/Y H:i'),
         ])->setPaper('a4', 'portrait');
 
-        return $pdf->download('balance_mensual_' . $startMonth . '_al_' . $endMonth . '.pdf');
+        return $pdf->download('balance_mensual_'.$startMonth.'_al_'.$endMonth.'.pdf');
     }
-
 
     public function internalConsumption(Request $request)
     {
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
-        $endDate   = $request->query('end_date',   Carbon::now()->endOfMonth()->toDateString());
+        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
 
         $customerId = $request->query('customer_id');
 
@@ -276,7 +284,7 @@ class ReportController extends Controller
             ->join('products', 'products.id', '=', 'sale_items.product_id')
             ->join('customers', 'customers.id', '=', 'sales.customer_id')
             ->where('customers.is_internal_account', true)
-            ->whereBetween('sales.created_at', [\Carbon\Carbon::parse($startDate)->startOfDay(), \Carbon\Carbon::parse($endDate)->endOfDay()])
+            ->whereBetween('sales.created_at', [Carbon::parse($startDate)->startOfDay(), Carbon::parse($endDate)->endOfDay()])
             ->where('sales.status', 'completed');
 
         if ($customerId) {
@@ -302,20 +310,21 @@ class ReportController extends Controller
 
         return response()->json([
             'start_date' => $startDate,
-            'end_date'   => $endDate,
-            'data'       => $report,
+            'end_date' => $endDate,
+            'data' => $report,
         ]);
     }
+
     public function expensesAnalysis(Request $request)
     {
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
-        $endDate   = $request->query('end_date',   Carbon::now()->endOfMonth()->toDateString());
+        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
 
         $movements = DB::table('cash_movements')
             ->leftJoin('expense_categories', 'cash_movements.expense_category_id', '=', 'expense_categories.id')
             ->where('cash_movements.type', 'expense')
             ->whereNull('cash_movements.deleted_at')
-            ->whereBetween('cash_movements.created_at', [\Carbon\Carbon::parse($startDate)->startOfDay(), \Carbon\Carbon::parse($endDate)->endOfDay()])
+            ->whereBetween('cash_movements.created_at', [Carbon::parse($startDate)->startOfDay(), Carbon::parse($endDate)->endOfDay()])
             ->select(
                 'cash_movements.id',
                 'cash_movements.amount',
@@ -327,22 +336,22 @@ class ReportController extends Controller
             ->get();
 
         $grouped = $movements->groupBy('category_name');
-        
+
         $expenses = [];
         $totalExpenses = 0;
 
         foreach ($grouped as $categoryName => $items) {
             $sum = $items->sum('amount');
             $totalExpenses += $sum;
-            
+
             $expenses[] = [
                 'category_name' => $categoryName,
                 'total_amount' => $sum,
                 'transactions' => $items->count(),
-                'movements' => $items->map(function($m) {
+                'movements' => $items->map(function ($m) {
                     return [
                         'id' => $m->id,
-                        'amount' => (float)$m->amount,
+                        'amount' => (float) $m->amount,
                         'description' => $m->description,
                         'date' => $m->created_at,
                     ];
@@ -351,7 +360,7 @@ class ReportController extends Controller
         }
 
         // Sort by total amount desc
-        usort($expenses, function($a, $b) {
+        usort($expenses, function ($a, $b) {
             return $b['total_amount'] <=> $a['total_amount'];
         });
 
@@ -359,7 +368,7 @@ class ReportController extends Controller
 
         return response()->json([
             'start_date' => $startDate,
-            'end_date'   => $endDate,
+            'end_date' => $endDate,
             'total_expenses' => round($totalExpenses, 2),
             'by_category' => $expenses->map(function ($row) use ($totalExpenses) {
                 return [
@@ -369,31 +378,31 @@ class ReportController extends Controller
                     'percentage' => $totalExpenses > 0 ? round(($row['total_amount'] / $totalExpenses) * 100, 1) : 0,
                     'movements' => $row['movements'],
                 ];
-            })
+            }),
         ]);
     }
 
     public function exportExpensesAnalysisExcel(Request $request)
     {
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
-        $endDate   = $request->query('end_date',   Carbon::now()->endOfMonth()->toDateString());
+        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
 
-        return \Maatwebsite\Excel\Facades\Excel::download(
-            new \App\Exports\ExpensesAnalysisExport($startDate, $endDate),
-            'analisis_gastos_' . str_replace('-', '', $startDate) . '_al_' . str_replace('-', '', $endDate) . '.xlsx'
+        return Excel::download(
+            new ExpensesAnalysisExport($startDate, $endDate),
+            'analisis_gastos_'.str_replace('-', '', $startDate).'_al_'.str_replace('-', '', $endDate).'.xlsx'
         );
     }
 
     public function exportExpensesAnalysisPdf(Request $request)
     {
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
-        $endDate   = $request->query('end_date',   Carbon::now()->endOfMonth()->toDateString());
+        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
 
         $expenses = DB::table('cash_movements')
             ->leftJoin('expense_categories', 'cash_movements.expense_category_id', '=', 'expense_categories.id')
             ->where('cash_movements.type', 'expense')
             ->whereNull('cash_movements.deleted_at')
-            ->whereBetween('cash_movements.created_at', [\Carbon\Carbon::parse($startDate)->startOfDay(), \Carbon\Carbon::parse($endDate)->endOfDay()])
+            ->whereBetween('cash_movements.created_at', [Carbon::parse($startDate)->startOfDay(), Carbon::parse($endDate)->endOfDay()])
             ->selectRaw("
                 COALESCE(expense_categories.name, 'Sin Categoría') as category_name,
                 SUM(cash_movements.amount) as total_amount,
@@ -405,8 +414,8 @@ class ReportController extends Controller
 
         $totalExpenses = $expenses->sum('total_amount');
 
-        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('reports.pdf_expenses_analysis', compact('expenses', 'startDate', 'endDate', 'totalExpenses'));
-        return $pdf->download('analisis_gastos_' . str_replace('-', '', $startDate) . '_al_' . str_replace('-', '', $endDate) . '.pdf');
+        $pdf = Pdf::loadView('reports.pdf_expenses_analysis', compact('expenses', 'startDate', 'endDate', 'totalExpenses'));
+
+        return $pdf->download('analisis_gastos_'.str_replace('-', '', $startDate).'_al_'.str_replace('-', '', $endDate).'.pdf');
     }
 }
-

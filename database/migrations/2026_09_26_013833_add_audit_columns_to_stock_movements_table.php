@@ -25,7 +25,7 @@ return new class extends Migration
         Schema::table('stock_movements', function (Blueprint $table) {
             $table->dropForeign(['cash_shift_id']);
             $table->dropForeign(['sale_id']);
-            
+
             $table->dropColumn(['cash_shift_id', 'sale_id']);
         });
     }

@@ -21,11 +21,11 @@ return new class extends Migration
             $table->decimal('stock', 10, 3)->default(0); // Permite fracciones para peso
             $table->boolean('active')->default(true);
             $table->boolean('is_sold_by_weight')->default(false);
-            
+
             $table->foreignId('category_id')->nullable()->constrained()->nullOnDelete();
             $table->foreignId('brand_id')->nullable()->constrained()->nullOnDelete();
             $table->foreignId('supplier_id')->nullable()->constrained()->nullOnDelete();
-            
+
             $table->timestamps();
         });
     }

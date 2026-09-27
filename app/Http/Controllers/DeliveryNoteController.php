@@ -2,8 +2,8 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Sale;
 use App\Models\DeliveryNote;
+use App\Models\Sale;
 use App\Models\StockMovement;
 use App\Services\StockService;
 use Illuminate\Http\Request;
@@ -14,6 +14,7 @@ class DeliveryNoteController extends Controller
     public function __construct(
         protected StockService $stockService
     ) {}
+
     public function index(Request $request)
     {
         $query = DeliveryNote::with(['sale.customer', 'items.product']);
@@ -26,18 +27,18 @@ class DeliveryNoteController extends Controller
 
         if ($request->filled('search')) {
             $search = $request->search;
-            $query->where(function($q) use ($search) {
+            $query->where(function ($q) use ($search) {
                 // Buscar por ID de remito
                 $q->where('id', 'like', "%{$search}%")
                   // O buscar por cliente asociado a la venta
-                  ->orWhereHas('sale.customer', function($qCust) use ($search) {
-                      $qCust->where('name', 'like', "%{$search}%");
-                  });
+                    ->orWhereHas('sale.customer', function ($qCust) use ($search) {
+                        $qCust->where('name', 'like', "%{$search}%");
+                    });
             });
         }
 
         $notes = $query->orderBy('id', 'desc')->paginate($request->input('per_page', 50));
-            
+
         return response()->json($notes);
     }
 
@@ -56,7 +57,7 @@ class DeliveryNoteController extends Controller
         $note = DeliveryNote::create([
             'sale_id' => $sale->id,
             'status' => $status,
-            'notes' => 'Generado a partir del comprobante nº ' . $sale->id . ($status === 'delivered' ? ' (Entregado en mostrador)' : ''),
+            'notes' => 'Generado a partir del comprobante nº '.$sale->id.($status === 'delivered' ? ' (Entregado en mostrador)' : ''),
         ]);
 
         foreach ($sale->items as $item) {
@@ -75,7 +76,7 @@ class DeliveryNoteController extends Controller
         $request->validate([
             'items' => 'required|array',
             'items.*.id' => 'required|exists:delivery_note_items,id',
-            'items.*.delivered_now' => 'required|numeric|min:0'
+            'items.*.delivered_now' => 'required|numeric|min:0',
         ]);
 
         return DB::transaction(function () use ($request, $id) {
@@ -84,7 +85,7 @@ class DeliveryNoteController extends Controller
             $alreadyDeducted = $note->sale && $note->sale->hasDeductedStock();
 
             $lockedProducts = null;
-            if (!$alreadyDeducted) {
+            if (! $alreadyDeducted) {
                 $productIds = $note->items->pluck('product_id')->filter()->unique()->toArray();
                 $lockedProducts = $this->stockService->lockProducts($productIds);
             }
@@ -100,9 +101,9 @@ class DeliveryNoteController extends Controller
                     $actualDeliveredNow = $newDelivered - $item->quantity_delivered;
 
                     $item->update(['quantity_delivered' => $newDelivered]);
-                    
+
                     // Lógica de Descuento de Stock en diferido (solo si la venta origen NO dedujo stock en checkout)
-                    if (!$alreadyDeducted && $actualDeliveredNow > 0 && $lockedProducts) {
+                    if (! $alreadyDeducted && $actualDeliveredNow > 0 && $lockedProducts) {
                         $product = $lockedProducts[$item->product_id] ?? null;
                         if ($product) {
                             $user = $request->user() ?? $request->attributes->get('authenticated_user');
@@ -117,11 +118,11 @@ class DeliveryNoteController extends Controller
 
                                     StockMovement::create([
                                         'product_id' => $canonicalChild->id,
-                                        'user_id'    => $userId,
-                                        'sale_id'    => $note->sale_id,
-                                        'type'       => 'sale',
-                                        'quantity'   => -$qtyDeducted,
-                                        'notes'      => "Despacho Logístico (Hijo del Combo: {$product->name}) Remito #{$note->id}"
+                                        'user_id' => $userId,
+                                        'sale_id' => $note->sale_id,
+                                        'type' => 'sale',
+                                        'quantity' => -$qtyDeducted,
+                                        'notes' => "Despacho Logístico (Hijo del Combo: {$product->name}) Remito #{$note->id}",
                                     ]);
                                 }
                             } else {
@@ -130,11 +131,11 @@ class DeliveryNoteController extends Controller
 
                                 StockMovement::create([
                                     'product_id' => $product->id,
-                                    'user_id'    => $userId,
-                                    'sale_id'    => $note->sale_id,
-                                    'type'       => 'sale',
-                                    'quantity'   => -$actualDeliveredNow,
-                                    'notes'      => "Despacho Logístico Remito #{$note->id}"
+                                    'user_id' => $userId,
+                                    'sale_id' => $note->sale_id,
+                                    'type' => 'sale',
+                                    'quantity' => -$actualDeliveredNow,
+                                    'notes' => "Despacho Logístico Remito #{$note->id}",
                                 ]);
                             }
                         }

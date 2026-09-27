@@ -3,8 +3,8 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 
 class SetLicenseKey extends Command
 {
@@ -34,12 +34,12 @@ class SetLicenseKey extends Command
             ['value' => $apiKey]
         );
 
-        $this->info("✅ Llave de licencia guardada exitosamente.");
-        $this->comment("Forzando sincronización con el servidor...");
+        $this->info('✅ Llave de licencia guardada exitosamente.');
+        $this->comment('Forzando sincronización con el servidor...');
 
         // Llamar al comando de sync programáticamente
         Artisan::call('license:sync');
-        
+
         // Imprimir el output del comando llamado
         $this->line(Artisan::output());
 

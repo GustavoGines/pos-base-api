@@ -2,12 +2,16 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\DTOs\PaySaleDTO;
+use App\DTOs\SaleContextDTO;
 use App\Http\Controllers\Controller;
-use App\Models\CashShift;
+use App\Http\Requests\PaySaleRequest;
+use App\Http\Requests\VoidSaleRequest;
+use App\Models\BusinessSetting;
 use App\Models\Sale;
-use App\Models\StockMovement;
+use App\Services\SaleService;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 
 class SalesController extends Controller
 {
@@ -27,8 +31,8 @@ class SalesController extends Controller
             'cashier:id,name',
             'payments.paymentMethod:id,name,code,is_cash',
         ])
-        ->where('status', '!=', 'pending')
-        ->latest();
+            ->where('status', '!=', 'pending')
+            ->latest();
 
         if ($period === 'today') {
             $query->whereBetween('created_at', [now()->startOfDay(), now()->endOfDay()]);
@@ -47,7 +51,7 @@ class SalesController extends Controller
             if ($shiftId) {
                 $query->where('cash_shift_id', $shiftId);
             } else {
-                // En un entorno Multi-Caja, si no envían shiftId, significa que la terminal 
+                // En un entorno Multi-Caja, si no envían shiftId, significa que la terminal
                 // actual no tiene un turno abierto. No debemos adivinar usando el último turno global.
                 return response()->json([]);
             }
@@ -99,13 +103,13 @@ class SalesController extends Controller
     /**
      * PUT /api/sales/{sale}/pay
      */
-    public function pay(\App\Http\Requests\PaySaleRequest $request, Sale $sale, \App\Services\SaleService $saleService)
+    public function pay(PaySaleRequest $request, Sale $sale, SaleService $saleService)
     {
         $validated = $request->validated();
 
-        $dto = \App\DTOs\PaySaleDTO::fromArray($validated);
-        $context = \App\DTOs\SaleContextDTO::fromArray(
-            $validated, 
+        $dto = PaySaleDTO::fromArray($validated);
+        $context = SaleContextDTO::fromArray(
+            $validated,
             $request->user()?->id ?? $request->attributes->get('authenticated_user')?->id
         );
 
@@ -117,19 +121,19 @@ class SalesController extends Controller
 
         return response()->json([
             'message' => "Venta #{$completedSale->id} cobrada correctamente.",
-            'sale'    => $completedSale->fresh()->load('items.product', 'user:id,name', 'cashier:id,name', 'payments.paymentMethod:id,name,code,is_cash'),
+            'sale' => $completedSale->fresh()->load('items.product', 'user:id,name', 'cashier:id,name', 'payments.paymentMethod:id,name,code,is_cash'),
         ]);
     }
 
     /**
      * POST /api/sales/{sale}/void
      */
-    public function void(\App\Http\Requests\VoidSaleRequest $request, Sale $sale, \App\Services\SaleService $saleService)
+    public function void(VoidSaleRequest $request, Sale $sale, SaleService $saleService)
     {
         $validated = $request->validated();
-        
-        $context = \App\DTOs\SaleContextDTO::fromArray(
-            $validated, 
+
+        $context = SaleContextDTO::fromArray(
+            $validated,
             $request->user()?->id ?? $request->attributes->get('authenticated_user')?->id
         );
 
@@ -141,9 +145,10 @@ class SalesController extends Controller
 
         return response()->json([
             'message' => "Venta #{$voidedSale->id} anulada correctamente. El stock fue restaurado.",
-            'sale'    => $voidedSale->fresh()->load('items.product', 'user:id,name', 'cashier:id,name', 'payments.paymentMethod:id,name,code,is_cash'),
+            'sale' => $voidedSale->fresh()->load('items.product', 'user:id,name', 'cashier:id,name', 'payments.paymentMethod:id,name,code,is_cash'),
         ]);
     }
+
     /**
      * GET /api/sales/{sale}/ticket-pdf
      * Descarga el PDF del comprobante/factura en formato A4
@@ -151,11 +156,11 @@ class SalesController extends Controller
     public function ticketPdf(Sale $sale)
     {
         $sale->load('items.product', 'user', 'cashier', 'customer', 'payments.paymentMethod');
-        $settings = \App\Models\BusinessSetting::all()->pluck('value', 'key')->toArray();
+        $settings = BusinessSetting::all()->pluck('value', 'key')->toArray();
 
-        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.ticket_a4', [
+        $pdf = Pdf::loadView('pdf.ticket_a4', [
             'sale' => $sale,
-            'settings' => $settings
+            'settings' => $settings,
         ]);
 
         return response($pdf->output(), 200)
@@ -163,4 +168,3 @@ class SalesController extends Controller
             ->header('Content-Disposition', 'inline; filename="ticket-'.$sale->id.'.pdf"');
     }
 }
-

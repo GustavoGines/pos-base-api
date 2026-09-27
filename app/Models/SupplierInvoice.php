@@ -23,7 +23,7 @@ class SupplierInvoice extends Model
         'receipt_file_url',
         'issue_date',
         'due_date',
-        'user_id'
+        'user_id',
     ];
 
     public function supplier()

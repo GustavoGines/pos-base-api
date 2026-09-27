@@ -24,23 +24,23 @@ class CatalogStockTest extends TestCase
 
     // ── ST-01: Crear producto ─────────────────────────────────────────────────
 
-    public function test_ST01_crear_producto_registra_stock_y_movimiento_inicial(): void
+    public function test_s_t01_crear_producto_registra_stock_y_movimiento_inicial(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
         $this->actingAsAdmin($admin);
 
         $response = $this->postJson('/api/catalog/products', [
-            'name'          => 'Producto Nuevo',
+            'name' => 'Producto Nuevo',
             'selling_price' => 150.00,
-            'cost_price'    => 100.00,
-            'stock'         => 50,
-            'active'        => true,
+            'cost_price' => 100.00,
+            'stock' => 50,
+            'active' => true,
             'is_sold_by_weight' => false,
         ]);
 
         $response->assertStatus(201)
-                 ->assertJsonPath('name', 'Producto Nuevo');
-                 
+            ->assertJsonPath('name', 'Producto Nuevo');
+
         $this->assertEquals(50, (float) $response->json('stock'));
 
         $productId = $response->json('id');
@@ -50,31 +50,31 @@ class CatalogStockTest extends TestCase
         // Verificamos el movimiento inicial
         $this->assertDatabaseHas('stock_movements', [
             'product_id' => $productId,
-            'type'       => 'in',
-            'quantity'   => 50,
+            'type' => 'in',
+            'quantity' => 50,
         ]);
     }
 
     // ── ST-02: Editar producto ────────────────────────────────────────────────
 
-    public function test_ST02_editar_producto_modifica_datos(): void
+    public function test_s_t02_editar_producto_modifica_datos(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
         $product = Product::create([
-            'name'          => 'Prod Antiguo',
+            'name' => 'Prod Antiguo',
             'internal_code' => '00001',
             'selling_price' => 100,
-            'cost_price'    => 50,
-            'stock'         => 10,
+            'cost_price' => 50,
+            'stock' => 10,
         ]);
 
         $this->actingAsAdmin($admin);
 
         $response = $this->putJson("/api/catalog/products/{$product->id}", [
-            'name'          => 'Prod Editado',
-            'cost_price'    => 50,
+            'name' => 'Prod Editado',
+            'cost_price' => 50,
             'selling_price' => 120,
-            'stock'         => 10, // Stock no cambia
+            'stock' => 10, // Stock no cambia
         ]);
 
         $response->assertStatus(200);
@@ -89,15 +89,15 @@ class CatalogStockTest extends TestCase
 
     // ── ST-03: Soft Delete ────────────────────────────────────────────────────
 
-    public function test_ST03_borrar_producto_aplica_soft_delete(): void
+    public function test_s_t03_borrar_producto_aplica_soft_delete(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
         $product = Product::create([
-            'name'          => 'Prod a Borrar',
+            'name' => 'Prod a Borrar',
             'internal_code' => '00002',
             'selling_price' => 100,
-            'cost_price'    => 50,
-            'stock'         => 10,
+            'cost_price' => 50,
+            'stock' => 10,
         ]);
 
         $this->actingAsAdmin($admin);
@@ -115,22 +115,22 @@ class CatalogStockTest extends TestCase
 
     // ── ST-04 & ST-05: Ajuste Manual de Stock ─────────────────────────────────
 
-    public function test_ST04_ST05_ajuste_manual_incrementa_decrementa_crea_movimientos(): void
+    public function test_s_t04_s_t05_ajuste_manual_incrementa_decrementa_crea_movimientos(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
         $product = Product::create([
-            'name'          => 'Prod Ajuste',
+            'name' => 'Prod Ajuste',
             'internal_code' => '00003',
             'selling_price' => 100,
-            'cost_price'    => 50,
-            'stock'         => 20,
+            'cost_price' => 50,
+            'stock' => 20,
         ]);
 
         $this->actingAsAdmin($admin);
 
         // 1. Decrementar (out / decrement)
         $responseOut = $this->postJson("/api/catalog/products/{$product->id}/adjust-stock", [
-            'type'     => 'decrement',
+            'type' => 'decrement',
             'quantity' => 5,
         ]);
 
@@ -139,13 +139,13 @@ class CatalogStockTest extends TestCase
 
         $this->assertDatabaseHas('stock_movements', [
             'product_id' => $product->id,
-            'type'       => 'out',
-            'quantity'   => 5,
+            'type' => 'out',
+            'quantity' => 5,
         ]);
 
         // 2. Incrementar (in / increment)
         $responseIn = $this->postJson("/api/catalog/products/{$product->id}/adjust-stock", [
-            'type'     => 'increment',
+            'type' => 'increment',
             'quantity' => 10,
         ]);
 
@@ -154,29 +154,29 @@ class CatalogStockTest extends TestCase
 
         $this->assertDatabaseHas('stock_movements', [
             'product_id' => $product->id,
-            'type'       => 'in',
-            'quantity'   => 10,
+            'type' => 'in',
+            'quantity' => 10,
         ]);
     }
 
-    public function test_ST06_adjust_stock_request_validates_in_out_and_rejects_invalid_types(): void
+    public function test_s_t06_adjust_stock_request_validates_in_out_and_rejects_invalid_types(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
         $product = Product::create([
-            'name'          => 'Prod Validacion',
+            'name' => 'Prod Validacion',
             'internal_code' => 'VAL01',
             'selling_price' => 50,
-            'cost_price'    => 20,
-            'stock'         => 30,
+            'cost_price' => 20,
+            'stock' => 30,
         ]);
 
         $this->actingAsAdmin($admin);
 
         // 1. Tipo 'in' válido
         $resIn = $this->postJson("/api/catalog/products/{$product->id}/adjust-stock", [
-            'type'      => 'in',
-            'quantity'  => 5,
-            'notes'     => 'Ajuste in válido',
+            'type' => 'in',
+            'quantity' => 5,
+            'notes' => 'Ajuste in válido',
             'min_stock' => 10,
         ]);
         $resIn->assertStatus(200);
@@ -184,7 +184,7 @@ class CatalogStockTest extends TestCase
 
         // 2. Tipo 'out' válido
         $resOut = $this->postJson("/api/catalog/products/{$product->id}/adjust-stock", [
-            'type'     => 'out',
+            'type' => 'out',
             'quantity' => 15,
         ]);
         $resOut->assertStatus(200);
@@ -192,37 +192,37 @@ class CatalogStockTest extends TestCase
 
         // 3. Tipo inválido rechazado con 422 por FormRequest
         $resInvalid = $this->postJson("/api/catalog/products/{$product->id}/adjust-stock", [
-            'type'     => 'invalid_type',
+            'type' => 'invalid_type',
             'quantity' => 5,
         ]);
         $resInvalid->assertStatus(422)
-                   ->assertJsonValidationErrors(['type']);
+            ->assertJsonValidationErrors(['type']);
     }
 
     // ── ST-07: Alerta de Stock Crítico ────────────────────────────────────────
 
-    public function test_ST07_alertas_muestra_productos_bajo_stock_min(): void
+    public function test_s_t07_alertas_muestra_productos_bajo_stock_min(): void
     {
         // Producto normal
         Product::create([
-            'name'          => 'Normal',
+            'name' => 'Normal',
             'internal_code' => 'N001',
             'selling_price' => 100,
-            'cost_price'    => 50,
-            'stock'         => 50,
-            'min_stock'     => 10,
-            'active'        => true,
+            'cost_price' => 50,
+            'stock' => 50,
+            'min_stock' => 10,
+            'active' => true,
         ]);
 
         // Producto crítico (por debajo del min_stock)
         $critico = Product::create([
-            'name'          => 'Critico',
+            'name' => 'Critico',
             'internal_code' => 'C001',
             'selling_price' => 100,
-            'cost_price'    => 50,
-            'stock'         => 5,
-            'min_stock'     => 10,
-            'active'        => true,
+            'cost_price' => 50,
+            'stock' => 5,
+            'min_stock' => 10,
+            'active' => true,
         ]);
 
         $response = $this->getJson('/api/catalog/products/alerts/critical');

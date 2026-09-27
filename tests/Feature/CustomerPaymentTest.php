@@ -3,10 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\Customer;
-use App\Models\CustomerTransaction;
 use App\Models\PaymentMethod;
 use App\Models\Sale;
-use App\Models\SaleItem;
 use App\Models\SalePayment;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -37,13 +35,13 @@ class CustomerPaymentTest extends TestCase
     private function crearClienteConDeuda(float $deuda1 = 500.00, float $deuda2 = 300.00): array
     {
         $customer = Customer::create([
-            'name'            => 'Cliente Test',
+            'name' => 'Cliente Test',
             'document_number' => '12345678',
-            'balance'         => $deuda1 + $deuda2,
+            'balance' => $deuda1 + $deuda2,
         ]);
 
         $shift = $this->crearTurnoAbierto();
-        $cc    = $this->crearMetodoCuentaCorriente();
+        $cc = $this->crearMetodoCuentaCorriente();
 
         $ticket1 = $this->crearTicketPendiente($customer, $shift, $cc, $deuda1);
         $ticket2 = $this->crearTicketPendiente($customer, $shift, $cc, $deuda2);
@@ -56,22 +54,22 @@ class CustomerPaymentTest extends TestCase
         $user = User::factory()->create(['role' => 'cashier']);
 
         $sale = Sale::create([
-            'total'           => $monto,
+            'total' => $monto,
             'total_surcharge' => 0,
-            'payment_status'  => 'pending',
-            'amount_due'      => $monto,
-            'status'          => 'completed',
-            'cash_shift_id'   => $shift->id,
-            'user_id'         => $user->id,
-            'customer_id'     => $customer->id,
+            'payment_status' => 'pending',
+            'amount_due' => $monto,
+            'status' => 'completed',
+            'cash_shift_id' => $shift->id,
+            'user_id' => $user->id,
+            'customer_id' => $customer->id,
         ]);
 
         SalePayment::create([
-            'sale_id'           => $sale->id,
+            'sale_id' => $sale->id,
             'payment_method_id' => $metodo->id,
-            'base_amount'       => $monto,
-            'surcharge_amount'  => 0,
-            'total_amount'      => $monto,
+            'base_amount' => $monto,
+            'surcharge_amount' => 0,
+            'total_amount' => $monto,
         ]);
 
         return $sale;
@@ -79,7 +77,7 @@ class CustomerPaymentTest extends TestCase
 
     // ── CC-01: Abono reduce balance ────────────────────────────────────────────
 
-    public function test_CC01_abono_reduce_balance_del_cliente(): void
+    public function test_c_c01_abono_reduce_balance_del_cliente(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
         [$customer, $ticket1] = $this->crearClienteConDeuda(500.00, 300.00);
@@ -87,12 +85,12 @@ class CustomerPaymentTest extends TestCase
         $this->actingAsAdmin($admin);
 
         $response = $this->postJson("/api/customers/{$customer->id}/payments", [
-            'amount'         => 200.00,
+            'amount' => 200.00,
             'payment_method' => 'cash',
         ]);
 
         $response->assertStatus(200)
-                 ->assertJsonPath('message', fn($msg) => str_contains($msg, 'exitosamente') || str_contains($msg, 'registrado'));
+            ->assertJsonPath('message', fn ($msg) => str_contains($msg, 'exitosamente') || str_contains($msg, 'registrado'));
 
         $this->assertEquals(600.00, (float) $customer->fresh()->balance,
             'El balance debe reducirse de 800 a 600 (pagó 200)');
@@ -100,26 +98,25 @@ class CustomerPaymentTest extends TestCase
 
     // ── CC-02: Abono mayor al saldo → 422 ─────────────────────────────────────
 
-    public function test_CC02_abono_mayor_al_saldo_retorna_422(): void
+    public function test_c_c02_abono_mayor_al_saldo_retorna_422(): void
     {
-        $admin    = User::factory()->create(['role' => 'admin']);
+        $admin = User::factory()->create(['role' => 'admin']);
         $customer = Customer::create([
-            'name'            => 'Cliente Poco Saldo',
+            'name' => 'Cliente Poco Saldo',
             'document_number' => '99887766',
-            'balance'         => 100.00,
+            'balance' => 100.00,
         ]);
 
         $this->actingAsAdmin($admin);
 
         $response = $this->postJson("/api/customers/{$customer->id}/payments", [
-            'amount'         => 500.00, // Mayor a 100 de deuda
+            'amount' => 500.00, // Mayor a 100 de deuda
             'payment_method' => 'cash',
         ]);
 
         $response->assertStatus(422)
-                 ->assertJsonPath('errors.amount.0', fn($msg) =>
-                     str_contains($msg, 'saldo') || str_contains($msg, 'superar') || str_contains($msg, 'monto')
-                 );
+            ->assertJsonPath('errors.amount.0', fn ($msg) => str_contains($msg, 'saldo') || str_contains($msg, 'superar') || str_contains($msg, 'monto')
+            );
 
         // El balance no debe haber cambiado
         $this->assertEquals(100.00, (float) $customer->fresh()->balance,
@@ -128,7 +125,7 @@ class CustomerPaymentTest extends TestCase
 
     // ── CC-03: Abono actualiza amount_due y payment_status de tickets ─────────
 
-    public function test_CC03_abono_actualiza_amount_due_y_payment_status_de_tickets(): void
+    public function test_c_c03_abono_actualiza_amount_due_y_payment_status_de_tickets(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
         [$customer, $ticket1, $ticket2] = $this->crearClienteConDeuda(500.00, 300.00);
@@ -137,7 +134,7 @@ class CustomerPaymentTest extends TestCase
 
         // Pagamos exactamente el monto del primer ticket ($500)
         $this->postJson("/api/customers/{$customer->id}/payments", [
-            'amount'         => 500.00,
+            'amount' => 500.00,
             'payment_method' => 'cash',
         ]);
 
@@ -157,7 +154,7 @@ class CustomerPaymentTest extends TestCase
 
     // ── CC-03b: Abono parcial → ticket queda en 'partial' ────────────────────
 
-    public function test_CC03b_abono_parcial_deja_ticket_en_estado_partial(): void
+    public function test_c_c03b_abono_parcial_deja_ticket_en_estado_partial(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
         [$customer, $ticket1] = $this->crearClienteConDeuda(500.00, 0.01);
@@ -171,7 +168,7 @@ class CustomerPaymentTest extends TestCase
 
         // Pagamos solo $200 de un ticket de $500
         $this->postJson("/api/customers/{$customer->id}/payments", [
-            'amount'         => 200.00,
+            'amount' => 200.00,
             'payment_method' => 'cash',
         ]);
 
@@ -185,26 +182,26 @@ class CustomerPaymentTest extends TestCase
 
     // ── CC-04: Abono en cheque crea ThirdPartyCheck ───────────────────────────
 
-    public function test_CC04_abono_en_cheque_crea_third_party_check(): void
+    public function test_c_c04_abono_en_cheque_crea_third_party_check(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
         $customer = Customer::create([
-            'name'            => 'Cliente Cheque',
+            'name' => 'Cliente Cheque',
             'document_number' => '55443322',
-            'balance'         => 1000.00,
+            'balance' => 1000.00,
         ]);
 
         $this->actingAsAdmin($admin);
 
         $response = $this->postJson("/api/customers/{$customer->id}/payments", [
-            'amount'         => 400.00,
+            'amount' => 400.00,
             'payment_method' => 'cheque',
-            'check_details'  => [
-                'bank_name'    => 'Banco Nación',
+            'check_details' => [
+                'bank_name' => 'Banco Nación',
                 'check_number' => '00123456',
-                'issuer_name'  => 'Juan Pérez',
-                'issuer_cuit'  => '20123456789',
-                'issue_date'   => now()->toDateString(),
+                'issuer_name' => 'Juan Pérez',
+                'issuer_cuit' => '20123456789',
+                'issue_date' => now()->toDateString(),
                 'payment_date' => now()->addDays(30)->toDateString(),
             ],
         ]);
@@ -212,23 +209,23 @@ class CustomerPaymentTest extends TestCase
         $response->assertStatus(200);
 
         $this->assertDatabaseHas('third_party_checks', [
-            'customer_id'  => $customer->id,
-            'amount'       => 400.00,
-            'bank_name'    => 'Banco Nación',
+            'customer_id' => $customer->id,
+            'amount' => 400.00,
+            'bank_name' => 'Banco Nación',
             'check_number' => '00123456',
-            'status'       => 'in_wallet',
+            'status' => 'in_wallet',
         ]);
     }
 
     // ── CC-05: No se puede eliminar cliente con saldo pendiente ───────────────
 
-    public function test_CC05_no_se_puede_eliminar_cliente_con_saldo_pendiente(): void
+    public function test_c_c05_no_se_puede_eliminar_cliente_con_saldo_pendiente(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
         $customer = Customer::create([
-            'name'            => 'Cliente Con Deuda',
+            'name' => 'Cliente Con Deuda',
             'document_number' => '11223344',
-            'balance'         => 250.00,
+            'balance' => 250.00,
         ]);
 
         $this->actingAsAdmin($admin);
@@ -236,9 +233,8 @@ class CustomerPaymentTest extends TestCase
         $response = $this->deleteJson("/api/customers/{$customer->id}");
 
         $response->assertStatus(403)
-                 ->assertJsonPath('message', fn($msg) =>
-                     str_contains($msg, 'saldo') || str_contains($msg, 'pendiente') || str_contains($msg, 'eliminar')
-                 );
+            ->assertJsonPath('message', fn ($msg) => str_contains($msg, 'saldo') || str_contains($msg, 'pendiente') || str_contains($msg, 'eliminar')
+            );
 
         // El cliente sigue existiendo en la BD
         $this->assertDatabaseHas('customers', ['id' => $customer->id]);
@@ -246,13 +242,13 @@ class CustomerPaymentTest extends TestCase
 
     // ── CC-05b: Sí se puede eliminar cliente sin deuda ────────────────────────
 
-    public function test_CC05b_se_puede_eliminar_cliente_sin_deuda(): void
+    public function test_c_c05b_se_puede_eliminar_cliente_sin_deuda(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
         $customer = Customer::create([
-            'name'            => 'Cliente Sin Deuda',
+            'name' => 'Cliente Sin Deuda',
             'document_number' => '99112233',
-            'balance'         => 0.00,
+            'balance' => 0.00,
         ]);
 
         $this->actingAsAdmin($admin);
@@ -267,32 +263,31 @@ class CustomerPaymentTest extends TestCase
 
     // ── CC-06: document_number único ──────────────────────────────────────────
 
-    public function test_CC06_document_number_duplicado_retorna_422(): void
+    public function test_c_c06_document_number_duplicado_retorna_422(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
 
         Customer::create([
-            'name'            => 'Cliente Original',
+            'name' => 'Cliente Original',
             'document_number' => '11111111',
-            'balance'         => 0,
+            'balance' => 0,
         ]);
 
         $this->actingAsAdmin($admin);
 
         $response = $this->postJson('/api/customers', [
-            'name'            => 'Cliente Duplicado',
+            'name' => 'Cliente Duplicado',
             'document_number' => '11111111', // Mismo DNI
         ]);
 
         $response->assertStatus(422)
-                 ->assertJsonPath('errors.document_number.0', fn($msg) =>
-                     str_contains($msg, 'existe') || str_contains($msg, 'documento') || str_contains($msg, 'unique')
-                 );
+            ->assertJsonPath('errors.document_number.0', fn ($msg) => str_contains($msg, 'existe') || str_contains($msg, 'documento') || str_contains($msg, 'unique')
+            );
     }
 
     // ── CC-07: getPendingSales solo devuelve tickets con amount_due > 0 ───────
 
-    public function test_CC07_get_pending_sales_solo_devuelve_tickets_con_deuda(): void
+    public function test_c_c07_get_pending_sales_solo_devuelve_tickets_con_deuda(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
         [$customer, $ticket1, $ticket2] = $this->crearClienteConDeuda(400.00, 300.00);
@@ -316,7 +311,7 @@ class CustomerPaymentTest extends TestCase
 
     // ── CC-03c: Abono global distribuye a múltiples tickets en orden ──────────
 
-    public function test_CC03c_abono_global_distribuye_a_tickets_en_orden_cronologico(): void
+    public function test_c_c03c_abono_global_distribuye_a_tickets_en_orden_cronologico(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
         [$customer, $ticket1, $ticket2] = $this->crearClienteConDeuda(300.00, 400.00);
@@ -325,7 +320,7 @@ class CustomerPaymentTest extends TestCase
 
         // Pagamos $700 (exactamente ambos tickets)
         $this->postJson("/api/customers/{$customer->id}/payments", [
-            'amount'         => 700.00,
+            'amount' => 700.00,
             'payment_method' => 'cash',
         ]);
 

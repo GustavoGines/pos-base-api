@@ -18,6 +18,7 @@ class SystemController extends Controller
         }
 
         Artisan::call('migrate', ['--force' => true]);
+
         return response()->json(['success' => true, 'output' => Artisan::output()]);
     }
 
@@ -29,6 +30,7 @@ class SystemController extends Controller
         if (file_exists($path)) {
             $version = trim(file_get_contents($path));
         }
+
         return response()->json(['version' => $version])
             ->header('Cache-Control', 'no-cache, no-store, must-revalidate')
             ->header('Pragma', 'no-cache')

@@ -28,19 +28,19 @@ class UserController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'name'        => 'required|string|max:100',
-            'role'        => 'required|in:admin,cashier',
-            'pin'         => 'required|string|size:4|regex:/^[0-9]{4}$/',
+            'name' => 'required|string|max:100',
+            'role' => 'required|in:admin,cashier',
+            'pin' => 'required|string|size:4|regex:/^[0-9]{4}$/',
             'permissions' => 'nullable|array',
             'permissions.*' => 'string|in:void_sales,manage_catalog,adjust_stock,view_global_history',
         ]);
 
         // Generar email único interno basado en el nombre
-        $baseEmail = strtolower(str_replace(' ', '.', $validated['name'])) . '@pos.internal';
+        $baseEmail = strtolower(str_replace(' ', '.', $validated['name'])).'@pos.internal';
         $email = $baseEmail;
         $i = 1;
         while (User::where('email', $email)->exists()) {
-            $email = $baseEmail . '.' . $i++;
+            $email = $baseEmail.'.'.$i++;
         }
 
         // Verificar que el PIN no exista en ningún otro usuario
@@ -51,24 +51,24 @@ class UserController extends Controller
         if ($pinExists) {
             return response()->json([
                 'message' => 'El PIN ya está en uso por otro empleado. Por favor elegí uno diferente.',
-                'errors'  => ['pin' => ['El PIN ya está en uso.']],
+                'errors' => ['pin' => ['El PIN ya está en uso.']],
             ], 422);
         }
 
         $user = User::create([
-            'name'        => $validated['name'],
-            'email'       => $email,
-            'password'    => Hash::make('pos_internal_' . $validated['pin']),
-            'role'        => $validated['role'],
-            'pin'         => Hash::make($validated['pin']),
+            'name' => $validated['name'],
+            'email' => $email,
+            'password' => Hash::make('pos_internal_'.$validated['pin']),
+            'role' => $validated['role'],
+            'pin' => Hash::make($validated['pin']),
             'permissions' => $validated['permissions'] ?? [],
         ]);
 
         return response()->json([
-            'id'          => $user->id,
-            'name'        => $user->name,
-            'email'       => $user->email,
-            'role'        => $user->role,
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'role' => $user->role,
             'permissions' => $user->permissions ?? [],
         ], 201);
     }
@@ -79,21 +79,21 @@ class UserController extends Controller
     public function update(Request $request, User $user)
     {
         $validated = $request->validate([
-            'name'        => 'required|string|max:100',
-            'role'        => 'required|in:admin,cashier',
-            'pin'         => 'nullable|string|size:4|regex:/^[0-9]{4}$/',
+            'name' => 'required|string|max:100',
+            'role' => 'required|in:admin,cashier',
+            'pin' => 'nullable|string|size:4|regex:/^[0-9]{4}$/',
             'permissions' => 'nullable|array',
             'permissions.*' => 'string|in:void_sales,manage_catalog,adjust_stock,view_global_history',
         ]);
 
         $data = [
-            'name'        => $validated['name'],
-            'role'        => $validated['role'],
+            'name' => $validated['name'],
+            'role' => $validated['role'],
             'permissions' => $validated['permissions'] ?? [],
         ];
 
         // Si viene nuevo PIN, verificar que no lo use ya otro usuario distinto
-        if (!empty($validated['pin'])) {
+        if (! empty($validated['pin'])) {
             $pinExists = User::where('id', '!=', $user->id)->whereNotNull('pin')->get()->first(function ($u) use ($validated) {
                 return Hash::check($validated['pin'], $u->pin);
             });
@@ -101,7 +101,7 @@ class UserController extends Controller
             if ($pinExists) {
                 return response()->json([
                     'message' => 'El PIN ya está en uso por otro empleado. Por favor elegí uno diferente.',
-                    'errors'  => ['pin' => ['El PIN ya está en uso.']],
+                    'errors' => ['pin' => ['El PIN ya está en uso.']],
                 ], 422);
             }
 
@@ -111,10 +111,10 @@ class UserController extends Controller
         $user->update($data);
 
         return response()->json([
-            'id'          => $user->id,
-            'name'        => $user->name,
-            'email'       => $user->email,
-            'role'        => $user->role,
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'role' => $user->role,
             'permissions' => $user->permissions ?? [],
         ]);
     }

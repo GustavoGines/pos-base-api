@@ -2,11 +2,11 @@
 
 namespace Tests\Feature;
 
+use App\Models\Customer;
+use App\Models\Product;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
-use App\Models\Product;
-use App\Models\Customer;
-use App\Models\User;
 
 class TrashTest extends TestCase
 {
@@ -25,13 +25,13 @@ class TrashTest extends TestCase
     {
         $product1 = Product::create(['name' => 'P1', 'internal_code' => 'T01', 'cost_price' => 10, 'selling_price' => 20]);
         $product2 = Product::create(['name' => 'P2', 'internal_code' => 'T02', 'cost_price' => 10, 'selling_price' => 20]);
-        
+
         $product1->delete(); // Soft delete
 
         $response = $this->getJson('/api/trash/products');
         $response->assertStatus(200)
-                 ->assertJsonCount(1, 'data')
-                 ->assertJsonPath('data.0.id', $product1->id);
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $product1->id);
     }
 
     public function test_tr02_restore_product()

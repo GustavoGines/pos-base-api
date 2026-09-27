@@ -2,20 +2,16 @@
 
 namespace Tests\Feature;
 
-use App\DTOs\SaleContextDTO;
+use App\Models\BusinessSetting;
 use App\Models\CashRegister;
 use App\Models\CashShift;
-use App\Models\Customer;
 use App\Models\DeliveryNote;
-use App\Models\DeliveryNoteItem;
 use App\Models\PaymentMethod;
 use App\Models\Product;
 use App\Models\Quote;
 use App\Models\Sale;
-use App\Models\SaleItem;
 use App\Models\StockMovement;
 use App\Models\User;
-use App\Services\SaleService;
 use App\Services\StockService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -26,7 +22,9 @@ class AdversarialConcurrencyStressTest extends TestCase
     use RefreshDatabase;
 
     protected User $admin;
+
     protected CashShift $shift;
+
     protected PaymentMethod $cashMethod;
 
     protected function setUp(): void
@@ -39,22 +37,22 @@ class AdversarialConcurrencyStressTest extends TestCase
         $register = CashRegister::create(['name' => 'Caja Stress']);
         $this->shift = CashShift::create([
             'cash_register_id' => $register->id,
-            'user_id'          => $this->admin->id,
-            'status'           => 'open',
-            'opening_balance'  => 0,
-            'opened_at'        => now(),
+            'user_id' => $this->admin->id,
+            'status' => 'open',
+            'opening_balance' => 0,
+            'opened_at' => now(),
         ]);
 
         $this->cashMethod = PaymentMethod::create([
-            'name'   => 'Efectivo',
-            'code'   => 'cash',
-            'type'   => 'cash',
+            'name' => 'Efectivo',
+            'code' => 'cash',
+            'type' => 'cash',
             'active' => true,
         ]);
 
         // Enable quotes feature gate
-        \App\Models\BusinessSetting::create([
-            'key'   => 'license_features_dict',
+        BusinessSetting::create([
+            'key' => 'license_features_dict',
             'value' => json_encode(['quotes' => true]),
         ]);
     }
@@ -74,20 +72,20 @@ class AdversarialConcurrencyStressTest extends TestCase
     {
         Quote::create([
             'quote_number' => 'PRES-0001',
-            'status'       => 'pending',
-            'subtotal'     => 10,
-            'total'        => 10,
-            'user_id'      => $this->admin->id,
+            'status' => 'pending',
+            'subtotal' => 10,
+            'total' => 10,
+            'user_id' => $this->admin->id,
         ]);
 
         $this->assertEquals('PRES-0002', Quote::nextQuoteNumber());
 
         Quote::create([
             'quote_number' => 'PRES-0002',
-            'status'       => 'pending',
-            'subtotal'     => 10,
-            'total'        => 10,
-            'user_id'      => $this->admin->id,
+            'status' => 'pending',
+            'subtotal' => 10,
+            'total' => 10,
+            'user_id' => $this->admin->id,
         ]);
 
         $this->assertEquals('PRES-0003', Quote::nextQuoteNumber());
@@ -97,10 +95,10 @@ class AdversarialConcurrencyStressTest extends TestCase
     {
         Quote::create([
             'quote_number' => 'PRES-9999',
-            'status'       => 'pending',
-            'subtotal'     => 10,
-            'total'        => 10,
-            'user_id'      => $this->admin->id,
+            'status' => 'pending',
+            'subtotal' => 10,
+            'total' => 10,
+            'user_id' => $this->admin->id,
         ]);
 
         $this->assertEquals('PRES-10000', Quote::nextQuoteNumber(), 'Overflow from 9999 must cleanly expand to 10000 without truncation');
@@ -110,10 +108,10 @@ class AdversarialConcurrencyStressTest extends TestCase
     {
         Quote::create([
             'quote_number' => 'PRES-99999',
-            'status'       => 'pending',
-            'subtotal'     => 10,
-            'total'        => 10,
-            'user_id'      => $this->admin->id,
+            'status' => 'pending',
+            'subtotal' => 10,
+            'total' => 10,
+            'user_id' => $this->admin->id,
         ]);
 
         $this->assertEquals('PRES-100000', Quote::nextQuoteNumber());
@@ -123,10 +121,10 @@ class AdversarialConcurrencyStressTest extends TestCase
     {
         Quote::create([
             'quote_number' => 'COT-0042',
-            'status'       => 'pending',
-            'subtotal'     => 10,
-            'total'        => 10,
-            'user_id'      => $this->admin->id,
+            'status' => 'pending',
+            'subtotal' => 10,
+            'total' => 10,
+            'user_id' => $this->admin->id,
         ]);
 
         $this->assertEquals('COT-0043', Quote::nextQuoteNumber(), 'Custom prefix COT- should be preserved during auto-increment');
@@ -135,10 +133,10 @@ class AdversarialConcurrencyStressTest extends TestCase
         Quote::query()->delete();
         Quote::create([
             'quote_number' => 'NONUMBERHERE',
-            'status'       => 'pending',
-            'subtotal'     => 10,
-            'total'        => 10,
-            'user_id'      => $this->admin->id,
+            'status' => 'pending',
+            'subtotal' => 10,
+            'total' => 10,
+            'user_id' => $this->admin->id,
         ]);
 
         $this->assertEquals('PRES-0001', Quote::nextQuoteNumber(), 'Fallback when no numeric suffix found must return PRES-0001');
@@ -148,7 +146,7 @@ class AdversarialConcurrencyStressTest extends TestCase
     {
         $payload = [
             'customer_name' => 'Cliente Concurrente',
-            'items'         => [
+            'items' => [
                 ['product_name' => 'Articulo A', 'unit_price' => 50.00, 'quantity' => 2],
             ],
         ];
@@ -173,31 +171,31 @@ class AdversarialConcurrencyStressTest extends TestCase
     public function test_p2_1_counter_sale_delivery_note_multiple_updates_never_double_deduct(): void
     {
         $prod = Product::create([
-            'name'          => 'Producto Anti-Doble-Descuento',
+            'name' => 'Producto Anti-Doble-Descuento',
             'internal_code' => 'ADD-01',
-            'cost_price'    => 10,
+            'cost_price' => 10,
             'selling_price' => 20,
-            'stock'         => 100,
-            'active'        => true,
+            'stock' => 100,
+            'active' => true,
         ]);
 
         // 1. Regular counter POS sale of 10 units (stock 100 -> 90)
         $saleRes = $this->postJson('/api/pos/sales', [
-            'total'           => 200.00,
+            'total' => 200.00,
             'total_surcharge' => 0,
-            'cash_shift_id'   => $this->shift->id,
-            'user_id'         => $this->admin->id,
-            'payments'        => [[
+            'cash_shift_id' => $this->shift->id,
+            'user_id' => $this->admin->id,
+            'payments' => [[
                 'payment_method_id' => $this->cashMethod->id,
-                'base_amount'       => 200.00,
-                'surcharge_amount'  => 0,
-                'total_amount'      => 200.00,
+                'base_amount' => 200.00,
+                'surcharge_amount' => 0,
+                'total_amount' => 200.00,
             ]],
             'items' => [[
                 'product_id' => $prod->id,
-                'quantity'   => 10,
+                'quantity' => 10,
                 'unit_price' => 20.00,
-                'subtotal'   => 200.00,
+                'subtotal' => 200.00,
             ]],
         ]);
 
@@ -236,27 +234,27 @@ class AdversarialConcurrencyStressTest extends TestCase
     public function test_p2_1_deferred_delivery_note_partial_and_over_delivery_bounds(): void
     {
         $prod = Product::create([
-            'name'          => 'Producto Entrega Diferida',
+            'name' => 'Producto Entrega Diferida',
             'internal_code' => 'DIF-01',
-            'cost_price'    => 10,
+            'cost_price' => 10,
             'selling_price' => 20,
-            'stock'         => 50,
-            'active'        => true,
+            'stock' => 50,
+            'active' => true,
         ]);
 
         // Create a manual sale that did NOT deduct stock at checkout
         $sale = Sale::create([
-            'cash_shift_id'   => $this->shift->id,
-            'user_id'         => $this->admin->id,
-            'total'           => 100,
-            'status'          => 'completed',
+            'cash_shift_id' => $this->shift->id,
+            'user_id' => $this->admin->id,
+            'total' => 100,
+            'status' => 'completed',
         ]);
         $saleItem = $sale->items()->create([
-            'product_id'   => $prod->id,
+            'product_id' => $prod->id,
             'product_name' => $prod->name,
-            'quantity'     => 10,
-            'unit_price'   => 10,
-            'subtotal'     => 100,
+            'quantity' => 10,
+            'unit_price' => 10,
+            'subtotal' => 100,
         ]);
 
         $this->assertFalse($sale->hasDeductedStock(), 'Manual deferred sale should not have checkout stock movements');
@@ -264,11 +262,11 @@ class AdversarialConcurrencyStressTest extends TestCase
         // Create delivery note: 10 purchased, 0 delivered
         $dn = DeliveryNote::create([
             'sale_id' => $sale->id,
-            'status'  => 'pending',
-            'notes'   => 'Despacho pendiente',
+            'status' => 'pending',
+            'notes' => 'Despacho pendiente',
         ]);
         $dnItem = $dn->items()->create([
-            'product_id'         => $prod->id,
+            'product_id' => $prod->id,
             'quantity_purchased' => 10,
             'quantity_delivered' => 0,
         ]);
@@ -355,25 +353,25 @@ class AdversarialConcurrencyStressTest extends TestCase
         // Create deferred sale with combo
         $sale = Sale::create([
             'cash_shift_id' => $this->shift->id,
-            'user_id'       => $this->admin->id,
-            'total'         => 180,
-            'status'        => 'completed',
+            'user_id' => $this->admin->id,
+            'total' => 180,
+            'status' => 'completed',
         ]);
         $sale->items()->create([
-            'product_id'   => $combo->id,
+            'product_id' => $combo->id,
             'product_name' => $combo->name,
-            'quantity'     => 3,
-            'unit_price'   => 60,
-            'subtotal'     => 180,
+            'quantity' => 3,
+            'unit_price' => 60,
+            'subtotal' => 180,
         ]);
 
         $dn = DeliveryNote::create([
             'sale_id' => $sale->id,
-            'status'  => 'pending',
-            'notes'   => 'Envío de Kit',
+            'status' => 'pending',
+            'notes' => 'Envío de Kit',
         ]);
         $dnItem = $dn->items()->create([
-            'product_id'         => $combo->id,
+            'product_id' => $combo->id,
             'quantity_purchased' => 3,
             'quantity_delivered' => 0,
         ]);
@@ -399,31 +397,31 @@ class AdversarialConcurrencyStressTest extends TestCase
     public function test_sale_void_counter_sale_with_delivery_note_restores_full_stock(): void
     {
         $prod = Product::create([
-            'name'          => 'Prod Void Counter',
+            'name' => 'Prod Void Counter',
             'internal_code' => 'PVC-01',
-            'cost_price'    => 10,
+            'cost_price' => 10,
             'selling_price' => 20,
-            'stock'         => 100,
-            'active'        => true,
+            'stock' => 100,
+            'active' => true,
         ]);
 
         // 1. Counter sale: 5 units sold, stock 100 -> 95
         $saleRes = $this->postJson('/api/pos/sales', [
-            'total'           => 100.00,
+            'total' => 100.00,
             'total_surcharge' => 0,
-            'cash_shift_id'   => $this->shift->id,
-            'user_id'         => $this->admin->id,
-            'payments'        => [[
+            'cash_shift_id' => $this->shift->id,
+            'user_id' => $this->admin->id,
+            'payments' => [[
                 'payment_method_id' => $this->cashMethod->id,
-                'base_amount'       => 100.00,
-                'surcharge_amount'  => 0,
-                'total_amount'      => 100.00,
+                'base_amount' => 100.00,
+                'surcharge_amount' => 0,
+                'total_amount' => 100.00,
             ]],
             'items' => [[
                 'product_id' => $prod->id,
-                'quantity'   => 5,
+                'quantity' => 5,
                 'unit_price' => 20.00,
-                'subtotal'   => 100.00,
+                'subtotal' => 100.00,
             ]],
         ]);
         $saleId = $saleRes->json('sale.id');
@@ -454,27 +452,27 @@ class AdversarialConcurrencyStressTest extends TestCase
     public function test_sale_void_deferred_sale_only_restores_actually_delivered_stock(): void
     {
         $prod = Product::create([
-            'name'          => 'Prod Void Deferred',
+            'name' => 'Prod Void Deferred',
             'internal_code' => 'PVD-01',
-            'cost_price'    => 10,
+            'cost_price' => 10,
             'selling_price' => 20,
-            'stock'         => 100, // starting stock
-            'active'        => true,
+            'stock' => 100, // starting stock
+            'active' => true,
         ]);
 
         // 1. Create a deferred sale (stock NOT deducted at checkout)
         $sale = Sale::create([
             'cash_shift_id' => $this->shift->id,
-            'user_id'       => $this->admin->id,
-            'total'         => 200,
-            'status'        => 'completed',
+            'user_id' => $this->admin->id,
+            'total' => 200,
+            'status' => 'completed',
         ]);
         $sale->items()->create([
-            'product_id'   => $prod->id,
+            'product_id' => $prod->id,
             'product_name' => $prod->name,
-            'quantity'     => 10,
-            'unit_price'   => 20,
-            'subtotal'     => 200,
+            'quantity' => 10,
+            'unit_price' => 20,
+            'subtotal' => 200,
         ]);
 
         // Stock is still 100
@@ -483,11 +481,11 @@ class AdversarialConcurrencyStressTest extends TestCase
         // 2. Delivery Note: 10 purchased, deliver 3
         $dn = DeliveryNote::create([
             'sale_id' => $sale->id,
-            'status'  => 'pending',
-            'notes'   => 'Envío a domicilio',
+            'status' => 'pending',
+            'notes' => 'Envío a domicilio',
         ]);
         $dnItem = $dn->items()->create([
-            'product_id'         => $prod->id,
+            'product_id' => $prod->id,
             'quantity_purchased' => 10,
             'quantity_delivered' => 0,
         ]);
@@ -512,36 +510,36 @@ class AdversarialConcurrencyStressTest extends TestCase
     public function test_sale_void_deferred_zero_delivered_restores_zero_stock(): void
     {
         $prod = Product::create([
-            'name'          => 'Prod Zero Delivered',
+            'name' => 'Prod Zero Delivered',
             'internal_code' => 'PZD-01',
-            'cost_price'    => 10,
+            'cost_price' => 10,
             'selling_price' => 20,
-            'stock'         => 50,
-            'active'        => true,
+            'stock' => 50,
+            'active' => true,
         ]);
 
         // Deferred sale of 5 units (stock not deducted)
         $sale = Sale::create([
             'cash_shift_id' => $this->shift->id,
-            'user_id'       => $this->admin->id,
-            'total'         => 100,
-            'status'        => 'completed',
+            'user_id' => $this->admin->id,
+            'total' => 100,
+            'status' => 'completed',
         ]);
         $sale->items()->create([
-            'product_id'   => $prod->id,
+            'product_id' => $prod->id,
             'product_name' => $prod->name,
-            'quantity'     => 5,
-            'unit_price'   => 20,
-            'subtotal'     => 100,
+            'quantity' => 5,
+            'unit_price' => 20,
+            'subtotal' => 100,
         ]);
 
         // Delivery Note: 5 purchased, 0 delivered
         $dn = DeliveryNote::create([
             'sale_id' => $sale->id,
-            'status'  => 'pending',
+            'status' => 'pending',
         ]);
         $dn->items()->create([
-            'product_id'         => $prod->id,
+            'product_id' => $prod->id,
             'quantity_purchased' => 5,
             'quantity_delivered' => 0,
         ]);
@@ -571,25 +569,25 @@ class AdversarialConcurrencyStressTest extends TestCase
         // Deferred sale: 5 Double Burger Packs
         $sale = Sale::create([
             'cash_shift_id' => $this->shift->id,
-            'user_id'       => $this->admin->id,
-            'total'         => 100,
-            'status'        => 'completed',
+            'user_id' => $this->admin->id,
+            'total' => 100,
+            'status' => 'completed',
         ]);
         $sale->items()->create([
-            'product_id'   => $combo->id,
+            'product_id' => $combo->id,
             'product_name' => $combo->name,
-            'quantity'     => 5,
-            'unit_price'   => 20,
-            'subtotal'     => 100,
+            'quantity' => 5,
+            'unit_price' => 20,
+            'subtotal' => 100,
         ]);
 
         // Delivery note: 5 purchased, deliver 2
         $dn = DeliveryNote::create([
             'sale_id' => $sale->id,
-            'status'  => 'pending',
+            'status' => 'pending',
         ]);
         $dnItem = $dn->items()->create([
-            'product_id'         => $combo->id,
+            'product_id' => $combo->id,
             'quantity_purchased' => 5,
             'quantity_delivered' => 0,
         ]);

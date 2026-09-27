@@ -2,21 +2,24 @@
 
 namespace Tests\Feature;
 
-use Illuminate\Foundation\Testing\RefreshDatabase;
-use Tests\TestCase;
-use App\Models\Sale;
-use App\Models\Product;
-use App\Models\User;
 use App\Models\CashRegister;
 use App\Models\CashShift;
-use App\Models\Customer;
+use App\Models\PaymentMethod;
+use App\Models\Product;
+use App\Models\Sale;
+use App\Models\StockMovement;
+use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\TestCase;
 
 class DeliveryNoteTest extends TestCase
 {
     use RefreshDatabase;
 
     protected $admin;
+
     protected $register;
+
     protected $shift;
 
     protected function setUp(): void
@@ -31,7 +34,7 @@ class DeliveryNoteTest extends TestCase
             'user_id' => $this->admin->id,
             'status' => 'open',
             'opening_balance' => 0,
-            'opened_at' => now()
+            'opened_at' => now(),
         ]);
     }
 
@@ -42,32 +45,32 @@ class DeliveryNoteTest extends TestCase
             'cash_shift_id' => $this->shift->id,
             'user_id' => $this->admin->id,
             'total' => 20,
-            'status' => 'completed'
+            'status' => 'completed',
         ]);
         $sale->items()->create([
             'product_id' => $product->id,
             'product_name' => $product->name,
             'quantity' => 2,
             'unit_price' => 10,
-            'subtotal' => 20
+            'subtotal' => 20,
         ]);
 
         $response = $this->postJson("/api/delivery-notes/from-sale/{$sale->id}", [
-            'status' => 'pending'
+            'status' => 'pending',
         ]);
 
         $response->assertStatus(201)
-                 ->assertJsonPath('status', 'pending');
+            ->assertJsonPath('status', 'pending');
 
         $this->assertDatabaseHas('delivery_notes', [
             'sale_id' => $sale->id,
-            'status' => 'pending'
+            'status' => 'pending',
         ]);
-        
+
         $this->assertDatabaseHas('delivery_note_items', [
             'product_id' => $product->id,
             'quantity_purchased' => 2,
-            'quantity_delivered' => 0
+            'quantity_delivered' => 0,
         ]);
     }
 
@@ -78,18 +81,18 @@ class DeliveryNoteTest extends TestCase
             'cash_shift_id' => $this->shift->id,
             'user_id' => $this->admin->id,
             'total' => 50,
-            'status' => 'completed'
+            'status' => 'completed',
         ]);
         $sale->items()->create([
             'product_id' => $product->id,
             'product_name' => $product->name,
             'quantity' => 5,
             'unit_price' => 10,
-            'subtotal' => 50
+            'subtotal' => 50,
         ]);
 
         $noteResponse = $this->postJson("/api/delivery-notes/from-sale/{$sale->id}", [
-            'status' => 'pending'
+            'status' => 'pending',
         ]);
         $noteId = $noteResponse->json('id');
         $itemId = $noteResponse->json('items.0.id');
@@ -98,9 +101,9 @@ class DeliveryNoteTest extends TestCase
             'items' => [
                 [
                     'id' => $itemId,
-                    'delivered_now' => 2
-                ]
-            ]
+                    'delivered_now' => 2,
+                ],
+            ],
         ]);
 
         $updateResponse->assertStatus(200);
@@ -112,9 +115,9 @@ class DeliveryNoteTest extends TestCase
             'items' => [
                 [
                     'id' => $itemId,
-                    'delivered_now' => 3
-                ]
-            ]
+                    'delivered_now' => 3,
+                ],
+            ],
         ]);
 
         $updateResponse2->assertStatus(200);
@@ -125,7 +128,7 @@ class DeliveryNoteTest extends TestCase
 
     public function test_d03_update_delivery_note_does_not_double_deduct_stock_for_counter_sale(): void
     {
-        $cashMethod = \App\Models\PaymentMethod::create([
+        $cashMethod = PaymentMethod::create([
             'name' => 'Efectivo',
             'code' => 'cash',
             'type' => 'cash',
@@ -133,31 +136,31 @@ class DeliveryNoteTest extends TestCase
         ]);
 
         $product = Product::create([
-            'name'          => 'Producto Mostrador',
+            'name' => 'Producto Mostrador',
             'internal_code' => 'D03',
-            'cost_price'    => 10,
+            'cost_price' => 10,
             'selling_price' => 20,
-            'stock'         => 100,
-            'active'        => true,
+            'stock' => 100,
+            'active' => true,
         ]);
 
         // 1. Realizar venta directa en mostrador (descuenta stock inmediatamente: 100 -> 95)
         $salePayload = [
-            'total'           => 100.00,
+            'total' => 100.00,
             'total_surcharge' => 0,
-            'cash_shift_id'   => $this->shift->id,
-            'user_id'         => $this->admin->id,
-            'payments'        => [[
+            'cash_shift_id' => $this->shift->id,
+            'user_id' => $this->admin->id,
+            'payments' => [[
                 'payment_method_id' => $cashMethod->id,
-                'base_amount'       => 100.00,
-                'surcharge_amount'  => 0,
-                'total_amount'      => 100.00,
+                'base_amount' => 100.00,
+                'surcharge_amount' => 0,
+                'total_amount' => 100.00,
             ]],
             'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 5,
+                'quantity' => 5,
                 'unit_price' => 20.00,
-                'subtotal'   => 100.00,
+                'subtotal' => 100.00,
             ]],
         ];
 
@@ -169,7 +172,7 @@ class DeliveryNoteTest extends TestCase
 
         // 2. Generar remito para la venta de mostrador
         $noteResponse = $this->postJson("/api/delivery-notes/from-sale/{$saleId}", [
-            'status' => 'pending'
+            'status' => 'pending',
         ]);
         $noteResponse->assertStatus(201);
         $noteId = $noteResponse->json('id');
@@ -179,10 +182,10 @@ class DeliveryNoteTest extends TestCase
         $updateResponse = $this->putJson("/api/delivery-notes/{$noteId}/deliver", [
             'items' => [
                 [
-                    'id'            => $itemId,
+                    'id' => $itemId,
                     'delivered_now' => 5,
-                ]
-            ]
+                ],
+            ],
         ]);
 
         $updateResponse->assertStatus(200);
@@ -193,6 +196,6 @@ class DeliveryNoteTest extends TestCase
         $this->assertEquals(95, (float) $product->fresh()->stock, 'El remito no debe volver a descontar stock de una venta de mostrador');
 
         // Los movimientos de stock para este producto deben ser exactamente 1 (el del checkout original)
-        $this->assertCount(1, \App\Models\StockMovement::where('product_id', $product->id)->get());
+        $this->assertCount(1, StockMovement::where('product_id', $product->id)->get());
     }
 }

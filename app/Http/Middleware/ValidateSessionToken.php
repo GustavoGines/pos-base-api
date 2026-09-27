@@ -27,18 +27,18 @@ class ValidateSessionToken
     {
         $token = $request->header('X-Session-Token');
 
-        if (!$token) {
+        if (! $token) {
             return response()->json([
-                'message'    => 'No autenticado. Por favor inicie sesión.',
+                'message' => 'No autenticado. Por favor inicie sesión.',
                 'error_code' => 'SESSION_MISSING',
             ], 401);
         }
 
-        $user = User::where('session_token', $token)->first();
+        $user = User::withoutGlobalScope('visible')->where('session_token', $token)->first();
 
-        if (!$user) {
+        if (! $user) {
             return response()->json([
-                'message'    => 'Tu sesión fue cerrada porque otro dispositivo inició sesión con tu usuario.',
+                'message' => 'Tu sesión fue cerrada porque otro dispositivo inició sesión con tu usuario.',
                 'error_code' => 'SESSION_EXPIRED',
             ], 401);
         }

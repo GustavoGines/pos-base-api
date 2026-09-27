@@ -13,9 +13,10 @@ class MobileScanned implements ShouldBroadcastNow
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
     public string $barcode;
+
     public string $targetPcId;
 
-    public function __construct(string $barcode, string $targetPcId = "caja-1")
+    public function __construct(string $barcode, string $targetPcId = 'caja-1')
     {
         $this->barcode = $barcode;
         $this->targetPcId = $targetPcId;
@@ -24,8 +25,7 @@ class MobileScanned implements ShouldBroadcastNow
     public function broadcastOn(): array
     {
         return [
-            new Channel("pos.scans." . $this->targetPcId),
+            new Channel('pos.scans.'.$this->targetPcId),
         ];
     }
 }
-

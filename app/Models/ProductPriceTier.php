@@ -11,7 +11,7 @@ class ProductPriceTier extends Model
 
     protected $casts = [
         'min_quantity' => 'decimal:3',
-        'unit_price'   => 'decimal:2',
+        'unit_price' => 'decimal:2',
     ];
 
     public function product(): BelongsTo

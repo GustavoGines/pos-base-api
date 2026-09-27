@@ -13,10 +13,10 @@ return new class extends Migration
     {
         Schema::table('cash_shifts', function (Blueprint $table) {
             $table->foreignId('closed_by_user_id')
-                  ->nullable()
-                  ->after('user_id')
-                  ->constrained('users')
-                  ->nullOnDelete();
+                ->nullable()
+                ->after('user_id')
+                ->constrained('users')
+                ->nullOnDelete();
         });
     }
 

@@ -1,8 +1,14 @@
 <?php
 
+use App\Http\Middleware\CheckAddonPermission;
+use App\Http\Middleware\CheckFeatureAccess;
+use App\Http\Middleware\EnsureRoleOrPin;
+use App\Http\Middleware\EnsureUserIsAdmin;
+use App\Http\Middleware\ValidateSessionToken;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Request;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -14,18 +20,19 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
-            'addon'            => \App\Http\Middleware\CheckAddonPermission::class,
-            'feature'          => \App\Http\Middleware\CheckFeatureAccess::class,   // [feature-flags] Seguridad modular
-            'session.validate' => \App\Http\Middleware\ValidateSessionToken::class, // [single-session] Sesión única por usuario
-            'role.admin'       => \App\Http\Middleware\EnsureUserIsAdmin::class,
-            'role.or.pin'      => \App\Http\Middleware\EnsureRoleOrPin::class,
+            'addon' => CheckAddonPermission::class,
+            'feature' => CheckFeatureAccess::class,   // [feature-flags] Seguridad modular
+            'session.validate' => ValidateSessionToken::class, // [single-session] Sesión única por usuario
+            'role.admin' => EnsureUserIsAdmin::class,
+            'role.or.pin' => EnsureRoleOrPin::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
-        $exceptions->shouldRenderJsonWhen(function (\Illuminate\Http\Request $request, \Throwable $e) {
+        $exceptions->shouldRenderJsonWhen(function (Request $request, Throwable $e) {
             if ($request->is('api/*')) {
                 return true;
             }
+
             return $request->expectsJson();
         });
     })->create();

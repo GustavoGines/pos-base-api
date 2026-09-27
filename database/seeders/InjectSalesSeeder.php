@@ -2,16 +2,15 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Seeder;
-use Illuminate\Support\Facades\DB;
+use App\Models\CashShift;
+use App\Models\PaymentMethod;
+use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\SalePayment;
-use App\Models\Product;
-use App\Models\CashShift;
-use App\Models\PaymentMethod;
 use App\Models\User;
 use Carbon\Carbon;
+use Illuminate\Database\Seeder;
 
 class InjectSalesSeeder extends Seeder
 {
@@ -31,18 +30,21 @@ class InjectSalesSeeder extends Seeder
         $products = Product::inRandomOrder()->limit(10)->get();
         if ($products->isEmpty()) {
             echo "No hay productos para vender.\n";
+
             return;
         }
 
         $paymentMethods = PaymentMethod::all();
         if ($paymentMethods->isEmpty()) {
             echo "No hay metodos de pago.\n";
+
             return;
         }
 
         $user = User::first();
-        if (!$user) {
+        if (! $user) {
             echo "No hay usuarios.\n";
+
             return;
         }
 

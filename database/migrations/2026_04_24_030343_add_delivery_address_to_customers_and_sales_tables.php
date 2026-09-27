@@ -14,7 +14,7 @@ return new class extends Migration
         Schema::table('customers', function (Blueprint $table) {
             $table->string('delivery_address', 500)->nullable()->after('phone');
         });
-        
+
         Schema::table('sales', function (Blueprint $table) {
             $table->string('delivery_address', 500)->nullable()->after('customer_id');
         });
@@ -28,7 +28,7 @@ return new class extends Migration
         Schema::table('sales', function (Blueprint $table) {
             $table->dropColumn('delivery_address');
         });
-        
+
         Schema::table('customers', function (Blueprint $table) {
             $table->dropColumn('delivery_address');
         });

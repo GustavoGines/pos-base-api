@@ -13,6 +13,7 @@ class PrintLabelRequested implements ShouldBroadcastNow
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
     public int $productId;
+
     public string $targetPcId;
 
     public function __construct(int $productId, string $targetPcId = 'caja-1')
@@ -24,7 +25,7 @@ class PrintLabelRequested implements ShouldBroadcastNow
     public function broadcastOn(): array
     {
         return [
-            new Channel('pos.printers.' . $this->targetPcId),
+            new Channel('pos.printers.'.$this->targetPcId),
         ];
     }
 }

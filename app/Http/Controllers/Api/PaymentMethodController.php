@@ -23,15 +23,16 @@ class PaymentMethodController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'name'            => 'required|string|max:100',
-            'code'            => 'required|string|max:50|unique:payment_methods,code',
-            'surcharge_type'  => 'required|in:none,percent,fixed',
+            'name' => 'required|string|max:100',
+            'code' => 'required|string|max:50|unique:payment_methods,code',
+            'surcharge_type' => 'required|in:none,percent,fixed',
             'surcharge_value' => 'required|numeric|min:0',
-            'is_cash'         => 'required|boolean',
-            'sort_order'      => 'nullable|integer|min:0',
+            'is_cash' => 'required|boolean',
+            'sort_order' => 'nullable|integer|min:0',
         ]);
 
         $method = PaymentMethod::create($validated);
+
         return response()->json($method, 201);
     }
 
@@ -41,15 +42,16 @@ class PaymentMethodController extends Controller
     public function update(Request $request, PaymentMethod $paymentMethod)
     {
         $validated = $request->validate([
-            'name'            => 'sometimes|string|max:100',
-            'surcharge_type'  => 'sometimes|in:none,percent,fixed',
+            'name' => 'sometimes|string|max:100',
+            'surcharge_type' => 'sometimes|in:none,percent,fixed',
             'surcharge_value' => 'sometimes|numeric|min:0',
-            'is_cash'         => 'sometimes|boolean',
-            'is_active'       => 'sometimes|boolean',
-            'sort_order'      => 'sometimes|integer|min:0',
+            'is_cash' => 'sometimes|boolean',
+            'is_active' => 'sometimes|boolean',
+            'sort_order' => 'sometimes|integer|min:0',
         ]);
 
         $paymentMethod->update($validated);
+
         return response()->json($paymentMethod);
     }
 
@@ -62,10 +64,12 @@ class PaymentMethodController extends Controller
         // Nunca borrar métodos con pagos históricos vinculados
         if ($paymentMethod->salePayments()->exists()) {
             $paymentMethod->update(['is_active' => false]);
+
             return response()->json(['message' => 'Método desactivado (tiene pagos históricos asociados).']);
         }
 
         $paymentMethod->delete();
+
         return response()->json(['message' => 'Método de pago eliminado.']);
     }
 }

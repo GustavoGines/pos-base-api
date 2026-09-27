@@ -22,11 +22,11 @@ class AdjustStockRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'type'      => 'required|in:in,out,increment,decrement',
-            'quantity'  => 'required|numeric|min:0',
-            'notes'     => 'nullable|string|max:500',
+            'type' => 'required|in:in,out,increment,decrement',
+            'quantity' => 'required|numeric|min:0',
+            'notes' => 'nullable|string|max:500',
             'min_stock' => 'nullable|numeric|min:0',
-            'user_id'   => 'nullable|exists:users,id',
+            'user_id' => 'nullable|exists:users,id',
         ];
     }
 }

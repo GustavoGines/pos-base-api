@@ -2,6 +2,8 @@
 
 namespace App\DTOs;
 
+use App\Models\Customer;
+
 class SaleContextDTO
 {
     public function __construct(
@@ -19,8 +21,8 @@ class SaleContextDTO
      */
     public static function fromArray(array $data, ?int $authenticatedUserId = null, bool $isInternalAccount = false): self
     {
-        if (isset($data['customer_id']) && !$isInternalAccount) {
-            $isInternalAccount = (bool) \App\Models\Customer::where('id', $data['customer_id'])->value('is_internal_account');
+        if (isset($data['customer_id']) && ! $isInternalAccount) {
+            $isInternalAccount = (bool) Customer::where('id', $data['customer_id'])->value('is_internal_account');
         }
 
         return new self(

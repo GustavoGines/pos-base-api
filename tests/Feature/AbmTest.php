@@ -2,13 +2,11 @@
 
 namespace Tests\Feature;
 
+use App\Models\BusinessSetting;
+use App\Models\CashRegister;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
-use App\Models\User;
-use App\Models\Brand;
-use App\Models\Category;
-use App\Models\CashRegister;
-use App\Models\PaymentMethod;
 
 class AbmTest extends TestCase
 {
@@ -22,7 +20,7 @@ class AbmTest extends TestCase
         $this->admin = User::factory()->create(['role' => 'admin']);
         $this->actingAsAdmin($this->admin);
 
-        \App\Models\BusinessSetting::updateOrCreate(
+        BusinessSetting::updateOrCreate(
             ['key' => 'license_features_dict'],
             ['value' => json_encode(['multi_caja' => true])]
         );
@@ -40,7 +38,7 @@ class AbmTest extends TestCase
 
         // Update
         $this->putJson("/api/catalog/brands/{$id}", ['name' => 'Marca Editada'])
-             ->assertStatus(200)->assertJsonPath('name', 'Marca Editada');
+            ->assertStatus(200)->assertJsonPath('name', 'Marca Editada');
 
         // Delete
         $this->deleteJson("/api/catalog/brands/{$id}")->assertStatus(204);
@@ -66,7 +64,7 @@ class AbmTest extends TestCase
         $id = $createRes->json('id');
 
         $this->putJson("/api/registers/{$id}", ['name' => 'Caja Editada'])->assertStatus(200);
-        
+
         $this->deleteJson("/api/registers/{$id}")->assertStatus(200);
     }
 
@@ -77,7 +75,7 @@ class AbmTest extends TestCase
             'email' => 'juan@test.com',
             'pin' => '9999',
             'role' => 'cashier',
-            'password' => '12345678'
+            'password' => '12345678',
         ]);
         $createRes->assertStatus(201);
         $id = $createRes->json('id');
@@ -93,7 +91,7 @@ class AbmTest extends TestCase
             'code' => 'qr_pago',
             'is_cash' => false,
             'surcharge_type' => 'percent',
-            'surcharge_value' => 5
+            'surcharge_value' => 5,
         ]);
         $createRes->assertStatus(201);
         $id = $createRes->json('id');

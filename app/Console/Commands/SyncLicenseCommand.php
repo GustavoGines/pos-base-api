@@ -2,8 +2,8 @@
 
 namespace App\Console\Commands;
 
-use Illuminate\Console\Command;
 use App\Services\LicenseSyncService;
+use Illuminate\Console\Command;
 
 class SyncLicenseCommand extends Command
 {
@@ -27,12 +27,12 @@ class SyncLicenseCommand extends Command
     public function handle(LicenseSyncService $syncService)
     {
         $this->info('Iniciando sincronización de licencia...');
-        
+
         try {
             $syncService->syncHeartbeat();
             $this->info('Sincronización de licencia completada.');
         } catch (\Exception $e) {
-            $this->error('Ocurrió un error al sincronizar la licencia: ' . $e->getMessage());
+            $this->error('Ocurrió un error al sincronizar la licencia: '.$e->getMessage());
         }
     }
 }

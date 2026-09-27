@@ -8,7 +8,6 @@ use App\Events\SaleCompleted;
 use App\Models\CashRegister;
 use App\Models\CashShift;
 use App\Models\Customer;
-use App\Models\CustomerTransaction;
 use App\Models\PaymentMethod;
 use App\Models\Product;
 use App\Models\Sale;
@@ -19,7 +18,6 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -49,8 +47,8 @@ class PhaseP1SecurityAndIntegrityTest extends TestCase
             ['key' => 'license_features_dict'],
             ['value' => json_encode([
                 'suppliers' => true,
-                'quotes'    => true,
-                'checks'    => true,
+                'quotes' => true,
+                'checks' => true,
             ])]
         );
     }
@@ -78,29 +76,29 @@ class PhaseP1SecurityAndIntegrityTest extends TestCase
 
         // Customer with a credit balance (-500 means customer is owed $500)
         $customer = Customer::create([
-            'name'            => 'Cliente Saldo a Favor',
-            'document_type'   => 'DNI',
+            'name' => 'Cliente Saldo a Favor',
+            'document_type' => 'DNI',
             'document_number' => '44556677',
-            'balance'         => -500.00,
+            'balance' => -500.00,
         ]);
 
         $this->actingAsAdmin($admin);
 
         // Process refund of $200
         $response = $this->postJson("/api/customers/{$customer->id}/payments", [
-            'amount'         => 200.00,
-            'is_refund'      => true,
+            'amount' => 200.00,
+            'is_refund' => true,
             'payment_method' => 'cash',
-            'cash_shift_id'  => $shift->id,
+            'cash_shift_id' => $shift->id,
         ]);
 
         $response->assertStatus(200);
 
         // Assert customer transaction was created with type 'refund'
         $this->assertDatabaseHas('customer_transactions', [
-            'customer_id'    => $customer->id,
-            'type'           => 'refund',
-            'amount'         => 200.00,
+            'customer_id' => $customer->id,
+            'type' => 'refund',
+            'amount' => 200.00,
             'payment_method' => 'cash',
         ]);
 
@@ -109,17 +107,17 @@ class PhaseP1SecurityAndIntegrityTest extends TestCase
 
         // Reject refund if customer has no credit balance (balance >= 0)
         $customerNoCredit = Customer::create([
-            'name'            => 'Cliente Sin Saldo a Favor',
-            'document_type'   => 'DNI',
+            'name' => 'Cliente Sin Saldo a Favor',
+            'document_type' => 'DNI',
             'document_number' => '88990011',
-            'balance'         => 0.00,
+            'balance' => 0.00,
         ]);
 
         $rejectResponse = $this->postJson("/api/customers/{$customerNoCredit->id}/payments", [
-            'amount'         => 50.00,
-            'is_refund'      => true,
+            'amount' => 50.00,
+            'is_refund' => true,
             'payment_method' => 'cash',
-            'cash_shift_id'  => $shift->id,
+            'cash_shift_id' => $shift->id,
         ]);
 
         $rejectResponse->assertStatus(422)
@@ -133,68 +131,68 @@ class PhaseP1SecurityAndIntegrityTest extends TestCase
     public function test_pending_sale_pay_assigns_shift_and_cashier(): void
     {
         $cashier1 = User::factory()->create(['role' => 'cashier']);
-        $shift1   = $this->crearTurnoAbierto(fondoInicial: 1000, user: $cashier1);
+        $shift1 = $this->crearTurnoAbierto(fondoInicial: 1000, user: $cashier1);
 
         $cashier2 = User::factory()->create(['role' => 'cashier']);
         $register2 = CashRegister::firstOrCreate(['id' => 2], ['name' => 'Caja Secundaria', 'is_active' => true]);
-        $shift2   = CashShift::create([
+        $shift2 = CashShift::create([
             'cash_register_id' => $register2->id,
-            'user_id'          => $cashier2->id,
-            'opened_at'        => now(),
-            'opening_balance'  => 500,
-            'status'           => 'open',
+            'user_id' => $cashier2->id,
+            'opened_at' => now(),
+            'opening_balance' => 500,
+            'status' => 'open',
         ]);
 
         $cashMethod = $this->createCashMethod();
         $product = Product::create([
-            'name'          => 'Producto Diferido',
+            'name' => 'Producto Diferido',
             'internal_code' => 'PDIF01',
             'selling_price' => 500.00,
-            'cost_price'    => 250.00,
-            'stock'         => 20,
-            'active'        => true,
+            'cost_price' => 250.00,
+            'stock' => 20,
+            'active' => true,
         ]);
 
         // Sale opened in shift 1 by cashier 1 as pending
         $sale = Sale::create([
-            'total'           => 500.00,
+            'total' => 500.00,
             'total_surcharge' => 0,
-            'payment_status'  => 'pending',
-            'amount_due'      => 500.00,
-            'status'          => 'pending',
-            'cash_shift_id'   => $shift1->id,
-            'user_id'         => $cashier1->id,
-            'cashier_id'      => $cashier1->id,
+            'payment_status' => 'pending',
+            'amount_due' => 500.00,
+            'status' => 'pending',
+            'cash_shift_id' => $shift1->id,
+            'user_id' => $cashier1->id,
+            'cashier_id' => $cashier1->id,
         ]);
 
         $sale->items()->create([
-            'product_id'      => $product->id,
-            'product_name'    => $product->name,
-            'quantity'        => 1,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
             'unit_cost_price' => 250.00,
-            'unit_price'      => 500.00,
-            'subtotal'        => 500.00,
+            'unit_price' => 500.00,
+            'subtotal' => 500.00,
         ]);
 
         // Cashier 2 collects payment in shift 2
-        $tokenCashier2 = 'token-cashier-2-' . uniqid();
+        $tokenCashier2 = 'token-cashier-2-'.uniqid();
         $cashier2->update(['session_token' => $tokenCashier2]);
 
         $response = $this->withHeader('X-Session-Token', $tokenCashier2)
             ->putJson("/api/sales/{$sale->id}/pay", [
-                'total'           => 500.00,
+                'total' => 500.00,
                 'total_surcharge' => 0,
-                'cash_shift_id'   => $shift2->id,
-                'payments'        => [
+                'cash_shift_id' => $shift2->id,
+                'payments' => [
                     [
                         'payment_method_id' => $cashMethod->id,
-                        'base_amount'       => 500.00,
-                        'surcharge_amount'  => 0,
-                        'total_amount'      => 500.00,
-                    ]
+                        'base_amount' => 500.00,
+                        'surcharge_amount' => 0,
+                        'total_amount' => 500.00,
+                    ],
                 ],
                 'tendered_amount' => 500.00,
-                'change_amount'   => 0,
+                'change_amount' => 0,
             ]);
 
         $response->assertStatus(200);
@@ -217,31 +215,31 @@ class PhaseP1SecurityAndIntegrityTest extends TestCase
         $cashMethod = $this->createCashMethod();
 
         $product = Product::create([
-            'name'          => 'Producto Mayorista',
+            'name' => 'Producto Mayorista',
             'internal_code' => 'PMAY01',
             'selling_price' => 80.00,
-            'cost_price'    => 40.00,
-            'stock'         => 50,
-            'active'        => true,
+            'cost_price' => 40.00,
+            'stock' => 50,
+            'active' => true,
         ]);
 
         $payload = [
-            'total'           => 160.00,
+            'total' => 160.00,
             'total_surcharge' => 0,
-            'cash_shift_id'   => $shift->id,
-            'user_id'         => $admin->id,
-            'price_list'      => 'mayorista_especial',
-            'payments'        => [[
+            'cash_shift_id' => $shift->id,
+            'user_id' => $admin->id,
+            'price_list' => 'mayorista_especial',
+            'payments' => [[
                 'payment_method_id' => $cashMethod->id,
-                'base_amount'       => 160.00,
-                'surcharge_amount'  => 0,
-                'total_amount'      => 160.00,
+                'base_amount' => 160.00,
+                'surcharge_amount' => 0,
+                'total_amount' => 160.00,
             ]],
             'items' => [[
                 'product_id' => $product->id,
-                'quantity'   => 2,
+                'quantity' => 2,
                 'unit_price' => 80.00,
-                'subtotal'   => 160.00,
+                'subtotal' => 160.00,
             ]],
         ];
 

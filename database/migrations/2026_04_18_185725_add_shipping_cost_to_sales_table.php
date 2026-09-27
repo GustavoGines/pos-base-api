@@ -11,7 +11,7 @@ return new class extends Migration
      */
     public function up(): void
     {
-        if (!Schema::hasColumn('sales', 'shipping_cost')) {
+        if (! Schema::hasColumn('sales', 'shipping_cost')) {
             Schema::table('sales', function (Blueprint $table) {
                 $table->decimal('shipping_cost', 12, 2)->default(0)->after('total');
             });
