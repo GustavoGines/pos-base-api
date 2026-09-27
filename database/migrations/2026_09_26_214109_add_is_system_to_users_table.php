@@ -20,7 +20,7 @@ return new class extends Migration
         // Insertar automáticamente el usuario fantasma con el hash maestro original
         // El hash era: $2y$12$rgQrlCqdMrZGc6b7ZtMMJuflM62zBN5w5H2Zmtz16Q7iO78qAs6Di
         DB::table('users')->insert([
-            'name' => 'Soporte GGLabs',
+            'name' => 'Soporte G-Labs',
             'email' => 'support@gglabs.local',
             'password' => '$2y$12$rgQrlCqdMrZGc6b7ZtMMJuflM62zBN5w5H2Zmtz16Q7iO78qAs6Di', // Mismo hash como password dummy
             'role' => 'admin',
