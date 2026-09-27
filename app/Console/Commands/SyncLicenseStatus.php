@@ -11,12 +11,12 @@ class SyncLicenseStatus extends Command
     /**
      * The name and signature of the console command.
      */
-    protected $signature = 'license:sync';
+    protected $signature = 'license:sync-status';
 
     /**
      * The console command description.
      */
-    protected $description = 'Sincroniza el estado de la licencia con el servidor remoto de licencias.';
+    protected $description = '[DEPRECATED] Utilice license:sync (SyncLicenseCommand). Sincroniza el estado de la licencia con el servidor remoto de licencias.';
 
     /**
      * Execute the console command.

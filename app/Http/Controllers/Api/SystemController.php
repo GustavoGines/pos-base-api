@@ -8,23 +8,13 @@ use Illuminate\Support\Facades\Artisan;
 
 class SystemController extends Controller
 {
-    public function installPath()
-    {
-        return response()->json([
-            'backend_path' => base_path(),
-            'base_path' => dirname(base_path())
-        ]);
-    }
-
     public function rescueMigrate(Request $request)
     {
         $secret = config('app.rescue_migrate_secret');
 
-        if (!empty($secret)) {
-            $token = $request->header('X-Rescue-Token');
-            if ($token !== $secret) {
-                return response()->json(['error' => 'Unauthorized'], 403);
-            }
+        // Fail-Secure: si no hay secreto configurado o el token no coincide exactamente, abortar 403
+        if (empty($secret) || $request->header('X-Rescue-Token') !== $secret) {
+            return response()->json(['error' => 'Unauthorized'], 403);
         }
 
         Artisan::call('migrate', ['--force' => true]);

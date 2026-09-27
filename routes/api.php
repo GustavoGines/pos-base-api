@@ -46,8 +46,7 @@ Route::post('/settings/license/sync', [SettingController::class, 'syncLicense'])
 use App\Http\Controllers\Api\SystemController;
 
 // Endpoint de rescate de migraciones OTA (silencioso)
-Route::get('/system/install-path', [SystemController::class, 'installPath']);
-Route::get('/system/rescue-migrate', [SystemController::class, 'rescueMigrate']);
+Route::match(['get', 'post'], '/system/rescue-migrate', [SystemController::class, 'rescueMigrate']);
 Route::get('/version-check', [SystemController::class, 'versionCheck']);
 
 // Verificación de turno activo (necesaria antes del login para decidir ruta inicial)
@@ -69,9 +68,6 @@ Route::get('/catalog/products/stock', [ProductController::class, 'stockBulk']);
 Route::apiResource('catalog/products', ProductController::class)->only(['index', 'show']);
 Route::get('/catalog/categories', [CategoryController::class, 'index']);
 Route::get('/catalog/brands', [BrandController::class, 'index']);
-Route::apiResource('customers', CustomerController::class)->only(['index', 'show']);
-Route::get('/sales', [SalesController::class, 'index']);
-Route::get('/sales/pending', [SalesController::class, 'pending']);
 // FIX A-2: GET /users era pública y exponía nombres y roles sin sesión.
 // Ahora la lista de usuarios solo se puede obtener con un token válido.
 // La ruta de lectura se consolida dentro del grupo session.validate (ver más abajo).
@@ -98,14 +94,16 @@ Route::middleware(['session.validate'])->group(function () {
         Route::post('/{id}/close', [CashShiftController::class, 'close']);
     });
 
-    // ── Ventas: anulación y pago de cuentas corrientes ───────────────
+    // ── Ventas: listado, anulación y pago de cuentas corrientes ──────
+    Route::get('/sales', [SalesController::class, 'index']);
+    Route::get('/sales/pending', [SalesController::class, 'pending']);
     Route::post('/sales/{sale}/void', [SalesController::class, 'void']);
     Route::put('/sales/{sale}/pay', [SalesController::class, 'pay']);
     Route::get('/sales/{sale}/ticket-pdf', [SalesController::class, 'ticketPdf']);
     Route::get('/sales/{sale}', [SalesController::class, 'show']);
 
-    // ── Clientes: cuentas corrientes (escritura) ─────────────────────
-    Route::apiResource('customers', CustomerController::class)->except(['index', 'show']);
+    // ── Clientes: gestión completa y cuentas corrientes ──────────────
+    Route::apiResource('customers', CustomerController::class);
     Route::post('/customers/{customer}/payments', [CustomerController::class, 'registerPayment']);
     Route::get('/customers/{customer}/pending-sales', [CustomerController::class, 'getPendingSales']);
 

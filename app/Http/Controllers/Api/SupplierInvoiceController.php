@@ -10,6 +10,7 @@ use App\Models\Product;
 use App\Models\SupplierInvoice;
 use App\Models\StockMovement;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class SupplierInvoiceController extends Controller
 {
@@ -143,11 +144,15 @@ class SupplierInvoiceController extends Controller
     public function uploadAttachment(Request $request)
     {
         $request->validate([
-            'file' => 'required|file|max:10240', // Max 10MB
+            'file' => 'required|file|mimes:pdf,jpeg,png,jpg|max:10240',
         ]);
 
         if ($request->hasFile('file')) {
-            $path = $request->file('file')->store('supplier_invoices', 'public');
+            $file = $request->file('file');
+            $extension = $file->getClientOriginalExtension();
+            $safeName = Str::random(40) . ($extension ? '.' . strtolower($extension) : '');
+            $path = $file->storeAs('supplier_invoices', $safeName, 'public');
+
             return response()->json([
                 'message' => 'Archivo subido correctamente',
                 'file_url' => '/storage/' . $path

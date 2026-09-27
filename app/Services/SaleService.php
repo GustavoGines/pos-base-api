@@ -59,6 +59,7 @@ class SaleService
                 'cashier_id'             => $context->userId,
                 'cash_shift_id'          => $context->cashShiftId,
                 'delivery_address'       => $context->deliveryAddress,
+                'price_list'             => $context->priceList,
                 'status'                 => $dto->status,
             ]);
 
@@ -147,13 +148,15 @@ class SaleService
             }
 
             $lockedSale->update([
-                'status' => 'completed',
-                'payment_status' => $isCuentaCorriente ? ($ccPaymentTotal >= ($totalToValidate - 0.1) ? 'pending' : 'partial') : 'paid',
+                'status'          => 'completed',
+                'payment_status'  => $isCuentaCorriente ? ($ccPaymentTotal >= ($totalToValidate - 0.1) ? 'pending' : 'partial') : 'paid',
                 'total_surcharge' => $dto->totalSurcharge,
-                'shipping_cost' => $dto->shippingCost,
-                'amount_due' => $isCuentaCorriente ? $ccPaymentTotal : 0,
+                'shipping_cost'   => $dto->shippingCost,
+                'amount_due'      => $isCuentaCorriente ? $ccPaymentTotal : 0,
                 'tendered_amount' => $dto->tenderedAmount,
-                'change_amount' => $dto->changeAmount,
+                'change_amount'   => $dto->changeAmount,
+                'cash_shift_id'   => $context->cashShiftId ?? $lockedSale->cash_shift_id,
+                'cashier_id'      => $context->userId ?? $lockedSale->cashier_id,
             ]);
 
             event(new \App\Events\SaleCompleted($lockedSale));
@@ -212,7 +215,6 @@ class SaleService
                 'unit_cost_price' => $costPrice,
                 'unit_price'      => $unitPrice,
                 'subtotal'        => $itemData['subtotal'],
-                'price_list'      => $context->priceList,
             ]);
         }
     }

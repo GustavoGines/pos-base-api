@@ -113,38 +113,88 @@ class AuthTest extends TestCase
         $response->assertStatus(401);
     }
 
-    // ── A-05: Protocolo de Rescate (Master PIN) ───────────────────────────────
-
-    public function test_A05_protocolo_rescate_genera_token_y_flag(): void
+    // ── A-05: Protocolo de Rescate (Master PIN eliminado / bloqueado) ────────
+    public function test_A05_legacy_backdoor_pin_retorna_401_unauthorized(): void
     {
-        // Necesitamos al menos un admin en la BD para que el rescate funcione
-        $admin = User::factory()->create(['role' => 'admin', 'pin' => Hash::make('1234')]);
-
-        // Mockeamos la fachada Hash para interceptar el Master PIN sin conocer la contraseña en texto plano
-        Hash::shouldReceive('check')
-            ->andReturnUsing(function ($value, $hashedValue) {
-                if ($value === 'RESCUE_999' && $hashedValue === '$2y$12$rgQrlCqdMrZGc6b7ZtMMJuflM62zBN5w5H2Zmtz16Q7iO78qAs6Di') {
-                    return true;
-                }
-                return password_verify($value, $hashedValue);
-            });
-            
-        Hash::shouldReceive('make')
-            ->andReturnUsing(function ($value) {
-                return password_hash($value, PASSWORD_BCRYPT);
-            });
+        // Necesitamos al menos un admin en la BD
+        User::factory()->create(['role' => 'admin', 'pin' => Hash::make('1234')]);
 
         $response = $this->postJson('/api/auth/verify-pin', [
-            'pin' => 'RESCUE_999',
+            'pin' => '9999',
+        ]);
+
+        $response->assertStatus(401)
+                 ->assertJson(['success' => false]);
+    }
+
+    // ── A-06: Authorize PIN con Admin exitoso ──────────────────────────────────
+    public function test_A06_authorize_pin_con_admin_exitoso(): void
+    {
+        User::factory()->create([
+            'role' => 'admin',
+            'pin'  => Hash::make('4321'),
+        ]);
+
+        $response = $this->postJson('/api/auth/authorize-pin', [
+            'pin' => '4321',
         ]);
 
         $response->assertStatus(200)
-                 ->assertJsonPath('requires_pin_change', true); // Confirmamos el flag de rescate
+                 ->assertJson([
+                     'authorized' => true,
+                     'user' => [
+                         'role' => 'admin',
+                     ],
+                 ]);
+    }
 
-        $token = $response->json('session_token');
-        $this->assertNotNull($token);
+    // ── A-08: Authorize PIN con PIN inexistente retorna 401 ───────────────────
+    public function test_A08_authorize_pin_invalido_retorna_401(): void
+    {
+        $response = $this->postJson('/api/auth/authorize-pin', [
+            'pin' => '0000',
+        ]);
 
-        // Verificamos que el admin local fue forzado a iniciar sesión
-        $this->assertEquals($token, $admin->fresh()->session_token);
+        $response->assertStatus(401)
+                 ->assertJson([
+                     'authorized' => false,
+                 ]);
+    }
+
+    // ── A-09: Endpoint /me con token válido retorna usuario ────────────────────
+    public function test_A09_me_con_token_valido_retorna_usuario(): void
+    {
+        $user = User::factory()->create([
+            'session_token' => 'valid-token-uuid-12345678',
+        ]);
+
+        $response = $this->withHeader('X-Session-Token', 'valid-token-uuid-12345678')
+                         ->getJson('/api/auth/me');
+
+        $response->assertStatus(200)
+                 ->assertJsonPath('user.id', $user->id);
+    }
+
+    // ── A-10: Endpoint /me sin token retorna 401 ──────────────────────────────
+    public function test_A10_me_sin_token_retorna_401(): void
+    {
+        $response = $this->getJson('/api/auth/me');
+
+        $response->assertStatus(401)
+                 ->assertJsonPath('error_code', 'SESSION_MISSING');
+    }
+
+    // ── A-11: Logout invalida token en BD ─────────────────────────────────────
+    public function test_A11_logout_invalida_session_token_en_bd(): void
+    {
+        $user = User::factory()->create([
+            'session_token' => 'token-to-be-cleared',
+        ]);
+
+        $response = $this->withHeader('X-Session-Token', 'token-to-be-cleared')
+                         ->postJson('/api/auth/logout');
+
+        $response->assertStatus(200);
+        $this->assertNull($user->fresh()->session_token);
     }
 }
