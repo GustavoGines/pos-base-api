@@ -42,13 +42,40 @@ class StoreCashMovementRequest extends FormRequest
 
             // Array de pagos (para pagos mixtos)
             'payments' => ['required', 'array', 'min:1'],
-            'payments.*.amount' => ['required', 'numeric', 'min:0.01'],
-            'payments.*.payment_method' => ['required', 'string', 'in:cash,transfer,check'],
+            'payments.*.amount' => [
+                'required',
+                'numeric',
+                'min:0.01',
+                function ($attribute, $value, $fail) {
+                    $segments = explode('.', $attribute);
+                    $index = $segments[1] ?? null;
+                    if ($index !== null) {
+                        $payment = $this->input("payments.{$index}") ?? ($this->input('payments')[$index] ?? null);
+                        if (($payment['payment_method'] ?? null) === 'check' && !empty($payment['check_id'])) {
+                            $check = ThirdPartyCheck::find($payment['check_id']);
+                            if ($check && abs((float)$check->amount - (float)$value) > 0.009) {
+                                $fail("El monto (\${$value}) no coincide con el valor nominal del cheque (\${$check->amount}).");
+                            }
+                        }
+                    }
+                },
+            ],
+            'payments.*.payment_method' => [
+                'required',
+                'string',
+                'in:cash,transfer,check',
+                function ($attribute, $value, $fail) {
+                    if ($value === 'check' && $this->input('type') !== 'supplier_payment') {
+                        $fail('El método de pago con cheque solo está disponible para pagos a proveedores (supplier_payment).');
+                    }
+                },
+            ],
 
             // Validación específica si el pago incluye cheque
             'payments.*.check_id' => [
                 'nullable',
                 'integer',
+                'distinct',
                 'required_if:payments.*.payment_method,check',
                 // El cheque debe existir y estar in_wallet
                 function ($attribute, $value, $fail) {

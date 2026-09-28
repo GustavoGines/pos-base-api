@@ -90,4 +90,107 @@ class ThirdPartyCheckTest extends TestCase
             'endorsement_note' => 'Endosado a proveedor X',
         ]);
     }
+
+    public function test_ch03_cannot_update_voided_check()
+    {
+        $customer = Customer::create(['name' => 'Test3', 'document_number' => '123456']);
+        $check = ThirdPartyCheck::create([
+            'customer_id' => $customer->id,
+            'bank_name' => 'Bank D',
+            'check_number' => '444',
+            'amount' => 400,
+            'issue_date' => now(),
+            'payment_date' => now(),
+            'issuer_name' => 'Issuer D',
+            'issuer_cuit' => '444444444',
+            'status' => 'voided',
+        ]);
+
+        $response = $this->patchJson("/api/third-party-checks/{$check->id}/status", [
+            'status' => 'in_wallet',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonPath('message', fn ($m) => str_contains($m, 'anulado'));
+    }
+
+    public function test_ch04_cannot_update_check_linked_to_supplier()
+    {
+        $supplier = \App\Models\Supplier::create(['name' => 'Proveedor Test', 'cuit' => '20123456789']);
+        $customer = Customer::create(['name' => 'Test4', 'document_number' => '1234567']);
+        $check = ThirdPartyCheck::create([
+            'customer_id' => $customer->id,
+            'supplier_id' => $supplier->id,
+            'bank_name' => 'Bank E',
+            'check_number' => '555',
+            'amount' => 500,
+            'issue_date' => now(),
+            'payment_date' => now(),
+            'issuer_name' => 'Issuer E',
+            'issuer_cuit' => '555555555',
+            'status' => 'endorsed',
+            'endorsement_note' => 'Endosado en Movimiento #1',
+        ]);
+
+        $response = $this->patchJson("/api/third-party-checks/{$check->id}/status", [
+            'status' => 'in_wallet',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonPath('message', fn ($m) => str_contains($m, 'proveedor'));
+    }
+
+    public function test_ch05_returning_to_in_wallet_clears_endorsement_note()
+    {
+        $customer = Customer::create(['name' => 'Test5', 'document_number' => '12345678']);
+        $check = ThirdPartyCheck::create([
+            'customer_id' => $customer->id,
+            'bank_name' => 'Bank F',
+            'check_number' => '666',
+            'amount' => 600,
+            'issue_date' => now(),
+            'payment_date' => now(),
+            'issuer_name' => 'Issuer F',
+            'issuer_cuit' => '666666666',
+            'status' => 'endorsed',
+            'endorsement_note' => 'Nota manual',
+        ]);
+
+        $response = $this->patchJson("/api/third-party-checks/{$check->id}/status", [
+            'status' => 'in_wallet',
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('check.status', 'in_wallet')
+            ->assertJsonPath('check.endorsement_note', null);
+
+        $this->assertDatabaseHas('third_party_checks', [
+            'id' => $check->id,
+            'status' => 'in_wallet',
+            'endorsement_note' => null,
+        ]);
+    }
+
+    public function test_ch06_cannot_manually_set_voided_status()
+    {
+        $customer = Customer::create(['name' => 'Test6', 'document_number' => '123456789']);
+        $check = ThirdPartyCheck::create([
+            'customer_id' => $customer->id,
+            'bank_name' => 'Bank G',
+            'check_number' => '777',
+            'amount' => 700,
+            'issue_date' => now(),
+            'payment_date' => now(),
+            'issuer_name' => 'Issuer G',
+            'issuer_cuit' => '777777777',
+            'status' => 'in_wallet',
+        ]);
+
+        $response = $this->patchJson("/api/third-party-checks/{$check->id}/status", [
+            'status' => 'voided',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['status']);
+    }
 }

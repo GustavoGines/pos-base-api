@@ -315,22 +315,110 @@ class ReportController extends Controller
         ]);
     }
 
-    public function expensesAnalysis(Request $request)
+    /**
+     * Parse and normalize query filters for expense analysis.
+     */
+    private function parseExpenseFilters(Request $request): array
     {
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
         $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
 
-        $movements = DB::table('cash_movements')
+        $includeSuppliers = true;
+        if ($request->has('include_suppliers')) {
+            $rawInclude = $request->query('include_suppliers');
+            if ($rawInclude !== '' && $rawInclude !== null) {
+                $includeSuppliers = filter_var($rawInclude, FILTER_VALIDATE_BOOLEAN);
+            }
+        }
+
+        $paymentMethod = $request->query('payment_method');
+        if ($paymentMethod !== null && $paymentMethod !== '') {
+            $normalized = strtolower(trim((string) $paymentMethod));
+            $map = [
+                'efectivo' => 'cash',
+                'cash' => 'cash',
+                'transferencia' => 'transfer',
+                'transfer' => 'transfer',
+                'cheque' => 'check',
+                'check' => 'check',
+            ];
+            $paymentMethod = $map[$normalized] ?? null;
+        } else {
+            $paymentMethod = null;
+        }
+
+        $minAmount = null;
+        if ($request->filled('min_amount') && is_numeric($request->query('min_amount'))) {
+            $val = (float) $request->query('min_amount');
+            if ($val > 0) {
+                $minAmount = $val;
+            }
+        }
+
+        return [
+            'startDate' => $startDate,
+            'endDate' => $endDate,
+            'includeSuppliers' => $includeSuppliers,
+            'paymentMethod' => $paymentMethod,
+            'minAmount' => $minAmount,
+        ];
+    }
+
+    /**
+     * Build base query for cash movements filtered by date, supplier inclusion, payment method, and min amount.
+     */
+    private function buildBaseExpensesQuery(
+        string $startDate,
+        string $endDate,
+        bool $includeSuppliers = true,
+        ?string $paymentMethod = null,
+        ?float $minAmount = null
+    ) {
+        $types = $includeSuppliers ? ['expense', 'supplier_payment'] : ['expense'];
+
+        $query = DB::table('cash_movements')
             ->leftJoin('expense_categories', 'cash_movements.expense_category_id', '=', 'expense_categories.id')
-            ->where('cash_movements.type', 'expense')
+            ->whereIn('cash_movements.type', $types)
             ->whereNull('cash_movements.deleted_at')
-            ->whereBetween('cash_movements.created_at', [Carbon::parse($startDate)->startOfDay(), Carbon::parse($endDate)->endOfDay()])
+            ->whereBetween('cash_movements.created_at', [
+                Carbon::parse($startDate)->startOfDay(),
+                Carbon::parse($endDate)->endOfDay(),
+            ]);
+
+        if ($paymentMethod !== null) {
+            $query->where('cash_movements.payment_method', $paymentMethod);
+        }
+
+        if ($minAmount !== null && $minAmount > 0) {
+            $query->where('cash_movements.amount', '>=', $minAmount);
+        }
+
+        return $query;
+    }
+
+    public function expensesAnalysis(Request $request)
+    {
+        $filters = $this->parseExpenseFilters($request);
+
+        $movements = $this->buildBaseExpensesQuery(
+            $filters['startDate'],
+            $filters['endDate'],
+            $filters['includeSuppliers'],
+            $filters['paymentMethod'],
+            $filters['minAmount']
+        )
             ->select(
                 'cash_movements.id',
                 'cash_movements.amount',
                 'cash_movements.description',
                 'cash_movements.created_at',
-                DB::raw("COALESCE(expense_categories.name, 'Sin Categoría') as category_name")
+                'cash_movements.type',
+                DB::raw("
+                CASE 
+                    WHEN cash_movements.type = 'supplier_payment' THEN 'Pago a Proveedor'
+                    ELSE COALESCE(expense_categories.name, 'Sin Categoría')
+                END as category_name
+            ")
             )
             ->orderByDesc('cash_movements.created_at')
             ->get();
@@ -367,8 +455,8 @@ class ReportController extends Controller
         $expenses = collect($expenses);
 
         return response()->json([
-            'start_date' => $startDate,
-            'end_date' => $endDate,
+            'start_date' => $filters['startDate'],
+            'end_date' => $filters['endDate'],
             'total_expenses' => round($totalExpenses, 2),
             'by_category' => $expenses->map(function ($row) use ($totalExpenses) {
                 return [
@@ -384,35 +472,51 @@ class ReportController extends Controller
 
     public function exportExpensesAnalysisExcel(Request $request)
     {
-        $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
-        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        $filters = $this->parseExpenseFilters($request);
 
         return Excel::download(
-            new ExpensesAnalysisExport($startDate, $endDate),
-            'analisis_gastos_'.str_replace('-', '', $startDate).'_al_'.str_replace('-', '', $endDate).'.xlsx'
+            new ExpensesAnalysisExport(
+                $filters['startDate'],
+                $filters['endDate'],
+                $filters['includeSuppliers'],
+                $filters['paymentMethod'],
+                $filters['minAmount']
+            ),
+            'analisis_gastos_'.str_replace('-', '', $filters['startDate']).'_al_'.str_replace('-', '', $filters['endDate']).'.xlsx'
         );
     }
 
     public function exportExpensesAnalysisPdf(Request $request)
     {
-        $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
-        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        $filters = $this->parseExpenseFilters($request);
 
-        $expenses = DB::table('cash_movements')
-            ->leftJoin('expense_categories', 'cash_movements.expense_category_id', '=', 'expense_categories.id')
-            ->where('cash_movements.type', 'expense')
-            ->whereNull('cash_movements.deleted_at')
-            ->whereBetween('cash_movements.created_at', [Carbon::parse($startDate)->startOfDay(), Carbon::parse($endDate)->endOfDay()])
+        $expenses = $this->buildBaseExpensesQuery(
+            $filters['startDate'],
+            $filters['endDate'],
+            $filters['includeSuppliers'],
+            $filters['paymentMethod'],
+            $filters['minAmount']
+        )
             ->selectRaw("
-                COALESCE(expense_categories.name, 'Sin Categoría') as category_name,
-                SUM(cash_movements.amount) as total_amount,
-                COUNT(*) as transactions
-            ")
-            ->groupBy(DB::raw("COALESCE(expense_categories.name, 'Sin Categoría')"))
+            CASE 
+                WHEN cash_movements.type = 'supplier_payment' THEN 'Pago a Proveedor'
+                ELSE COALESCE(expense_categories.name, 'Sin Categoría')
+            END as category_name,
+            SUM(cash_movements.amount) as total_amount,
+            COUNT(*) as transactions
+        ")
+            ->groupBy(DB::raw("
+            CASE 
+                WHEN cash_movements.type = 'supplier_payment' THEN 'Pago a Proveedor'
+                ELSE COALESCE(expense_categories.name, 'Sin Categoría')
+            END
+        "))
             ->orderByDesc('total_amount')
             ->get();
 
         $totalExpenses = $expenses->sum('total_amount');
+        $startDate = $filters['startDate'];
+        $endDate = $filters['endDate'];
 
         $pdf = Pdf::loadView('reports.pdf_expenses_analysis', compact('expenses', 'startDate', 'endDate', 'totalExpenses'));
 

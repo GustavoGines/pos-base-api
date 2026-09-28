@@ -11,6 +11,8 @@ use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\SalePayment;
+use App\Models\Supplier;
+use App\Models\ThirdPartyCheck;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -286,5 +288,160 @@ class SaleVoidTest extends TestCase
         // El remito queda cancelado
         $this->assertEquals('cancelled', $deliveryNote->fresh()->status,
             'El remito debe marcarse como cancelado al anular la venta');
+    }
+
+    // ── AN-07: Anular venta con cheque en cartera → cheque pasa a 'voided' ─────
+
+    public function test_a_n07_anular_venta_con_cheque_en_cartera_lo_marca_como_anulado(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $product = Product::create([
+            'name' => 'Producto Cheque',
+            'internal_code' => 'CHQ-01',
+            'selling_price' => 1000.00,
+            'cost_price' => 500.00,
+            'stock' => 5,
+            'active' => true,
+        ]);
+
+        $sale = $this->crearVentaCompletada($product, qty: 1);
+
+        $check = ThirdPartyCheck::create([
+            'sale_id' => $sale->id,
+            'bank_name' => 'Banco Nacion',
+            'check_number' => '1001',
+            'amount' => 1000.00,
+            'issue_date' => now(),
+            'payment_date' => now(),
+            'issuer_name' => 'Emisor Test',
+            'issuer_cuit' => '20123456789',
+            'status' => 'in_wallet',
+        ]);
+
+        $response = $this->actingAsAdmin($admin)
+            ->postJson("/api/sales/{$sale->id}/void", ['cash_shift_id' => $sale->cash_shift_id]);
+
+        $response->assertStatus(200);
+
+        $this->assertEquals('voided', $sale->fresh()->status);
+        $this->assertEquals('voided', $check->fresh()->status,
+            'El cheque en cartera debe pasar a estado voided al anular la venta');
+    }
+
+    // ── AN-08: Anular venta con cheque endosado → falla con 422 ───────────────
+
+    public function test_a_n08_anular_venta_con_cheque_endosado_falla(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $supplier = Supplier::create(['name' => 'Distribuidora Central', 'cuit' => '30112233445']);
+        $product = Product::create([
+            'name' => 'Producto Cheque Endosado',
+            'internal_code' => 'CHQ-02',
+            'selling_price' => 2000.00,
+            'cost_price' => 1000.00,
+            'stock' => 5,
+            'active' => true,
+        ]);
+
+        $sale = $this->crearVentaCompletada($product, qty: 1);
+
+        $check = ThirdPartyCheck::create([
+            'sale_id' => $sale->id,
+            'supplier_id' => $supplier->id,
+            'bank_name' => 'Banco Galicia',
+            'check_number' => '2002',
+            'amount' => 2000.00,
+            'issue_date' => now(),
+            'payment_date' => now(),
+            'issuer_name' => 'Emisor Test',
+            'issuer_cuit' => '20123456789',
+            'status' => 'endorsed',
+            'endorsement_note' => 'Endosado a Distribuidora Central',
+        ]);
+
+        $response = $this->actingAsAdmin($admin)
+            ->postJson("/api/sales/{$sale->id}/void", ['cash_shift_id' => $sale->cash_shift_id]);
+
+        $response->assertStatus(422)
+            ->assertJsonPath('message', fn ($msg) => str_contains($msg, 'endosado') && str_contains($msg, 'Distribuidora Central'));
+
+        $this->assertEquals('completed', $sale->fresh()->status);
+        $this->assertEquals('endorsed', $check->fresh()->status);
+    }
+
+    // ── AN-09: Anular venta con cheque depositado → falla con 422 ─────────────
+
+    public function test_a_n09_anular_venta_con_cheque_depositado_falla(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $product = Product::create([
+            'name' => 'Producto Cheque Depositado',
+            'internal_code' => 'CHQ-03',
+            'selling_price' => 1500.00,
+            'cost_price' => 750.00,
+            'stock' => 5,
+            'active' => true,
+        ]);
+
+        $sale = $this->crearVentaCompletada($product, qty: 1);
+
+        $check = ThirdPartyCheck::create([
+            'sale_id' => $sale->id,
+            'bank_name' => 'Banco Santander',
+            'check_number' => '3003',
+            'amount' => 1500.00,
+            'issue_date' => now(),
+            'payment_date' => now(),
+            'issuer_name' => 'Emisor Test',
+            'issuer_cuit' => '20123456789',
+            'status' => 'deposited',
+        ]);
+
+        $response = $this->actingAsAdmin($admin)
+            ->postJson("/api/sales/{$sale->id}/void", ['cash_shift_id' => $sale->cash_shift_id]);
+
+        $response->assertStatus(422)
+            ->assertJsonPath('message', fn ($msg) => str_contains($msg, 'depositado'));
+
+        $this->assertEquals('completed', $sale->fresh()->status);
+        $this->assertEquals('deposited', $check->fresh()->status);
+    }
+
+    // ── AN-10: Anular venta con cheque rechazado → falla con 422 ──────────────
+
+    public function test_a_n10_anular_venta_con_cheque_rechazado_falla(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $product = Product::create([
+            'name' => 'Producto Cheque Rechazado',
+            'internal_code' => 'CHQ-04',
+            'selling_price' => 800.00,
+            'cost_price' => 400.00,
+            'stock' => 5,
+            'active' => true,
+        ]);
+
+        $sale = $this->crearVentaCompletada($product, qty: 1);
+
+        $check = ThirdPartyCheck::create([
+            'sale_id' => $sale->id,
+            'bank_name' => 'Banco BBVA',
+            'check_number' => '4004',
+            'amount' => 800.00,
+            'issue_date' => now(),
+            'payment_date' => now(),
+            'issuer_name' => 'Emisor Test',
+            'issuer_cuit' => '20123456789',
+            'status' => 'rejected',
+        ]);
+
+        $response = $this->actingAsAdmin($admin)
+            ->postJson("/api/sales/{$sale->id}/void", ['cash_shift_id' => $sale->cash_shift_id]);
+
+        $response->assertStatus(422)
+            ->assertJsonPath('message', fn ($msg) => str_contains($msg, 'rechazado'));
+
+        $this->assertEquals('completed', $sale->fresh()->status);
+        $this->assertEquals('rejected', $check->fresh()->status);
     }
 }

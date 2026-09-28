@@ -2,6 +2,7 @@
 
 namespace App\Exports;
 
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Concerns\FromCollection;
 use Maatwebsite\Excel\Concerns\WithCustomStartCell;
@@ -17,27 +18,86 @@ class ExpensesAnalysisExport implements FromCollection, WithCustomStartCell, Wit
 
     protected $endDate;
 
+    protected $includeSuppliers;
+
+    protected $paymentMethod;
+
+    protected $minAmount;
+
     protected $totalExpenses;
 
-    public function __construct($startDate, $endDate)
-    {
+    public function __construct(
+        $startDate,
+        $endDate,
+        $includeSuppliers = true,
+        $paymentMethod = null,
+        $minAmount = null
+    ) {
         $this->startDate = $startDate;
         $this->endDate = $endDate;
+
+        if (is_bool($includeSuppliers)) {
+            $this->includeSuppliers = $includeSuppliers;
+        } else {
+            $this->includeSuppliers = filter_var($includeSuppliers, FILTER_VALIDATE_BOOLEAN);
+        }
+
+        if (! empty($paymentMethod) && $paymentMethod !== 'all') {
+            $normalized = strtolower(trim((string) $paymentMethod));
+            $map = [
+                'efectivo' => 'cash',
+                'cash' => 'cash',
+                'transferencia' => 'transfer',
+                'transfer' => 'transfer',
+                'cheque' => 'check',
+                'check' => 'check',
+            ];
+            $this->paymentMethod = $map[$normalized] ?? $paymentMethod;
+        } else {
+            $this->paymentMethod = null;
+        }
+
+        $this->minAmount = ($minAmount !== null && is_numeric($minAmount) && (float) $minAmount > 0)
+            ? (float) $minAmount
+            : null;
     }
 
     public function collection()
     {
-        $expenses = DB::table('cash_movements')
+        $types = $this->includeSuppliers ? ['expense', 'supplier_payment'] : ['expense'];
+
+        $query = DB::table('cash_movements')
             ->leftJoin('expense_categories', 'cash_movements.expense_category_id', '=', 'expense_categories.id')
-            ->where('cash_movements.type', 'expense')
+            ->whereIn('cash_movements.type', $types)
             ->whereNull('cash_movements.deleted_at')
-            ->whereBetween('cash_movements.created_at', [$this->startDate.' 00:00:00', $this->endDate.' 23:59:59'])
+            ->whereBetween('cash_movements.created_at', [
+                Carbon::parse($this->startDate)->startOfDay(),
+                Carbon::parse($this->endDate)->endOfDay(),
+            ]);
+
+        if ($this->paymentMethod !== null) {
+            $query->where('cash_movements.payment_method', $this->paymentMethod);
+        }
+
+        if ($this->minAmount !== null && $this->minAmount > 0) {
+            $query->where('cash_movements.amount', '>=', $this->minAmount);
+        }
+
+        $expenses = $query
             ->selectRaw("
-                COALESCE(expense_categories.name, 'Sin Categoría') as category_name,
+                CASE 
+                    WHEN cash_movements.type = 'supplier_payment' THEN 'Pago a Proveedor'
+                    ELSE COALESCE(expense_categories.name, 'Sin Categoría')
+                END as category_name,
                 SUM(cash_movements.amount) as total_amount,
                 COUNT(*) as transactions
             ")
-            ->groupBy(DB::raw("COALESCE(expense_categories.name, 'Sin Categoría')"))
+            ->groupBy(DB::raw("
+                CASE 
+                    WHEN cash_movements.type = 'supplier_payment' THEN 'Pago a Proveedor'
+                    ELSE COALESCE(expense_categories.name, 'Sin Categoría')
+                END
+            "))
             ->orderByDesc('total_amount')
             ->get();
 

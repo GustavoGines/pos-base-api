@@ -14,6 +14,7 @@ use App\Services\ReportCacheService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use Maatwebsite\Excel\Facades\Excel;
 
 class CashMovementController extends Controller
@@ -141,8 +142,9 @@ class CashMovementController extends Controller
 
         try {
             $createdMovements = [];
+            $batchUuid = (string) Str::uuid();
 
-            DB::transaction(function () use ($validated, $shift, $user, $authorizedBy, &$createdMovements) {
+            DB::transaction(function () use ($validated, $shift, $user, $authorizedBy, &$createdMovements, $batchUuid) {
                 $totalAmountPaid = 0;
 
                 foreach ($validated['payments'] as $payment) {
@@ -157,7 +159,7 @@ class CashMovementController extends Controller
                         'user_id' => $user->id,
                         'authorized_by' => $authorizedBy,
                         'supplier_id' => $validated['supplier_id'] ?? null,
-                        'check_id' => $checkId,
+                        'check_id' => $method === 'check' ? $checkId : null,
                         'amount' => $amount,
                         'payment_method' => $method,
                         'type' => $validated['type'],
@@ -170,10 +172,18 @@ class CashMovementController extends Controller
 
                     $createdMovements[] = $movement;
 
-                    // Si se usó un cheque, endosarlo
+                    // Si se usó un cheque, endosarlo con bloqueo pesimista
                     if ($method === 'check' && $checkId) {
-                        $check = ThirdPartyCheck::find($checkId);
-                        $check->update(['status' => 'endorsed']);
+                        // CONCURRENCY HARDENING: Bloqueo pesimista para evitar carreras multiterinal (TOCTOU)
+                        $check = ThirdPartyCheck::where('id', $checkId)->lockForUpdate()->first();
+                        if (! $check || $check->status !== 'in_wallet') {
+                            throw new \Exception("El cheque #{$checkId} ya no se encuentra disponible en cartera.");
+                        }
+                        $check->update([
+                            'status' => 'endorsed',
+                            'supplier_id' => $validated['supplier_id'] ?? null,
+                            'endorsement_note' => 'Endosado a proveedor en Movimiento #' . $movement->id . ' (' . ($movement->receipt_number ?? 'S/N') . ')',
+                        ]);
                     }
                 }
 
@@ -190,12 +200,13 @@ class CashMovementController extends Controller
                 }
             });
 
-            if ($validated['type'] === 'expense') {
+            if (in_array($validated['type'], ['expense', 'supplier_payment'])) {
                 ReportCacheService::flush();
             }
 
             return response()->json([
                 'message' => 'Movimientos registrados exitosamente.',
+                'batch_uuid' => $batchUuid,
                 'movements' => collect($createdMovements)->map(fn ($m) => [
                     'id' => $m->id,
                     'amount' => $m->amount,
@@ -234,9 +245,14 @@ class CashMovementController extends Controller
 
                 // Revertir estado del cheque
                 if ($movement->payment_method === 'check' && $movement->check_id) {
-                    $check = ThirdPartyCheck::find($movement->check_id);
-                    if ($check) {
-                        $check->update(['status' => 'in_wallet']);
+                    $check = ThirdPartyCheck::lockForUpdate()->find($movement->check_id);
+                    if ($check && $check->status !== 'voided') {
+                        // ASYMMETRIC VOID CLEANUP: Limpiar proveedor y notas al anular el movimiento
+                        $check->update([
+                            'status' => 'in_wallet',
+                            'supplier_id' => null,
+                            'endorsement_note' => null,
+                        ]);
                     }
                 }
 
@@ -246,7 +262,7 @@ class CashMovementController extends Controller
                 $movement->delete();
             });
 
-            if ($movement->type === 'expense') {
+            if (in_array($movement->type, ['expense', 'supplier_payment'])) {
                 ReportCacheService::flush();
             }
 

@@ -194,8 +194,39 @@ class SaleService
                 $deliveryNote->update(['status' => 'cancelled']);
             }
 
-            // Anular Cheques
-            ThirdPartyCheck::where('sale_id', $lockedSale->id)->update(['status' => 'voided']);
+            // Validar estado de Cheques antes de anular (con bloqueo pesimista contra carreras)
+            $checks = ThirdPartyCheck::with('supplier')->where('sale_id', $lockedSale->id)->lockForUpdate()->get();
+            foreach ($checks as $check) {
+                if ($check->status === 'endorsed') {
+                    $supplierName = $check->supplier?->name;
+                    $msg = $supplierName
+                        ? "No se puede anular la venta porque el cheque #{$check->check_number} fue endosado al proveedor '{$supplierName}'. Debe anular primero el pago al proveedor en Movimientos de Caja para reincorporarlo a cartera."
+                        : "No se puede anular la venta porque el cheque #{$check->check_number} figura como endosado. Debe reincorporarlo a cartera primero.";
+                    throw new \InvalidArgumentException($msg);
+                }
+                if ($check->status === 'deposited') {
+                    throw new \InvalidArgumentException(
+                        "No se puede anular la venta porque el cheque #{$check->check_number} ya fue depositado en el banco."
+                    );
+                }
+                if ($check->status === 'rejected') {
+                    throw new \InvalidArgumentException(
+                        "No se puede anular la venta porque el cheque #{$check->check_number} figura como rechazado."
+                    );
+                }
+                if ($check->status !== 'in_wallet' && $check->status !== 'voided') {
+                    throw new \InvalidArgumentException(
+                        "No se puede anular la venta porque el cheque #{$check->check_number} tiene un estado incompatible ({$check->status})."
+                    );
+                }
+            }
+
+            // Si están 'in_wallet', procedemos a anularlos
+            foreach ($checks as $check) {
+                if ($check->status === 'in_wallet') {
+                    $check->update(['status' => 'voided']);
+                }
+            }
 
             // Revertir Cuenta Corriente
             $this->paymentService->revertCustomerTransactionsForVoid($lockedSale, $context);
