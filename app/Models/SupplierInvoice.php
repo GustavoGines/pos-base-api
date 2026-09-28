@@ -26,6 +26,10 @@ class SupplierInvoice extends Model
         'user_id',
     ];
 
+    protected $casts = [
+        'issue_date' => 'datetime',
+    ];
+
     public function supplier()
     {
         return $this->belongsTo(Supplier::class);

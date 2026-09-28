@@ -58,6 +58,8 @@ class CashShift extends Model
         'total_refunds' => 'decimal:2',
     ];
 
+    protected $appends = ['total_sales'];
+
     public function cashRegister(): BelongsTo
     {
         return $this->belongsTo(CashRegister::class);
@@ -83,50 +85,12 @@ class CashShift extends Model
         return $this->hasMany(CashMovement::class);
     }
 
-    public function getExpectedBalanceAttribute($value)
+    public function getTotalSalesAttribute()
     {
-        if ($this->status === 'closed') {
-            return $value;
-        }
-
-        $cashSales = SalePayment::whereHas('sale', function ($q) {
-            $q->where('cash_shift_id', $this->id)->where('status', 'completed');
-        })
-            ->whereHas('paymentMethod', function ($q) {
-                $q->where('is_cash', true);
-            })
-            ->sum('total_amount');
-
-        $cashSales += CustomerTransaction::where('cash_shift_id', $this->id)
-            ->where('type', 'payment')
-            ->where('payment_method', 'cash')
-            ->sum('amount');
-
-        $cashDeposits = CashMovement::where('cash_shift_id', $this->id)
-            ->where('payment_method', 'cash')
-            ->where('type', 'deposit')
-            ->sum('amount');
-
-        $cashExpenses = CashMovement::where('cash_shift_id', $this->id)
-            ->where('payment_method', 'cash')
-            ->where('type', 'expense')
-            ->sum('amount');
-
-        $cashWithdrawals = CashMovement::where('cash_shift_id', $this->id)
-            ->where('payment_method', 'cash')
-            ->where('type', 'withdrawal')
-            ->sum('amount');
-
-        $cashSupplierPayments = CashMovement::where('cash_shift_id', $this->id)
-            ->where('payment_method', 'cash')
-            ->where('type', 'supplier_payment')
-            ->sum('amount');
-
-        $cashRefunds = CustomerTransaction::where('cash_shift_id', $this->id)
-            ->where('type', 'refund')
-            ->where('payment_method', 'cash')
-            ->sum('amount');
-
-        return $this->opening_balance + $cashSales + $cashDeposits - $cashExpenses - $cashWithdrawals - $cashSupplierPayments - $cashRefunds;
+        return ($this->attributes['cash_sales'] ?? 0)
+             + ($this->attributes['card_sales'] ?? 0)
+             + ($this->attributes['transfer_sales'] ?? 0)
+             + ($this->attributes['check_sales'] ?? 0)
+             + ($this->attributes['cc_sales'] ?? 0);
     }
 }

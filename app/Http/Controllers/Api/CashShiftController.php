@@ -26,6 +26,13 @@ class CashShiftController extends Controller
             ->orderBy('opened_at', 'desc')
             ->paginate(50);
 
+        foreach ($shifts as $shift) {
+            if ($shift->status === 'open') {
+                $liveTotals = $this->cashShiftService->calculateLiveTotals($shift);
+                $shift->forceFill($liveTotals);
+            }
+        }
+
         return response()->json($shifts);
     }
 
@@ -36,6 +43,11 @@ class CashShiftController extends Controller
 
         if (! $shift) {
             return response()->json(['message' => 'No hay caja abierta.'], 404);
+        }
+
+        if ($shift->status === 'open') {
+            $liveTotals = $this->cashShiftService->calculateLiveTotals($shift);
+            $shift->forceFill($liveTotals);
         }
 
         return response()->json($shift->load('cashRegister', 'user'));

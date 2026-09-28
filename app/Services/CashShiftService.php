@@ -137,10 +137,85 @@ class CashShiftService
      * Cierre ciego: El cajero manda el arqueo constatado físico.
      * Nosotros calculamos el balance y hallamos la difference sin revelar monto antes.
      */
+    public function calculateLiveTotals(CashShift $shift): array
+    {
+        $shiftId = $shift->id;
+
+        // Sumatoria Financiera: Solo ventas COMPLETADAS
+        $cashSales = SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+            ->whereHas('paymentMethod', fn ($q) => $q->where('is_cash', true))
+            ->sum('total_amount');
+        $cashSales += CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'cash')->sum('amount');
+
+        $cardSales = SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+            ->whereHas('paymentMethod', fn ($q) => $q->where('code', 'like', 'card_%'))
+            ->sum('total_amount');
+        $cardSales += CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'card')->sum('amount');
+
+        $transferSales = SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+            ->whereHas('paymentMethod', fn ($q) => $q->where('code', 'transfer'))
+            ->sum('total_amount');
+        $transferSales += CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'transfer')->sum('amount');
+
+        $totalSurcharge = Sale::where('cash_shift_id', $shiftId)
+            ->where('status', 'completed')
+            ->sum('total_surcharge');
+
+        // Cheques recibidos en el turno (ignorando los anulados por ventas anuladas)
+        $checkSales = ThirdPartyCheck::where('cash_shift_id', $shiftId)->where('status', '!=', 'voided')->sum('amount');
+        $checkCount = ThirdPartyCheck::where('cash_shift_id', $shiftId)->where('status', '!=', 'voided')->count();
+        $checkDetails = ThirdPartyCheck::where('cash_shift_id', $shiftId)
+            ->where('status', '!=', 'voided')
+            ->get(['id', 'bank_name', 'check_number', 'amount', 'payment_date', 'issuer_name'])
+            ->toArray();
+
+        // Ventas en Cuenta Corriente
+        $ccSales = SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+            ->whereHas('paymentMethod', fn ($q) => $q->where('code', 'cuenta_corriente'))
+            ->sum('total_amount');
+
+        $ccSalesCount = Sale::where('cash_shift_id', $shiftId)
+            ->where('status', 'completed')
+            ->whereHas('payments.paymentMethod', fn ($q) => $q->where('code', 'cuenta_corriente'))
+            ->count();
+
+        // Movimientos manuales de caja
+        $cashDeposits = CashMovement::where('cash_shift_id', $shiftId)->where('payment_method', 'cash')->where('type', 'deposit')->sum('amount');
+        $cashExpenses = CashMovement::where('cash_shift_id', $shiftId)->where('payment_method', 'cash')->where('type', 'expense')->sum('amount');
+        $cashWithdrawals = CashMovement::where('cash_shift_id', $shiftId)->where('payment_method', 'cash')->where('type', 'withdrawal')->sum('amount');
+        $cashSupplierPayments = CashMovement::where('cash_shift_id', $shiftId)->where('payment_method', 'cash')->where('type', 'supplier_payment')->sum('amount');
+        $cashRefunds = CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'refund')->where('payment_method', 'cash')->sum('amount');
+
+        // El efectivo esperado
+        $expectedBalance = $shift->opening_balance + $cashSales + $cashDeposits - $cashExpenses - $cashWithdrawals - $cashSupplierPayments - $cashRefunds;
+
+        // Total Ventas Neto (Cálculo total de ventas para la UI)
+        // NOTA: No sumamos $totalSurcharge porque el monto de los pagos (cashSales, checkSales, etc) YA INCLUYE el recargo que pagó el cliente.
+        $totalSales = $cashSales + $cardSales + $transferSales + $checkSales + $ccSales;
+
+        return [
+            'expected_balance' => $expectedBalance,
+            'cash_sales' => $cashSales,
+            'card_sales' => $cardSales,
+            'transfer_sales' => $transferSales,
+            'total_surcharge' => $totalSurcharge,
+            'check_sales' => $checkSales,
+            'check_count' => $checkCount,
+            'check_details' => $checkDetails,
+            'cc_sales' => $ccSales,
+            'cc_sales_count' => $ccSalesCount,
+            'total_expenses' => $cashExpenses,
+            'total_withdrawals' => $cashWithdrawals,
+            'total_deposits' => $cashDeposits,
+            'total_supplier_payments' => $cashSupplierPayments,
+            'total_refunds' => $cashRefunds,
+            'total_sales' => $totalSales,
+        ];
+    }
+
     public function closeShift(int $shiftId, float $actualBalance, ?int $closerUserId = null): CashShift
     {
         return DB::transaction(function () use ($shiftId, $actualBalance, $closerUserId) {
-            // Lock para que nuevas ventas no adulteren lo calculado en el microsegundo de cierre
             $shift = CashShift::where('id', $shiftId)
                 ->where('status', 'open')
                 ->lockForUpdate()
@@ -150,95 +225,28 @@ class CashShiftService
                 throw new Exception('El turno no existe o ya está cerrado.', 404);
             }
 
-            // Sumatoria Financiera: Solo ventas COMPLETADAS
-            // Recorremos los pagos cruzados con métodos de pago para saber qué es efectivo
-            $cashSales = SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
-                ->whereHas('paymentMethod', fn ($q) => $q->where('is_cash', true))
-                ->sum('total_amount');
-            $cashSales += CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'cash')->sum('amount');
-
-            $cardSales = SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
-                ->whereHas('paymentMethod', fn ($q) => $q->where('code', 'like', 'card_%'))
-                ->sum('total_amount');
-            $cardSales += CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'card')->sum('amount');
-
-            $transferSales = SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
-                ->whereHas('paymentMethod', fn ($q) => $q->where('code', 'transfer'))
-                ->sum('total_amount');
-            $transferSales += CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'transfer')->sum('amount');
-
-            $totalSurcharge = Sale::where('cash_shift_id', $shiftId)
-                ->where('status', 'completed')
-                ->sum('total_surcharge');
-
-            // Cheques recibidos en el turno
-            $checkSales = ThirdPartyCheck::where('cash_shift_id', $shiftId)->sum('amount');
-            $checkCount = ThirdPartyCheck::where('cash_shift_id', $shiftId)->count();
-            $checkDetails = ThirdPartyCheck::where('cash_shift_id', $shiftId)
-                ->get(['id', 'bank_name', 'check_number', 'amount', 'payment_date', 'issuer_name'])
-                ->toArray();
-
-            // Ventas en Cuenta Corriente (deuda registrada, no flujo de caja inmediato)
-            $ccSales = SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
-                ->whereHas('paymentMethod', fn ($q) => $q->where('code', 'cuenta_corriente'))
-                ->sum('total_amount');
-
-            $ccSalesCount = Sale::where('cash_shift_id', $shiftId)
-                ->where('status', 'completed')
-                ->whereHas('payments.paymentMethod', fn ($q) => $q->where('code', 'cuenta_corriente'))
-                ->count();
-
-            // Movimientos manuales de caja (Gastos, Retiros, Ingresos extra)
-            $cashDeposits = CashMovement::where('cash_shift_id', $shiftId)
-                ->where('payment_method', 'cash')
-                ->where('type', 'deposit')
-                ->sum('amount');
-
-            $cashExpenses = CashMovement::where('cash_shift_id', $shiftId)
-                ->where('payment_method', 'cash')
-                ->where('type', 'expense')
-                ->sum('amount');
-
-            $cashWithdrawals = CashMovement::where('cash_shift_id', $shiftId)
-                ->where('payment_method', 'cash')
-                ->where('type', 'withdrawal')
-                ->sum('amount');
-
-            $cashSupplierPayments = CashMovement::where('cash_shift_id', $shiftId)
-                ->where('payment_method', 'cash')
-                ->where('type', 'supplier_payment')
-                ->sum('amount');
-
-            $cashRefunds = CustomerTransaction::where('cash_shift_id', $shiftId)
-                ->where('type', 'refund')
-                ->where('payment_method', 'cash')
-                ->sum('amount');
-
-            // El efectivo físico esperado en la gaveta = Fondo Inicial + Ventas Efectivo + Ingresos Extra - Gastos - Retiros - Pagos Proveedor - Reintegros
-            $expectedBalance = $shift->opening_balance + $cashSales + $cashDeposits - $cashExpenses - $cashWithdrawals - $cashSupplierPayments - $cashRefunds;
-
-            // Desfase (Sobrante/Faltante) comparado contra lo físico contado
-            $difference = $actualBalance - $expectedBalance;
+            $totals = $this->calculateLiveTotals($shift);
+            $difference = $actualBalance - $totals['expected_balance'];
 
             $shift->update([
                 'closed_at' => now(),
-                'expected_balance' => $expectedBalance,
+                'expected_balance' => $totals['expected_balance'],
                 'actual_balance' => $actualBalance,
                 'difference' => $difference,
-                'cash_sales' => $cashSales,
-                'card_sales' => $cardSales,
-                'transfer_sales' => $transferSales,
-                'total_surcharge' => $totalSurcharge,
-                'check_sales' => $checkSales,
-                'check_count' => $checkCount,
-                'check_details' => json_encode($checkDetails),
-                'cc_sales' => $ccSales,
-                'cc_sales_count' => $ccSalesCount,
-                'total_expenses' => $cashExpenses,
-                'total_withdrawals' => $cashWithdrawals,
-                'total_deposits' => $cashDeposits,
-                'total_supplier_payments' => $cashSupplierPayments,
-                'total_refunds' => $cashRefunds,
+                'cash_sales' => $totals['cash_sales'],
+                'card_sales' => $totals['card_sales'],
+                'transfer_sales' => $totals['transfer_sales'],
+                'total_surcharge' => $totals['total_surcharge'],
+                'check_sales' => $totals['check_sales'],
+                'check_count' => $totals['check_count'],
+                'check_details' => json_encode($totals['check_details']),
+                'cc_sales' => $totals['cc_sales'],
+                'cc_sales_count' => $totals['cc_sales_count'],
+                'total_expenses' => $totals['total_expenses'],
+                'total_withdrawals' => $totals['total_withdrawals'],
+                'total_deposits' => $totals['total_deposits'],
+                'total_supplier_payments' => $totals['total_supplier_payments'],
+                'total_refunds' => $totals['total_refunds'],
                 'status' => 'closed',
                 'closed_by_user_id' => $closerUserId,
             ]);
