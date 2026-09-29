@@ -229,6 +229,23 @@ class CashMovementController extends Controller
         $movement = CashMovement::findOrFail($id);
         $user = $request->attributes->get('authenticated_user');
 
+        // Candado de Seguridad 1: Debe haber un turno abierto
+        $activeShift = \App\Models\CashShift::where('status', 'open')->latest('id')->first();
+        if (!$activeShift) {
+            return response()->json([
+                'message' => 'No hay un turno de caja abierto.',
+                'error' => 'Para anular un movimiento, debe tener una caja abierta.'
+            ], 403);
+        }
+
+        // Candado de Seguridad 2: El movimiento debe pertenecer al turno actual
+        if ($movement->cash_shift_id !== $activeShift->id) {
+            return response()->json([
+                'message' => 'Movimiento bloqueado por seguridad.',
+                'error' => 'Solo se pueden anular movimientos pertenecientes al turno de caja actual. Los movimientos de turnos cerrados están bloqueados y son inmutables.'
+            ], 403);
+        }
+
         try {
             DB::transaction(function () use ($movement, $user) {
                 // Revertir balance de proveedor
