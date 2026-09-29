@@ -208,6 +208,12 @@ class CustomerController extends Controller
                     $activeShift = CashShift::where('status', 'open')->latest('id')->first();
                 }
 
+                if (! $activeShift) {
+                    throw ValidationException::withMessages([
+                        'cash_shift_id' => ['No hay turno de caja abierto para registrar este movimiento.'],
+                    ]);
+                }
+
                 $description = $request->filled('description') ? $request->description : ($isRefund ? 'Devolución de saldo a favor' : 'Abono en caja');
                 $remainingAmount = $totalAmount;
                 $processedSales = [];
