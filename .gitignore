@@ -30,3 +30,9 @@ ota_pending.json
 
 # Ignorar APKs locales
 *.apk
+
+# Agent files
+.agents/
+
+# Stress test output
+tests/Stress/*_results.json
