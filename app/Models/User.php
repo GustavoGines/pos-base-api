@@ -75,4 +75,49 @@ class User extends Authenticatable
     {
         return $this->hasMany(CashShift::class);
     }
+
+    /**
+     * Determina si el usuario posee rol administrativo.
+     */
+    public function isAdmin(): bool
+    {
+        return $this->role === 'admin';
+    }
+
+    /**
+     * Determina si el usuario cuenta con un permiso específico o permiso maestro.
+     */
+    public function hasPermission(string $permission): bool
+    {
+        if ($this->isAdmin()) {
+            return true;
+        }
+
+        $perms = $this->permissions;
+        if (! is_array($perms)) {
+            return false;
+        }
+
+        return in_array('all', $perms, true) || in_array($permission, $perms, true);
+    }
+
+    /**
+     * Determina si el usuario cuenta con al menos uno de los permisos provistos.
+     *
+     * @param array<int, string> $permissions
+     */
+    public function hasAnyPermission(array $permissions): bool
+    {
+        if ($this->isAdmin()) {
+            return true;
+        }
+
+        foreach ($permissions as $permission) {
+            if ($this->hasPermission($permission)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

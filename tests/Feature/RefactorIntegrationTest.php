@@ -25,11 +25,12 @@ class RefactorIntegrationTest extends TestCase
         $this->withoutMiddleware([ValidateSessionToken::class]);
         Schema::disableForeignKeyConstraints();
 
-        // Setup initial POS environment
         $this->user = User::create([
             'name' => 'Cajero Test',
             'email' => 'cajero@pos.com',
             'password' => bcrypt('password'),
+            'role' => 'cashier',
+            'permissions' => ['collect_customer_debt', 'void_sales'],
         ]);
 
         $register = CashRegister::create(['name' => 'Caja Principal', 'is_active' => true]);

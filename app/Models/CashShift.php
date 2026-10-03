@@ -15,6 +15,7 @@ class CashShift extends Model
         'cash_register_id',
         'user_id',
         'closed_by_user_id',
+        'difference_authorized_by_admin_id',
         'opened_at',
         'closed_at',
         'opening_balance',
@@ -73,6 +74,11 @@ class CashShift extends Model
     public function closedByUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'closed_by_user_id');
+    }
+
+    public function differenceAuthorizedByAdmin(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'difference_authorized_by_admin_id');
     }
 
     public function sales(): HasMany

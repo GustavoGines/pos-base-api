@@ -213,6 +213,7 @@ class StockService
         StockMovement::create([
             'product_id' => $productId,
             'user_id' => $context->userId ?? 1,
+            'authorized_by_admin_id' => $context->authorizedByAdminId,
             'cash_shift_id' => $context->cashShiftId,
             'sale_id' => $sale?->id,
             'type' => $type,

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 
 class AuthController extends Controller
@@ -25,7 +26,7 @@ class AuthController extends Controller
             'pin' => 'required|string|min:4|max:10',
         ]);
 
-        $pin = $request->input('pin');
+        $pin = trim($request->input('pin'));
 
         // FIX BUG A-1: Busca usuario por PIN hasheado sin cargar todos a memoria.
         // Iteramos solo los usuarios con PIN registrado para minimizar surface de ataque.
@@ -73,28 +74,53 @@ class AuthController extends Controller
             'pin' => 'required|string|min:4|max:10',
         ]);
 
-        $pin = $request->input('pin');
+        $pin = trim($request->input('pin'));
 
-        // FIX BUG A-1: Busca solo entre usuarios con PIN registrado.
-        $user = User::withoutGlobalScope('visible')
+        $user = $request->user() ?? $request->attributes->get('authenticated_user');
+        if (! $user && $request->header('X-Session-Token')) {
+            $user = User::withoutGlobalScope('visible')
+                ->where('session_token', $request->header('X-Session-Token'))
+                ->first();
+        }
+
+        $throttleKey = 'pin_attempts:' . ($user ? $user->id : 'guest') . ':' . $request->ip();
+        if (RateLimiter::tooManyAttempts($throttleKey, 5)) {
+            $seconds = RateLimiter::availableIn($throttleKey);
+
+            return response()->json([
+                'authorized' => false,
+                'message' => "Demasiados intentos erróneos de PIN. Operación bloqueada temporalmente por {$seconds} segundos.",
+                'error_code' => 'PIN_LOCKED_TEMPORARILY',
+                'retry_after' => $seconds,
+            ], 429);
+        }
+
+        // FIX BUG A-1: Busca solo entre administradores con PIN registrado.
+        $admin = User::withoutGlobalScope('visible')
+            ->where('role', 'admin')
             ->whereNotNull('pin')
             ->get()
             ->first(fn ($u) => Hash::check($pin, $u->pin));
 
-        if (! $user || $user->role !== 'admin') {
+        if (! $admin) {
+            RateLimiter::hit($throttleKey, 300);
+
             return response()->json([
                 'authorized' => false,
                 'message' => 'PIN incorrecto o permisos insuficientes.',
+                'error_code' => 'INVALID_ADMIN_PIN',
             ], 401);
         }
+
+        RateLimiter::clear($throttleKey);
 
         return response()->json([
             'authorized' => true,
             'user' => [
-                'id' => $user->id,
-                'name' => $user->name,
-                'role' => $user->role,
-                'permissions' => $user->permissions ?? [],
+                'id' => $admin->id,
+                'name' => $admin->name,
+                'role' => $admin->role,
+                'permissions' => $admin->permissions ?? [],
             ],
         ]);
     }

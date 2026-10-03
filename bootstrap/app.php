@@ -2,6 +2,7 @@
 
 use App\Http\Middleware\CheckAddonPermission;
 use App\Http\Middleware\CheckFeatureAccess;
+use App\Http\Middleware\EnsurePermissionOrPin;
 use App\Http\Middleware\EnsureRoleOrPin;
 use App\Http\Middleware\EnsureUserIsAdmin;
 use App\Http\Middleware\ValidateSessionToken;
@@ -24,7 +25,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'feature' => CheckFeatureAccess::class,   // [feature-flags] Seguridad modular
             'session.validate' => ValidateSessionToken::class, // [single-session] Sesión única por usuario
             'role.admin' => EnsureUserIsAdmin::class,
-            'role.or.pin' => EnsureRoleOrPin::class,
+            'permission.or.pin' => EnsurePermissionOrPin::class,
+            'role.or.pin' => EnsurePermissionOrPin::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

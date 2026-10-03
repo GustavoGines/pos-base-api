@@ -133,7 +133,10 @@ class PhaseP1SecurityAndIntegrityTest extends TestCase
         $cashier1 = User::factory()->create(['role' => 'cashier']);
         $shift1 = $this->crearTurnoAbierto(fondoInicial: 1000, user: $cashier1);
 
-        $cashier2 = User::factory()->create(['role' => 'cashier']);
+        $cashier2 = User::factory()->create([
+            'role' => 'cashier',
+            'permissions' => ['collect_customer_debt'],
+        ]);
         $register2 = CashRegister::firstOrCreate(['id' => 2], ['name' => 'Caja Secundaria', 'is_active' => true]);
         $shift2 = CashShift::create([
             'cash_register_id' => $register2->id,

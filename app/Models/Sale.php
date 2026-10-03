@@ -16,6 +16,7 @@ class Sale extends Model
         'status', 'cash_shift_id', 'tendered_amount', 'change_amount',
         'user_id', 'cashier_id', 'customer_id', 'shipping_cost', 'delivery_address',
         'price_list',
+        'voided_by_user_id', 'void_authorized_by_admin_id', 'voided_at', 'void_reason',
     ];
 
     protected $casts = [
@@ -23,6 +24,7 @@ class Sale extends Model
         'total_surcharge' => 'decimal:2',
         'amount_due' => 'decimal:2',
         'shipping_cost' => 'decimal:2',
+        'voided_at' => 'datetime',
     ];
 
     public function isVoided(): bool
@@ -58,6 +60,16 @@ class Sale extends Model
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class);
+    }
+
+    public function voidedByUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'voided_by_user_id');
+    }
+
+    public function voidAuthorizedByAdmin(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'void_authorized_by_admin_id');
     }
 
     public function deliveryNote()

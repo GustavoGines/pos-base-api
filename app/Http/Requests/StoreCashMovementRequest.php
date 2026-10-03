@@ -30,6 +30,7 @@ class StoreCashMovementRequest extends FormRequest
             'description' => ['nullable', 'string', 'max:500'],
             'receipt_number' => ['nullable', 'string', 'max:100'],
             'receipt_file_url' => ['nullable', 'string', 'max:255'],
+            'admin_pin' => ['nullable', 'string', 'min:4', 'max:10'],
 
             // Proveedor
             'supplier_id' => [

@@ -132,9 +132,15 @@ class SalesController extends Controller
     {
         $validated = $request->validated();
 
+        $actingUser = $request->user() ?? $request->attributes->get('authenticated_user');
+        $authorizedByAdminId = $request->attributes->get('authorized_by_admin_id')
+            ?? ($actingUser?->isAdmin() ? $actingUser->id : null);
+
         $context = SaleContextDTO::fromArray(
             $validated,
-            $request->user()?->id ?? $request->attributes->get('authenticated_user')?->id
+            $actingUser?->id,
+            false,
+            $authorizedByAdminId
         );
 
         try {

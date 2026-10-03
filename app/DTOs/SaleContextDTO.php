@@ -13,13 +13,15 @@ class SaleContextDTO
         public readonly ?int $quoteId,
         public readonly ?string $priceList,
         public readonly ?string $deliveryAddress,
-        public readonly bool $isInternalAccount
+        public readonly bool $isInternalAccount,
+        public readonly ?int $authorizedByAdminId = null,
+        public readonly ?string $voidReason = null
     ) {}
 
     /**
      * Build from array data (usually from FormRequest validated data)
      */
-    public static function fromArray(array $data, ?int $authenticatedUserId = null, bool $isInternalAccount = false): self
+    public static function fromArray(array $data, ?int $authenticatedUserId = null, bool $isInternalAccount = false, ?int $authorizedByAdminId = null): self
     {
         if (isset($data['customer_id']) && ! $isInternalAccount) {
             $isInternalAccount = (bool) Customer::where('id', $data['customer_id'])->value('is_internal_account');
@@ -32,7 +34,9 @@ class SaleContextDTO
             quoteId: $data['quote_id'] ?? null,
             priceList: $data['price_list'] ?? null,
             deliveryAddress: $data['delivery_address'] ?? null,
-            isInternalAccount: $isInternalAccount
+            isInternalAccount: $isInternalAccount,
+            authorizedByAdminId: $authorizedByAdminId,
+            voidReason: $data['void_reason'] ?? null
         );
     }
 }

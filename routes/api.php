@@ -1,5 +1,6 @@
 <?php
 
+use App\Constants\Permissions;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BrandController;
 use App\Http\Controllers\Api\CashRegisterController;
@@ -87,10 +88,9 @@ Route::apiResource('payment-methods', PaymentMethodController::class)->only(['in
 
 Route::middleware(['session.validate'])->group(function () {
 
-    // ── Configuración del negocio (ESCRITURA PROTEGIDA) ───────────────
-    Route::middleware(['role.admin'])->group(function () {
-        Route::put('/settings', [SettingController::class, 'update']);
-    });
+    // ── 1. CONFIGURACIÓN Y ADMINISTRACIÓN ─────────────────────────────
+    Route::put('/settings', [SettingController::class, 'update'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
 
     // ── POS: Procesar venta (CRÍTICO) ────────────────────────────────
     Route::post('/pos/sales', [PosController::class, 'processSale']);
@@ -104,111 +104,161 @@ Route::middleware(['session.validate'])->group(function () {
     // ── Ventas: listado, anulación y pago de cuentas corrientes ──────
     Route::get('/sales', [SalesController::class, 'index']);
     Route::get('/sales/pending', [SalesController::class, 'pending']);
-    Route::post('/sales/{sale}/void', [SalesController::class, 'void']);
-    Route::put('/sales/{sale}/pay', [SalesController::class, 'pay']);
+    Route::post('/sales/{sale}/void', [SalesController::class, 'void'])
+        ->middleware('permission.or.pin:' . Permissions::VOID_SALES);
+    Route::put('/sales/{sale}/pay', [SalesController::class, 'pay'])
+        ->middleware('permission.or.pin:' . Permissions::COLLECT_CUSTOMER_DEBT);
     Route::get('/sales/{sale}/ticket-pdf', [SalesController::class, 'ticketPdf']);
     Route::get('/sales/{sale}', [SalesController::class, 'show']);
 
     // ── Clientes: gestión completa y cuentas corrientes ──────────────
-    Route::apiResource('customers', CustomerController::class);
-    Route::post('/customers/{customer}/payments', [CustomerController::class, 'registerPayment']);
-    Route::get('/customers/{customer}/pending-sales', [CustomerController::class, 'getPendingSales']);
+    Route::get('/customers', [CustomerController::class, 'index']);
+    Route::get('/customers/{customer}', [CustomerController::class, 'show']);
+    Route::apiResource('customers', CustomerController::class)
+        ->except(['index', 'show'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_CUSTOMERS);
+    Route::get('/customers/{customer}/pending-sales', [CustomerController::class, 'getPendingSales'])
+        ->middleware('permission.or.pin:' . Permissions::VIEW_CUSTOMERS_ACCOUNT);
+    Route::post('/customers/{customer}/payments', [CustomerController::class, 'registerPayment'])
+        ->middleware('permission.or.pin:' . Permissions::COLLECT_CUSTOMER_DEBT);
 
     // 💸 Módulo Movimientos de Caja y Gastos 💸
-    Route::get('cash-movements/export', [CashMovementController::class, 'export']);
-    Route::post('cash-movements/upload', [CashMovementController::class, 'uploadAttachment']);
-    Route::apiResource('cash-movements', CashMovementController::class)->only(['index', 'store']);
-    Route::middleware(['role.or.pin'])->group(function () {
-        Route::delete('/cash-movements/{cash_movement}', [CashMovementController::class, 'destroy']);
-    });
-    Route::middleware(['feature:expenses', 'role.admin'])->group(function () {
-        Route::apiResource('expense-categories', ExpenseCategoryController::class);
+    Route::get('/cash-movements', [CashMovementController::class, 'index'])
+        ->middleware('permission.or.pin:' . Permissions::VIEW_EXPENSES);
+    Route::get('/cash-movements/export', [CashMovementController::class, 'export'])
+        ->middleware('permission.or.pin:' . Permissions::VIEW_EXPENSES);
+    Route::post('/cash-movements/upload', [CashMovementController::class, 'uploadAttachment'])
+        ->middleware('permission.or.pin:' . Permissions::CREATE_EXPENSES);
+    Route::post('/cash-movements', [CashMovementController::class, 'store'])
+        ->middleware('permission.or.pin:' . Permissions::CREATE_EXPENSES);
+    Route::delete('/cash-movements/{cash_movement}', [CashMovementController::class, 'destroy'])
+        ->middleware('permission.or.pin:' . Permissions::DELETE_CASH_MOVEMENTS);
+
+    Route::middleware(['feature:expenses'])->group(function () {
+        Route::get('/expense-categories', [ExpenseCategoryController::class, 'index']);
+        Route::apiResource('expense-categories', ExpenseCategoryController::class)
+            ->except(['index'])
+            ->middleware('permission.or.pin:' . Permissions::MANAGE_EXPENSE_CATEGORIES);
     });
 
     // ── Módulo Cartera de Cheques ────────────────────────────────────
     Route::middleware(['feature:checks'])->group(function () {
-        Route::get('/third-party-checks', [ThirdPartyCheckController::class, 'index']);
-        Route::patch('/third-party-checks/{check}/status', [ThirdPartyCheckController::class, 'updateStatus']);
+        Route::get('/third-party-checks', [ThirdPartyCheckController::class, 'index'])
+            ->middleware('permission.or.pin:' . Permissions::VIEW_CHECKS);
+        Route::patch('/third-party-checks/{check}/status', [ThirdPartyCheckController::class, 'updateStatus'])
+            ->middleware('permission.or.pin:' . Permissions::ENDORSE_CHECKS);
     });
 
     // ── Módulo Proveedores ───────────────────────────────────────────
     Route::middleware(['feature:suppliers'])->group(function () {
-        Route::apiResource('suppliers', SupplierController::class)->only(['index', 'show']);
-        Route::middleware(['role.or.pin'])->group(function () {
-            Route::apiResource('suppliers', SupplierController::class)->except(['index', 'show']);
-            Route::get('suppliers/{supplier}/current-account', [SupplierController::class, 'currentAccount']);
-            Route::post('suppliers/{supplier}/invoices', [SupplierInvoiceController::class, 'store']);
-            Route::post('supplier-invoices/upload', [SupplierInvoiceController::class, 'uploadAttachment']);
-        });
+        Route::get('/suppliers', [SupplierController::class, 'index'])
+            ->middleware('permission.or.pin:' . Permissions::VIEW_SUPPLIERS);
+        Route::get('/suppliers/{supplier}', [SupplierController::class, 'show'])
+            ->middleware('permission.or.pin:' . Permissions::VIEW_SUPPLIERS);
+        Route::get('/suppliers/{supplier}/current-account', [SupplierController::class, 'currentAccount'])
+            ->middleware('permission.or.pin:' . Permissions::VIEW_SUPPLIERS);
+
+        Route::post('/suppliers', [SupplierController::class, 'store'])
+            ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+        Route::put('/suppliers/{supplier}', [SupplierController::class, 'update'])
+            ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+        Route::delete('/suppliers/{supplier}', [SupplierController::class, 'destroy'])
+            ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+
+        Route::post('/suppliers/{supplier}/invoices', [SupplierInvoiceController::class, 'store'])
+            ->middleware('permission.or.pin:' . Permissions::CREATE_SUPPLIER_INVOICE);
+        Route::post('/supplier-invoices/upload', [SupplierInvoiceController::class, 'uploadAttachment'])
+            ->middleware('permission.or.pin:' . Permissions::CREATE_SUPPLIER_INVOICE);
     });
 
     // ── Catálogo: escritura (crear, editar, borrar productos) ────────
-    Route::post('/catalog/products/bulk-delete', [CatalogController::class, 'bulkDelete']);
-    Route::put('/catalog/products/bulk-update', [CatalogController::class, 'bulkUpdate']);
-    Route::get('/catalog/bulk-price-history', [CatalogController::class, 'bulkPriceHistory']);
-    Route::post('/catalog/bulk-price-history/{id}/revert', [CatalogController::class, 'bulkPriceRevert']);
-    Route::post('/catalog/products/bulk-price-preview', [CatalogController::class, 'bulkPricePreview']);
-    Route::put('/catalog/products/bulk-price-update', [CatalogController::class, 'bulkPriceUpdate']);
-    Route::post('/catalog/products/{product}/adjust-stock', [StockController::class, 'adjust']);
-    Route::apiResource('catalog/products', ProductController::class)->except(['index', 'show']);
-    Route::apiResource('catalog/categories', CategoryController::class)->except(['index']);
-    Route::apiResource('catalog/brands', BrandController::class)->except(['index']);
+    Route::post('/catalog/products/bulk-delete', [CatalogController::class, 'bulkDelete'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+    Route::put('/catalog/products/bulk-update', [CatalogController::class, 'bulkUpdate'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+    Route::get('/catalog/bulk-price-history', [CatalogController::class, 'bulkPriceHistory'])
+        ->middleware('permission.or.pin:' . Permissions::BULK_PRICE_UPDATE);
+    Route::post('/catalog/bulk-price-history/{id}/revert', [CatalogController::class, 'bulkPriceRevert'])
+        ->middleware('permission.or.pin:' . Permissions::BULK_PRICE_UPDATE);
+    Route::post('/catalog/products/bulk-price-preview', [CatalogController::class, 'bulkPricePreview'])
+        ->middleware('permission.or.pin:' . Permissions::BULK_PRICE_UPDATE);
+    Route::put('/catalog/products/bulk-price-update', [CatalogController::class, 'bulkPriceUpdate'])
+        ->middleware('permission.or.pin:' . Permissions::BULK_PRICE_UPDATE);
+    Route::post('/catalog/products/{product}/adjust-stock', [StockController::class, 'adjust'])
+        ->middleware('permission.or.pin:' . Permissions::ADJUST_STOCK);
+    Route::apiResource('catalog/products', ProductController::class)->except(['index', 'show'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+    Route::apiResource('catalog/categories', CategoryController::class)->except(['index'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+    Route::apiResource('catalog/brands', BrandController::class)->except(['index'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
 
     // ── Cajas (escritura: crear/editar/borrar) ───────────────────────
-    Route::middleware(['feature:multi_caja', 'role.admin'])->group(function () {
-        Route::post('/registers', [CashRegisterController::class, 'store']);
-        Route::put('/registers/{id}', [CashRegisterController::class, 'update']);
-        Route::delete('/registers/{id}', [CashRegisterController::class, 'destroy']);
+    Route::middleware(['feature:multi_caja'])->group(function () {
+        Route::post('/registers', [CashRegisterController::class, 'store'])
+            ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+        Route::put('/registers/{id}', [CashRegisterController::class, 'update'])
+            ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+        Route::delete('/registers/{id}', [CashRegisterController::class, 'destroy'])
+            ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
     });
 
-    // FIX A-2: Usuarios — lectura Y escritura ahora protegidas por sesión activa.
-    Route::middleware(['role.admin'])->group(function () {
-        Route::apiResource('users', UserController::class);
-    });
+    Route::apiResource('users', UserController::class)
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_USERS);
 
-    // FIX S-1: Historial de turnos protegido — no puede ser consultado sin sesión activa.
-    // Solo /shifts/current sigue siendo pública (necesaria pre-login).
     Route::get('/shifts', [CashShiftController::class, 'index']);
 
-    // ── Métodos de pago y papelera (admin) ───────────────────────────
-    Route::apiResource('payment-methods', PaymentMethodController::class)->except(['index']);
-    Route::middleware(['role.or.pin'])->prefix('trash')->group(function () {
-        Route::get('/{model}', [TrashController::class, 'index']);
-        Route::post('/{model}/{id}/restore', [TrashController::class, 'restore']);
-        Route::delete('/{model}/{id}/force', [TrashController::class, 'forceDelete']);
+    // ── Métodos de pago y papelera ───────────────────────────────────
+    Route::apiResource('payment-methods', PaymentMethodController::class)->except(['index'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+    Route::prefix('trash')->group(function () {
+        Route::get('/{model}', [TrashController::class, 'index'])
+            ->middleware('permission.or.pin:' . Permissions::MANAGE_TRASH);
+        Route::post('/{model}/{id}/restore', [TrashController::class, 'restore'])
+            ->middleware('permission.or.pin:' . Permissions::MANAGE_TRASH);
+        Route::delete('/{model}/{id}/force', [TrashController::class, 'forceDelete'])
+            ->middleware('permission.or.pin:' . Permissions::MANAGE_TRASH);
     });
 
     // ── Auditoría (Kardex) ───────────────────────────────────────────
-    Route::middleware(['role.admin'])->prefix('audit')->group(function () {
-        Route::get('/stock', [StockController::class, 'kardex']);
+    Route::prefix('audit')->group(function () {
+        Route::get('/stock', [StockController::class, 'kardex'])
+            ->middleware('permission.or.pin:' . Permissions::VIEW_KARDEX);
     });
 
     // ── Módulo Presupuestos [hardware_store] ─────────────────────────
     Route::middleware(['feature:quotes'])->prefix('quotes')->group(function () {
-        Route::get('/', [QuoteController::class, 'index']);
-        Route::post('/', [QuoteController::class, 'store']);
-        Route::get('/number/{number}', [QuoteController::class, 'showByNumber']);
-        Route::get('/{quote}', [QuoteController::class, 'show']);
-        Route::patch('/{quote}/status', [QuoteController::class, 'updateStatus']);
-        Route::put('/{quote}', [QuoteController::class, 'update']);
-        Route::delete('/{quote}', [QuoteController::class, 'destroy']);
+        Route::get('/', [QuoteController::class, 'index'])
+            ->middleware('permission.or.pin:' . Permissions::MANAGE_QUOTES);
+        Route::post('/', [QuoteController::class, 'store'])
+            ->middleware('permission.or.pin:' . Permissions::MANAGE_QUOTES);
+        Route::get('/number/{number}', [QuoteController::class, 'showByNumber'])
+            ->middleware('permission.or.pin:' . Permissions::MANAGE_QUOTES);
+        Route::get('/{quote}', [QuoteController::class, 'show'])
+            ->middleware('permission.or.pin:' . Permissions::MANAGE_QUOTES);
+        Route::patch('/{quote}/status', [QuoteController::class, 'updateStatus'])
+            ->middleware('permission.or.pin:' . Permissions::MANAGE_QUOTES);
+        Route::put('/{quote}', [QuoteController::class, 'update'])
+            ->middleware('permission.or.pin:' . Permissions::MANAGE_QUOTES);
+        Route::delete('/{quote}', [QuoteController::class, 'destroy'])
+            ->middleware('permission.or.pin:' . Permissions::MANAGE_QUOTES);
     });
 
-    // ── Módulo de Reportes Gerenciales (ADMIN) ───────────────────────
-    Route::middleware(['role.admin'])->group(function () {
-        Route::get('/reports/sales-by-category/export', [ReportController::class, 'exportProfitByCategory']);
-        Route::get('/reports/sales-by-category/pdf', [ReportController::class, 'exportPdfByCategory']);
-        Route::get('/reports/sales-by-category', [ReportController::class, 'profitByCategory']);
-        Route::get('/reports/sales-by-brand', [ReportController::class, 'profitByBrand']);
-        Route::get('/reports/internal-consumption', [ReportController::class, 'internalConsumption']);
-        Route::get('/reports/monthly-balance/export', [ReportController::class, 'exportMonthlyBalanceExcel']);
-        Route::get('/reports/monthly-balance/pdf', [ReportController::class, 'exportMonthlyBalancePdf']);
-        Route::get('/reports/monthly-balance', [ReportController::class, 'monthlyBalance']);
+    // ── Módulo de Reportes Gerenciales ───────────────────────────────
+    Route::prefix('reports')->middleware('permission.or.pin:' . Permissions::VIEW_REPORTS)->group(function () {
+        Route::get('/sales-by-category/export', [ReportController::class, 'exportProfitByCategory']);
+        Route::get('/sales-by-category/pdf', [ReportController::class, 'exportPdfByCategory']);
+        Route::get('/sales-by-category', [ReportController::class, 'profitByCategory']);
+        Route::get('/sales-by-brand', [ReportController::class, 'profitByBrand']);
+        Route::get('/internal-consumption', [ReportController::class, 'internalConsumption']);
+        Route::get('/monthly-balance/export', [ReportController::class, 'exportMonthlyBalanceExcel']);
+        Route::get('/monthly-balance/pdf', [ReportController::class, 'exportMonthlyBalancePdf']);
+        Route::get('/monthly-balance', [ReportController::class, 'monthlyBalance']);
 
         Route::middleware(['feature:expenses'])->group(function () {
-            Route::get('/reports/expenses-analysis/export', [ReportController::class, 'exportExpensesAnalysisExcel']);
-            Route::get('/reports/expenses-analysis/pdf', [ReportController::class, 'exportExpensesAnalysisPdf']);
-            Route::get('/reports/expenses-analysis', [ReportController::class, 'expensesAnalysis']);
+            Route::get('/expenses-analysis/export', [ReportController::class, 'exportExpensesAnalysisExcel']);
+            Route::get('/expenses-analysis/pdf', [ReportController::class, 'exportExpensesAnalysisPdf']);
+            Route::get('/expenses-analysis', [ReportController::class, 'expensesAnalysis']);
         });
     });
 
@@ -216,7 +266,7 @@ Route::middleware(['session.validate'])->group(function () {
     Route::get('/inventory/alerts', [ProductController::class, 'inventoryAlerts']);
 
     // ── Módulo Logística (Remitos / Corralón) ──────────────────────────
-    Route::prefix('delivery-notes')->group(function () {
+    Route::prefix('delivery-notes')->middleware('permission.or.pin:' . Permissions::MANAGE_DELIVERY_NOTES)->group(function () {
         Route::get('/', [DeliveryNoteController::class, 'index']);
         Route::post('/from-sale/{saleId}', [DeliveryNoteController::class, 'generateFromSale']);
         Route::put('/{id}/deliver', [DeliveryNoteController::class, 'updateDelivery']);

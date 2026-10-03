@@ -66,6 +66,10 @@ class ProcessSaleRequest extends FormRequest
             // Remitos y Envios
             'requires_dispatch' => 'nullable|boolean',
             'fulfillment_status' => 'nullable|string|in:pending,delivered,cancelled',
+
+            // Autorización de descuento puntual
+            'discount_pin' => 'nullable|string|size:4|regex:/^[0-9]{4}$/',
+            'admin_pin' => 'nullable|string|min:4|max:10',
         ];
     }
 

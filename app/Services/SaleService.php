@@ -231,7 +231,13 @@ class SaleService
             // Revertir Cuenta Corriente
             $this->paymentService->revertCustomerTransactionsForVoid($lockedSale, $context);
 
-            $lockedSale->update(['status' => 'voided']);
+            $lockedSale->update([
+                'status' => 'voided',
+                'voided_by_user_id' => $context->userId,
+                'void_authorized_by_admin_id' => $context->authorizedByAdminId,
+                'voided_at' => now(),
+                'void_reason' => $context->voidReason,
+            ]);
 
             event(new SaleCompleted($lockedSale)); // Opcional, podría ser SaleVoided
 

@@ -185,6 +185,7 @@ class CustomerPaymentTest extends TestCase
     public function test_c_c04_abono_en_cheque_crea_third_party_check(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
+        $this->crearTurnoAbierto(user: $admin);
         $customer = Customer::create([
             'name' => 'Cliente Cheque',
             'document_number' => '55443322',

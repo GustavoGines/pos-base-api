@@ -38,9 +38,12 @@ class StockController extends Controller
                 }
 
                 // Registrar el movimiento solo si hubo cambio físico de stock
+                $actorUser = $request->user() ?? $request->attributes->get('authenticated_user');
                 StockMovement::create([
                     'product_id' => $product->id,
-                    'user_id' => $validated['user_id'] ?? $request->attributes->get('authenticated_user')?->id,
+                    'user_id' => $validated['user_id'] ?? $actorUser?->id,
+                    'authorized_by_admin_id' => $request->attributes->get('authorized_by_admin_id')
+                        ?? ($actorUser?->isAdmin() ? $actorUser->id : null),
                     'type' => $type,
                     'quantity' => $validated['quantity'],
                     'notes' => $validated['notes'] ?? 'Ajuste manual desde panel de control',

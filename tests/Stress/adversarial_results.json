@@ -1,0 +1,201 @@
+{
+    "mercadopago": [
+        {
+            "name": "Valid HMAC Signature",
+            "passed": true,
+            "details": "Standard valid signature returns true",
+            "vulnerability": null
+        },
+        {
+            "name": "Tampered Data ID",
+            "passed": true,
+            "details": "Tampered data ID correctly rejected",
+            "vulnerability": null
+        },
+        {
+            "name": "Tampered Request ID",
+            "passed": true,
+            "details": "Tampered request ID correctly rejected",
+            "vulnerability": null
+        },
+        {
+            "name": "Tampered Webhook Secret",
+            "passed": true,
+            "details": "Wrong secret correctly fails verification",
+            "vulnerability": null
+        },
+        {
+            "name": "Header: Empty Header",
+            "passed": true,
+            "details": "Output: false, expected: false",
+            "vulnerability": null
+        },
+        {
+            "name": "Header: Missing v1",
+            "passed": true,
+            "details": "Output: false, expected: false",
+            "vulnerability": null
+        },
+        {
+            "name": "Header: Missing ts",
+            "passed": true,
+            "details": "Output: false, expected: false",
+            "vulnerability": null
+        },
+        {
+            "name": "Header: Garbage string",
+            "passed": true,
+            "details": "Output: false, expected: false",
+            "vulnerability": null
+        },
+        {
+            "name": "Header: Malformed delimiter",
+            "passed": true,
+            "details": "Output: false, expected: false",
+            "vulnerability": null
+        },
+        {
+            "name": "Header: Reversed order",
+            "passed": true,
+            "details": "Output: true, expected: true",
+            "vulnerability": null
+        },
+        {
+            "name": "Header with spaces around equals (\"ts = ..., v1 = ...\")",
+            "passed": true,
+            "details": "Handled gracefully",
+            "vulnerability": null
+        },
+        {
+            "name": "Replay Attack Protection (30 days old timestamp)",
+            "passed": true,
+            "details": "Rejected stale webhook",
+            "vulnerability": null
+        },
+        {
+            "name": "Orders API Items Sum vs Total Invariant (Rounding Drift)",
+            "passed": true,
+            "details": "total_amount: 100.00 vs sum(items): 100.00 (diff: 0.00)",
+            "vulnerability": null
+        },
+        {
+            "name": "Orders API Global Discount Accommodation",
+            "passed": true,
+            "details": "total_amount: 900.00 vs sum(items): 900.00 (unallocated discount: 0.00)",
+            "vulnerability": null
+        }
+    ],
+    "afip": [
+        {
+            "name": "OpenSSL Pkey Generation without explicit OPENSSL_CONF",
+            "passed": false,
+            "details": "Failed: error:80000003:system library::No such process",
+            "vulnerability": "Windows PHP requires explicit OPENSSL_CONF path or configArgs array"
+        },
+        {
+            "name": "Private Key Matches Generated X.509 Certificate",
+            "passed": true,
+            "details": "openssl_x509_check_private_key passed",
+            "vulnerability": null
+        },
+        {
+            "name": "Mismatched Key Detection",
+            "passed": true,
+            "details": "openssl_x509_check_private_key rejected wrong key",
+            "vulnerability": null
+        },
+        {
+            "name": "OpenSSL PKCS#7 CMS Signing with realpath",
+            "passed": true,
+            "details": "TRA signed successfully with PKCS7_DETACHED",
+            "vulnerability": null
+        },
+        {
+            "name": "CMS Base64 Clean Extraction and DER Validation",
+            "passed": false,
+            "details": "Extracted 2797 bytes base64 (0 bytes DER)",
+            "vulnerability": null
+        },
+        {
+            "name": "AFIP CUIT Modulo 11 Verification Function",
+            "passed": true,
+            "details": "30708574836: VALID, test_afip CUIT (30712345678): INVALID (Synthetic test CUIT)",
+            "vulnerability": null
+        },
+        {
+            "name": "RG 4892\/2020 Fiscal QR Complete 13-Field Schema Check",
+            "passed": true,
+            "details": "All 13 RG 4892 fields present and correct types",
+            "vulnerability": null
+        },
+        {
+            "name": "RG 4892 Consumidor Final (DocTipo 99, nroDoc 0) Serialization",
+            "passed": true,
+            "details": "Correctly encodes anonymous consumer final voucher",
+            "vulnerability": null
+        },
+        {
+            "name": "WSFEv1 Tax Math (Clean Single 21% Rate)",
+            "passed": true,
+            "details": "Total: 1210.00 == Expected: 1210.00",
+            "vulnerability": null
+        },
+        {
+            "name": "WSFEv1 Multi-Item IVA Rounding Consistency",
+            "passed": true,
+            "details": "Net: 21.10 + IVA: 2.22 = Total: 23.32",
+            "vulnerability": null
+        },
+        {
+            "name": "WSFEv1 Factura C (Monotributo: ImpIVA=0, ImpNeto=Total)",
+            "passed": true,
+            "details": "Monotributo comprobante C zero-IVA invariant",
+            "vulnerability": null
+        }
+    ],
+    "summary": {
+        "total_tests": 30,
+        "passed": 28,
+        "failed": 2,
+        "vulnerabilities_found": [
+            {
+                "suite": "afip",
+                "test": "OpenSSL Pkey Generation without explicit OPENSSL_CONF",
+                "vulnerability": "Windows PHP requires explicit OPENSSL_CONF path or configArgs array",
+                "details": "Failed: error:80000003:system library::No such process"
+            }
+        ]
+    },
+    "remediation": [
+        {
+            "name": "Hardened MP: Resilient Whitespace Parsing",
+            "passed": true,
+            "details": "Parsed \"ts = ..., v1 = ...\" cleanly",
+            "vulnerability": null
+        },
+        {
+            "name": "Hardened MP: Replay Attack Blocked (Stale TS)",
+            "passed": true,
+            "details": "Stale webhook rejected by freshness window",
+            "vulnerability": null
+        },
+        {
+            "name": "Hardened MP: Rounding Reconciliation Invariant Check",
+            "passed": true,
+            "details": "total_amount (100.00) === sum(items) (100.00)",
+            "vulnerability": null
+        },
+        {
+            "name": "Hardened MP: Global Discount Reconciliation Invariant Check",
+            "passed": true,
+            "details": "total_amount (900.00) === sum(items) (900.00)",
+            "vulnerability": null
+        },
+        {
+            "name": "Hardened AFIP: Enveloped CMS (flags=0) Extraction",
+            "passed": true,
+            "details": "Valid ASN.1 DER CMS (1930 bytes, 2576 bytes base64, no MIME boundaries)",
+            "vulnerability": null
+        }
+    ]
+}

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Constants\Permissions;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -32,7 +33,7 @@ class UserController extends Controller
             'role' => 'required|in:admin,cashier',
             'pin' => 'required|string|size:4|regex:/^[0-9]{4}$/',
             'permissions' => 'nullable|array',
-            'permissions.*' => 'string|in:void_sales,manage_catalog,adjust_stock,view_global_history',
+            'permissions.*' => 'string|in:'.implode(',', Permissions::all()),
         ]);
 
         // Generar email único interno basado en el nombre
@@ -44,7 +45,7 @@ class UserController extends Controller
         }
 
         // Verificar que el PIN no exista en ningún otro usuario
-        $pinExists = User::whereNotNull('pin')->get()->first(function ($u) use ($validated) {
+        $pinExists = User::withoutGlobalScope('visible')->whereNotNull('pin')->get()->first(function ($u) use ($validated) {
             return Hash::check($validated['pin'], $u->pin);
         });
 
@@ -83,7 +84,7 @@ class UserController extends Controller
             'role' => 'required|in:admin,cashier',
             'pin' => 'nullable|string|size:4|regex:/^[0-9]{4}$/',
             'permissions' => 'nullable|array',
-            'permissions.*' => 'string|in:void_sales,manage_catalog,adjust_stock,view_global_history',
+            'permissions.*' => 'string|in:'.implode(',', Permissions::all()),
         ]);
 
         $data = [
@@ -94,7 +95,7 @@ class UserController extends Controller
 
         // Si viene nuevo PIN, verificar que no lo use ya otro usuario distinto
         if (! empty($validated['pin'])) {
-            $pinExists = User::where('id', '!=', $user->id)->whereNotNull('pin')->get()->first(function ($u) use ($validated) {
+            $pinExists = User::withoutGlobalScope('visible')->where('id', '!=', $user->id)->whereNotNull('pin')->get()->first(function ($u) use ($validated) {
                 return Hash::check($validated['pin'], $u->pin);
             });
 

@@ -21,6 +21,8 @@ class ThirdPartyCheck extends Model
         'cash_shift_id',
         'status',
         'endorsement_note',
+        'status_changed_by_user_id',
+        'status_authorized_by_admin_id',
     ];
 
     protected $casts = [
@@ -47,5 +49,15 @@ class ThirdPartyCheck extends Model
     public function supplier(): BelongsTo
     {
         return $this->belongsTo(Supplier::class);
+    }
+
+    public function statusChangedByUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'status_changed_by_user_id');
+    }
+
+    public function statusAuthorizedByAdmin(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'status_authorized_by_admin_id');
     }
 }

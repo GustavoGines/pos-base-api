@@ -276,7 +276,7 @@ class CustomerController extends Controller
 
                     $trx = CustomerTransaction::create([
                         'customer_id' => $lockedCustomer->id,
-                        'user_id' => $request->attributes->get('authenticated_user')?->id ?? User::first()?->id ?? 1,
+                        'user_id' => $request->user()?->id ?? $request->attributes->get('authenticated_user')?->id ?? User::first()?->id ?? 1,
                         'cash_shift_id' => $activeShift ? $activeShift->id : null,
                         'sale_id' => count($processedSales) === 1 ? $processedSales[0] : null,
                         'type' => $isRefund ? 'refund' : 'payment',

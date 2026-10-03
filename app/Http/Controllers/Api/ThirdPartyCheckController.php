@@ -59,6 +59,11 @@ class ThirdPartyCheckController extends Controller
                 $lockedCheck->endorsement_note = $request->endorsement_note;
             }
 
+            $user = $request->user() ?? $request->attributes->get('authenticated_user');
+            $lockedCheck->status_changed_by_user_id = $user?->id;
+            $lockedCheck->status_authorized_by_admin_id = $request->attributes->get('authorized_by_admin_id')
+                ?? ($user?->isAdmin() ? $user->id : null);
+
             $lockedCheck->save();
             $lockedCheck->load(['customer:id,name', 'supplier:id,name']);
 

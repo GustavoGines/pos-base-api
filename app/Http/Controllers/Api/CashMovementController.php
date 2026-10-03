@@ -14,6 +14,7 @@ use App\Services\ReportCacheService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 use Maatwebsite\Excel\Facades\Excel;
 
@@ -115,26 +116,56 @@ class CashMovementController extends Controller
         }
 
         $validated = $request->validated();
-        $user = $request->attributes->get('authenticated_user');
+        $user = $request->user() ?? $request->attributes->get('authenticated_user');
         $authorizedBy = $request->attributes->get('authorized_by_admin_id');
 
-        // Seguridad: Los Retiros exigen rol de admin o autorización por PIN (X-Admin-Pin verificado por otro middleware? No, porque la ruta es pública. Validemos acá.)
+        // Seguridad: Los Retiros exigen rol de admin o autorización por PIN
         if ($validated['type'] === 'withdrawal') {
-            if ($user->role !== 'admin') {
-                // Verificar si mandó el PIN en la cabecera
-                $adminPin = $request->header('X-Admin-Pin');
-                if (! $adminPin) {
-                    return response()->json(['message' => 'Los retiros de dinero requieren PIN de administrador.'], 403);
+            if (! ($user && ($user->isAdmin() || $user->hasPermission('all')))) {
+                $rawHeaderPin = $request->header('X-Admin-Pin');
+                $rawBodyPin = $request->input('admin_pin');
+                $adminPin = (is_string($rawHeaderPin) && trim($rawHeaderPin) !== '')
+                    ? trim($rawHeaderPin)
+                    : ((is_string($rawBodyPin) && trim($rawBodyPin) !== '') ? trim($rawBodyPin) : null);
+
+                if ($adminPin === null) {
+                    return response()->json([
+                        'message' => 'Los retiros de dinero requieren PIN de administrador.',
+                        'error_code' => 'PIN_REQUIRED',
+                    ], 403);
                 }
 
-                $admin = User::where('role', 'admin')->whereNotNull('pin')->get()->first(function ($a) use ($adminPin) {
-                    return Hash::check($adminPin, $a->pin);
-                });
+                $throttleKey = 'pin_attempts:' . ($user ? $user->id : 'guest') . ':' . $request->ip();
+                if (RateLimiter::tooManyAttempts($throttleKey, 5)) {
+                    $seconds = RateLimiter::availableIn($throttleKey);
+
+                    return response()->json([
+                        'message' => "Demasiados intentos erróneos de PIN. Operación bloqueada temporalmente por {$seconds} segundos.",
+                        'error_code' => 'PIN_LOCKED_TEMPORARILY',
+                        'retry_after' => $seconds,
+                    ], 429);
+                }
+
+                $admin = User::withoutGlobalScope('visible')
+                    ->where('role', 'admin')
+                    ->whereNotNull('pin')
+                    ->get()
+                    ->first(function ($a) use ($adminPin) {
+                        return Hash::check($adminPin, $a->pin);
+                    });
 
                 if (! $admin) {
-                    return response()->json(['message' => 'PIN de administrador inválido para retiro.'], 403);
+                    RateLimiter::hit($throttleKey, 300);
+
+                    return response()->json([
+                        'message' => 'PIN de administrador inválido para retiro.',
+                        'error_code' => 'INVALID_ADMIN_PIN',
+                    ], 403);
                 }
+
+                RateLimiter::clear($throttleKey);
                 $authorizedBy = $admin->id;
+                $request->attributes->set('authorized_by_admin_id', $admin->id);
             } else {
                 $authorizedBy = $user->id;
             }

@@ -213,9 +213,9 @@ class CashShiftService
         ];
     }
 
-    public function closeShift(int $shiftId, float $actualBalance, ?int $closerUserId = null): CashShift
+    public function closeShift(int $shiftId, float $actualBalance, ?int $closerUserId = null, ?int $differenceAuthorizedByAdminId = null): CashShift
     {
-        return DB::transaction(function () use ($shiftId, $actualBalance, $closerUserId) {
+        return DB::transaction(function () use ($shiftId, $actualBalance, $closerUserId, $differenceAuthorizedByAdminId) {
             $shift = CashShift::where('id', $shiftId)
                 ->where('status', 'open')
                 ->lockForUpdate()
@@ -233,6 +233,7 @@ class CashShiftService
                 'expected_balance' => $totals['expected_balance'],
                 'actual_balance' => $actualBalance,
                 'difference' => $difference,
+                'difference_authorized_by_admin_id' => $differenceAuthorizedByAdminId,
                 'cash_sales' => $totals['cash_sales'],
                 'card_sales' => $totals['card_sales'],
                 'transfer_sales' => $totals['transfer_sales'],
