@@ -36,7 +36,7 @@ class PosController extends Controller
                     $q->orWhere('id', $query);
                 }
             })
-            ->with(['children', 'priceTiers', 'category', 'brand'])
+            ->with(['children', 'priceTiers', 'category.rubro', 'brand'])
             ->get();
 
         return response()->json($products);

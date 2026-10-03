@@ -38,7 +38,7 @@ class UpdateProductRequest extends FormRequest
             'is_sold_by_weight' => 'boolean',
             'unit_type' => 'sometimes|in:un,kg,lt,g',
             'vencimiento_dias' => 'nullable|integer|min:1|max:3650',
-            'category_id' => 'nullable|exists:categories,id',
+            'category_id' => ['nullable', 'integer', 'exists:categories,id'],
             'brand_id' => 'nullable|exists:brands,id',
             'supplier_id' => 'nullable|exists:suppliers,id',
             'is_combo' => 'boolean',

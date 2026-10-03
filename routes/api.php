@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\PosController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\QuoteController;
+use App\Http\Controllers\Api\RubroController;
 use App\Http\Controllers\Api\SalesController;
 use App\Http\Controllers\Api\SettingController;
 use App\Http\Controllers\Api\StockController;
@@ -76,6 +77,8 @@ Route::get('/catalog/products/alerts/critical', [ProductController::class, 'crit
 Route::get('/catalog/products/stock', [ProductController::class, 'stockBulk']);
 Route::apiResource('catalog/products', ProductController::class)->only(['index', 'show']);
 Route::get('/catalog/categories', [CategoryController::class, 'index']);
+Route::get('/catalog/rubros', [RubroController::class, 'index']);
+Route::get('/catalog/rubros/{rubro}', [RubroController::class, 'show']);
 Route::get('/catalog/brands', [BrandController::class, 'index']);
 // FIX A-2: GET /users era pública y exponía nombres y roles sin sesión.
 // Ahora la lista de usuarios solo se puede obtener con un token válido.
@@ -90,6 +93,14 @@ Route::middleware(['session.validate'])->group(function () {
 
     // ── 1. CONFIGURACIÓN Y ADMINISTRACIÓN ─────────────────────────────
     Route::put('/settings', [SettingController::class, 'update'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+    Route::get('/settings/integrations', [SettingController::class, 'integrations'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+    Route::put('/settings/integrations', [SettingController::class, 'updateIntegrations'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+    Route::post('/settings/afip/certificates', [SettingController::class, 'uploadAfipCertificates'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+    Route::post('/settings/afip/upload-certificates', [SettingController::class, 'uploadAfipCertificates'])
         ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
 
     // ── POS: Procesar venta (CRÍTICO) ────────────────────────────────
@@ -190,6 +201,10 @@ Route::middleware(['session.validate'])->group(function () {
         ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
     Route::apiResource('catalog/categories', CategoryController::class)->except(['index'])
         ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+    Route::middleware(['feature:multi_rubro'])->group(function () {
+        Route::apiResource('catalog/rubros', RubroController::class)->except(['index', 'show'])
+            ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+    });
     Route::apiResource('catalog/brands', BrandController::class)->except(['index'])
         ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
 

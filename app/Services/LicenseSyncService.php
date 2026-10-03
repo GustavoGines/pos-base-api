@@ -27,6 +27,19 @@ class LicenseSyncService
     }
 
     /**
+     * Alinea el Rubro principal del sistema con el tipo de negocio de la licencia.
+     * Un fallo aquí jamás debe interrumpir la sincronización de licencia y flags.
+     */
+    private function syncSystemRubro(?string $businessType): void
+    {
+        try {
+            app(SystemRubroSyncService::class)->sync($businessType);
+        } catch (\Throwable $e) {
+            Log::error('Error al sincronizar el rubro principal con el tipo de negocio: '.$e->getMessage());
+        }
+    }
+
+    /**
      * Normaliza los addons del servidor de licencias a los nombres internos del sistema.
      * El servidor puede enviar alias distintos (ej: 'z_reports') que el sistema
      * Flutter espera bajo otro nombre ('advanced_reports').
@@ -103,6 +116,7 @@ class LicenseSyncService
 
                 // [feature-flag] Tipo de negocio — persiste en BD local para que el Flutter lo lea offline
                 $this->setSetting('license_business_type', $data['business_type'] ?? 'retail');
+                $this->syncSystemRubro($data['business_type'] ?? 'retail');
 
                 // Metadatos de suscripción extendidos
                 $this->setSetting('license_expires_at', $data['expires_at'] ?? null);
@@ -121,6 +135,7 @@ class LicenseSyncService
                     $features['suppliers'] = true;
                     $features['expenses'] = true;
                     $features['advanced_reports'] = true;
+                    $features['multi_rubro'] = true;
 
                     $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store' || ! empty($features['quotes']);
                     if ($isHardwareStore) {
@@ -211,6 +226,7 @@ class LicenseSyncService
 
                 // [feature-flag] Tipo de negocio
                 $this->setSetting('license_business_type', $data['business_type'] ?? 'retail');
+                $this->syncSystemRubro($data['business_type'] ?? 'retail');
 
                 // Metadatos extendidos
                 $this->setSetting('license_expires_at', $data['expires_at'] ?? null);
@@ -232,6 +248,7 @@ class LicenseSyncService
                     $features['multiple_prices'] = true;
                     $features['cheques'] = true;
                     $features['predictive_alerts'] = true;
+                    $features['multi_rubro'] = true;
 
                     $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store';
 
@@ -292,6 +309,7 @@ class LicenseSyncService
                 if (in_array($planLower, ['premium', 'pro'])) {
                     $features['multi_caja'] = $features['multi_caja'] ?? true;
                     $features['advanced_reports'] = $features['advanced_reports'] ?? true;
+                    $features['multi_rubro'] = $features['multi_rubro'] ?? true;
 
                     $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store' || ! empty($features['quotes']);
                     if ($isHardwareStore) {
@@ -312,6 +330,7 @@ class LicenseSyncService
 
                 // [feature-flag] Tipo de negocio — se persiste en la BD local para modo offline
                 $this->setSetting('license_business_type', $data['business_type'] ?? 'retail');
+                $this->syncSystemRubro($data['business_type'] ?? 'retail');
 
                 // Metadatos extendidos
                 $this->setSetting('license_expires_at', $data['expires_at'] ?? null);

@@ -15,7 +15,7 @@ class ProductController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Product::with(['category', 'brand', 'supplier', 'children', 'priceTiers']);
+        $query = Product::with(['category.rubro', 'brand', 'supplier', 'children', 'priceTiers']);
 
         if ($search = $request->query('search')) {
             $like = '%'.$search.'%';
@@ -108,12 +108,12 @@ class ProductController extends Controller
             $this->syncPriceTiers($product, $request->price_tiers ?? []);
         }
 
-        return response()->json($product->load(['category', 'brand', 'supplier', 'children', 'priceTiers']), 201);
+        return response()->json($product->load(['category.rubro', 'brand', 'supplier', 'children', 'priceTiers']), 201);
     }
 
     public function show(Product $product)
     {
-        return response()->json($product->load(['category', 'brand', 'supplier', 'children', 'priceTiers']));
+        return response()->json($product->load(['category.rubro', 'brand', 'supplier', 'children', 'priceTiers']));
     }
 
     public function update(UpdateProductRequest $request, Product $product, BarcodeService $barcodeService)
@@ -183,7 +183,7 @@ class ProductController extends Controller
             $this->syncPriceTiers($product, $request->price_tiers ?? []);
         }
 
-        return response()->json($product->load(['category', 'brand', 'supplier', 'children', 'priceTiers']));
+        return response()->json($product->load(['category.rubro', 'brand', 'supplier', 'children', 'priceTiers']));
     }
 
     public function destroy(Product $product)
