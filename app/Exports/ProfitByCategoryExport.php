@@ -22,25 +22,34 @@ class ProfitByCategoryExport implements FromCollection, ShouldAutoSize, WithColu
 
     protected $type;
 
+    protected $rubroFilter;
+
     protected SalesAnalyticsRepository $repository;
 
-    public function __construct($startDate, $endDate, $type = 'category', ?SalesAnalyticsRepository $repository = null)
+    public function __construct($startDate, $endDate, $type = 'category', ?SalesAnalyticsRepository $repository = null, mixed $rubroFilter = null)
     {
         $this->startDate = $startDate;
         $this->endDate = $endDate;
         $this->type = $type;
         $this->repository = $repository ?? app(SalesAnalyticsRepository::class);
+        $this->rubroFilter = $rubroFilter;
     }
 
     public function collection()
     {
-        return $this->repository->getProfitReport($this->startDate, $this->endDate, $this->type);
+        return $this->repository->getProfitReport($this->startDate, $this->endDate, $this->type, $this->rubroFilter);
     }
 
     public function headings(): array
     {
+        $label = match ($this->type) {
+            'brand' => 'Marca',
+            'rubro' => 'Rubro',
+            default => 'Categoría',
+        };
+
         return [
-            $this->type === 'brand' ? 'Marca' : 'Categoría',
+            $label,
             'Cantidad Vendida',
             'Facturación',
             'Ganancia Neta',
@@ -55,8 +64,10 @@ class ProfitByCategoryExport implements FromCollection, ShouldAutoSize, WithColu
         $totalProfit = (float) ($data['total_profit'] ?? 0);
         $margin = $revenueWithCost > 0 ? ($totalProfit / $revenueWithCost) : 0;
 
+        $groupName = $data['rubro_name'] ?? $data['group_name'] ?? $data['category_name'] ?? '';
+
         return [
-            $data['category_name'] ?? '',
+            $groupName,
             (float) ($data['items_sold'] ?? 0),
             (float) ($data['total_revenue'] ?? 0),
             (float) ($data['total_profit'] ?? 0),

@@ -265,6 +265,11 @@ Route::middleware(['session.validate'])->group(function () {
         Route::get('/sales-by-category/pdf', [ReportController::class, 'exportPdfByCategory']);
         Route::get('/sales-by-category', [ReportController::class, 'profitByCategory']);
         Route::get('/sales-by-brand', [ReportController::class, 'profitByBrand']);
+        Route::middleware(['feature:multi_rubro'])->group(function () {
+            Route::get('/sales-by-rubro/export', [ReportController::class, 'exportProfitByRubro']);
+            Route::get('/sales-by-rubro/pdf', [ReportController::class, 'exportPdfByRubro']);
+            Route::get('/sales-by-rubro', [ReportController::class, 'profitByRubro']);
+        });
         Route::get('/internal-consumption', [ReportController::class, 'internalConsumption']);
         Route::get('/monthly-balance/export', [ReportController::class, 'exportMonthlyBalanceExcel']);
         Route::get('/monthly-balance/pdf', [ReportController::class, 'exportMonthlyBalancePdf']);

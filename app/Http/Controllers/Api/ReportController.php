@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Exports\ExpensesAnalysisExport;
 use App\Exports\MonthlyBalanceExport;
 use App\Exports\ProfitByCategoryExport;
+use App\Exports\ProfitByRubroExport;
 use App\Http\Controllers\Controller;
 use App\Models\SaleItem;
 use App\Repositories\SalesAnalyticsRepository;
@@ -45,10 +46,86 @@ class ReportController extends Controller
         });
     }
 
+    private function ensureMultiRubroEnabled(): ?\Illuminate\Http\JsonResponse
+    {
+        $featuresJson = DB::table('business_settings')
+            ->where('key', 'license_features_dict')
+            ->value('value');
+
+        $features = [];
+        if (! empty($featuresJson)) {
+            $decoded = json_decode($featuresJson, true);
+            if (is_array($decoded)) {
+                $features = $decoded;
+            }
+        }
+
+        if (! isset($features['multi_rubro']) || $features['multi_rubro'] !== true) {
+            return response()->json([
+                'message' => "La licencia activa no incluye el módulo requerido: 'multi_rubro'. Actualice su plan.",
+                'error_code' => 'FEATURE_NOT_LICENSED',
+                'required' => 'multi_rubro',
+            ], 403);
+        }
+
+        return null;
+    }
+
+    private function normalizeRubroFilter(mixed $rubroFilter): ?string
+    {
+        if ($rubroFilter === null || $rubroFilter === '' || $rubroFilter === []) {
+            return null;
+        }
+
+        $rawIds = is_array($rubroFilter) ? $rubroFilter : [$rubroFilter];
+        $ids = [];
+        foreach ($rawIds as $item) {
+            if (is_string($item) && str_contains($item, ',')) {
+                $ids = array_merge($ids, explode(',', $item));
+            } else {
+                $ids[] = $item;
+            }
+        }
+
+        $cleanIds = array_values(array_unique(array_filter(array_map('intval', $ids), fn ($id) => $id > 0)));
+
+        if (empty($cleanIds)) {
+            return 'empty';
+        }
+
+        sort($cleanIds);
+
+        return implode('_', $cleanIds);
+    }
+
+    private function normalizeDateRange(string $startDate, string $endDate): array
+    {
+        $start = Carbon::parse($startDate)->toDateString();
+        $end = Carbon::parse($endDate)->toDateString();
+        if (Carbon::parse($start)->gt(Carbon::parse($end))) {
+            return [$end, $start];
+        }
+
+        return [$start, $end];
+    }
+
+    private function getProfitByRubroDataArray(string $startDate, string $endDate, mixed $rubroFilter = null): Collection
+    {
+        [$start, $end] = $this->normalizeDateRange($startDate, $endDate);
+
+        $cacheSuffix = $this->normalizeRubroFilter($rubroFilter) ?? 'all';
+        $cacheKey = ReportCacheService::key('profit_rubro', $start, $end, $cacheSuffix);
+
+        return ReportCacheService::remember($cacheKey, 900, function () use ($start, $end, $rubroFilter) {
+            return $this->analyticsRepo->getProfitReport($start, $end, 'rubro', $rubroFilter);
+        });
+    }
+
     // ─── Endpoint: JSON para el Dashboard Flutter ─────────────────────────────
 
     private function getCommonStatsAndDailySales(string $startDate, string $endDate)
     {
+        [$startDate, $endDate] = $this->normalizeDateRange($startDate, $endDate);
         $start = Carbon::parse($startDate);
         $end = Carbon::parse($endDate);
         $diffDays = $start->diffInDays($end) + 1;
@@ -146,13 +223,81 @@ class ReportController extends Controller
         ]);
     }
 
+    public function profitByRubro(Request $request)
+    {
+        if ($response = $this->ensureMultiRubroEnabled()) {
+            return $response;
+        }
+
+        $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
+        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        [$startDate, $endDate] = $this->normalizeDateRange($startDate, $endDate);
+
+        $rubroFilter = $request->query('rubro_ids');
+        if ($rubroFilter === null || $rubroFilter === '' || $rubroFilter === []) {
+            $rubroFilter = $request->query('rubro_id');
+        }
+
+        $common = $this->getCommonStatsAndDailySales($startDate, $endDate);
+        $report = $this->getProfitByRubroDataArray($startDate, $endDate, $rubroFilter);
+
+        return response()->json([
+            'start_date' => $startDate,
+            'end_date' => $endDate,
+            'previous_period' => [
+                'start_date' => $common['prevStart'],
+                'end_date' => $common['prevEnd'],
+                'revenue' => (float) ($common['prevStats']->total_revenue ?? 0),
+                'profit' => (float) ($common['prevStats']->total_profit ?? 0),
+            ],
+            'daily_evolution' => $common['dailySales'],
+            'data' => $report,
+        ]);
+    }
+
     // ─── Endpoint: Exportar Excel ─────────────────────────────────────────────
+
+    public function exportProfitByRubro(Request $request)
+    {
+        if ($response = $this->ensureMultiRubroEnabled()) {
+            return $response;
+        }
+
+        $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
+        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        [$startDate, $endDate] = $this->normalizeDateRange($startDate, $endDate);
+
+        $rubroFilter = $request->query('rubro_ids');
+        if ($rubroFilter === null || $rubroFilter === '' || $rubroFilter === []) {
+            $rubroFilter = $request->query('rubro_id');
+        }
+
+        return Excel::download(
+            new ProfitByRubroExport($startDate, $endDate, $rubroFilter),
+            'reporte_ganancias_rubros.xlsx'
+        );
+    }
 
     public function exportProfitByCategory(Request $request)
     {
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
         $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
         $type = $request->query('type', 'category');
+
+        if ($type === 'rubro') {
+            if ($response = $this->ensureMultiRubroEnabled()) {
+                return $response;
+            }
+            [$startDate, $endDate] = $this->normalizeDateRange($startDate, $endDate);
+            $rubroFilter = $request->query('rubro_ids');
+            if ($rubroFilter === null || $rubroFilter === '' || $rubroFilter === []) {
+                $rubroFilter = $request->query('rubro_id');
+            }
+            return Excel::download(
+                new ProfitByRubroExport($startDate, $endDate, $rubroFilter),
+                'reporte_ganancias_rubros.xlsx'
+            );
+        }
 
         $filename = $type === 'brand' ? 'reporte_ganancias_marcas.xlsx' : 'reporte_ganancias_categorias.xlsx';
 
@@ -164,19 +309,23 @@ class ReportController extends Controller
 
     // ─── Endpoint: Exportar PDF ───────────────────────────────────────────────
 
-    public function exportPdfByCategory(Request $request)
+    public function exportPdfByRubro(Request $request)
     {
+        if ($response = $this->ensureMultiRubroEnabled()) {
+            return $response;
+        }
+
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
         $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
-        $type = $request->query('type', 'category');
+        [$startDate, $endDate] = $this->normalizeDateRange($startDate, $endDate);
 
-        if ($type === 'brand') {
-            $data = $this->getProfitByBrandDataArray($startDate, $endDate);
-            $reportTitle = 'Reporte de Rentabilidad por Marca';
-        } else {
-            $data = $this->getProfitDataArray($startDate, $endDate);
-            $reportTitle = 'Reporte de Rentabilidad por Categoría';
+        $rubroFilter = $request->query('rubro_ids');
+        if ($rubroFilter === null || $rubroFilter === '' || $rubroFilter === []) {
+            $rubroFilter = $request->query('rubro_id');
         }
+
+        $data = $this->getProfitByRubroDataArray($startDate, $endDate, $rubroFilter);
+        $reportTitle = 'Reporte de Rentabilidad por Rubro';
 
         $totalRevenue = $data->sum('total_revenue');
         $totalProfit = $data->sum('total_profit');
@@ -185,7 +334,7 @@ class ReportController extends Controller
         $avgMargin = $totalWithCost > 0 ? ($totalProfit / $totalWithCost) * 100 : 0;
 
         $salesByPlan = DB::table('sales')
-            ->selectRaw('COALESCE(price_list, "base") as plan_name, COUNT(*) as total_tickets, SUM(total) as total_revenue')
+            ->selectRaw("COALESCE(price_list, 'base') as plan_name, COUNT(*) as total_tickets, SUM(total) as total_revenue")
             ->whereBetween('created_at', [Carbon::parse($startDate)->startOfDay(), Carbon::parse($endDate)->endOfDay()])
             ->where('status', 'completed')
             ->whereNotExists(function ($query) {
@@ -194,13 +343,14 @@ class ReportController extends Controller
                     ->whereColumn('customers.id', 'sales.customer_id')
                     ->where('customers.is_internal_account', true);
             })
-            ->groupByRaw('COALESCE(price_list, "base")')
+            ->groupByRaw("COALESCE(price_list, 'base')")
             ->orderByDesc('total_revenue')
             ->get();
 
         $pdf = Pdf::loadView('reports.pdf_profit', [
             'data' => $data,
             'reportTitle' => $reportTitle,
+            'groupLabel' => 'Rubro',
             'startDate' => $startDate,
             'endDate' => $endDate,
             'totalRevenue' => $totalRevenue,
@@ -211,7 +361,78 @@ class ReportController extends Controller
             'generatedAt' => Carbon::now()->format('d/m/Y H:i'),
         ])->setPaper('a4', 'portrait');
 
-        return $pdf->download('reporte_ganancias_'.$startDate.'_'.$endDate.'.pdf');
+        return $pdf->download('reporte_ganancias_rubros_'.$startDate.'_'.$endDate.'.pdf');
+    }
+
+    public function exportPdfByCategory(Request $request)
+    {
+        $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
+        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        $type = $request->query('type', 'category');
+
+        if ($type === 'brand') {
+            $data = $this->getProfitByBrandDataArray($startDate, $endDate);
+            $reportTitle = 'Reporte de Rentabilidad por Marca';
+            $groupLabel = 'Marca';
+        } elseif ($type === 'rubro') {
+            if ($response = $this->ensureMultiRubroEnabled()) {
+                return $response;
+            }
+            [$startDate, $endDate] = $this->normalizeDateRange($startDate, $endDate);
+            $rubroFilter = $request->query('rubro_ids');
+            if ($rubroFilter === null || $rubroFilter === '' || $rubroFilter === []) {
+                $rubroFilter = $request->query('rubro_id');
+            }
+            $data = $this->getProfitByRubroDataArray($startDate, $endDate, $rubroFilter);
+            $reportTitle = 'Reporte de Rentabilidad por Rubro';
+            $groupLabel = 'Rubro';
+        } else {
+            $data = $this->getProfitDataArray($startDate, $endDate);
+            $reportTitle = 'Reporte de Rentabilidad por Categoría';
+            $groupLabel = 'Categoría';
+        }
+
+        $totalRevenue = $data->sum('total_revenue');
+        $totalProfit = $data->sum('total_profit');
+        $totalWithCost = $data->sum('revenue_with_cost');
+        $totalCost = $totalWithCost - $data->sum('total_profit');
+        $avgMargin = $totalWithCost > 0 ? ($totalProfit / $totalWithCost) * 100 : 0;
+
+        $salesByPlan = DB::table('sales')
+            ->selectRaw("COALESCE(price_list, 'base') as plan_name, COUNT(*) as total_tickets, SUM(total) as total_revenue")
+            ->whereBetween('created_at', [Carbon::parse($startDate)->startOfDay(), Carbon::parse($endDate)->endOfDay()])
+            ->where('status', 'completed')
+            ->whereNotExists(function ($query) {
+                $query->select(DB::raw(1))
+                    ->from('customers')
+                    ->whereColumn('customers.id', 'sales.customer_id')
+                    ->where('customers.is_internal_account', true);
+            })
+            ->groupByRaw("COALESCE(price_list, 'base')")
+            ->orderByDesc('total_revenue')
+            ->get();
+
+        $pdf = Pdf::loadView('reports.pdf_profit', [
+            'data' => $data,
+            'reportTitle' => $reportTitle,
+            'groupLabel' => $groupLabel,
+            'startDate' => $startDate,
+            'endDate' => $endDate,
+            'totalRevenue' => $totalRevenue,
+            'totalProfit' => $totalProfit,
+            'totalCost' => $totalCost,
+            'avgMargin' => $avgMargin,
+            'salesByPlan' => $salesByPlan,
+            'generatedAt' => Carbon::now()->format('d/m/Y H:i'),
+        ])->setPaper('a4', 'portrait');
+
+        $filePrefix = match ($type) {
+            'brand' => 'reporte_ganancias_marcas_',
+            'rubro' => 'reporte_ganancias_rubros_',
+            default => 'reporte_ganancias_categorias_',
+        };
+
+        return $pdf->download($filePrefix.$startDate.'_'.$endDate.'.pdf');
     }
 
     // ─── Endpoint: Balance Mensual Flexible ──────────────────────────────────

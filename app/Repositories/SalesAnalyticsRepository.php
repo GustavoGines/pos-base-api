@@ -10,25 +10,64 @@ use Illuminate\Support\Facades\DB;
 class SalesAnalyticsRepository
 {
     /**
-     * Obtiene el reporte de rentabilidad agrupado por Categoría o Marca.
+     * Obtiene el reporte de rentabilidad agrupado por Rubro, Categoría o Marca.
      *
      * @param  string  $startDate  Fecha inicio (Y-m-d)
      * @param  string  $endDate  Fecha fin (Y-m-d)
-     * @param  string  $groupBy  'category' o 'brand'
+     * @param  string  $groupBy  'category', 'brand' o 'rubro'
+     * @param  mixed   $rubroFilter  ID único o array de IDs de rubros para filtrar/comparar
      */
-    public function getProfitReport(string $startDate, string $endDate, string $groupBy = 'category'): Collection
+    public function getProfitReport(string $startDate, string $endDate, string $groupBy = 'category', mixed $rubroFilter = null): Collection
     {
         $query = SaleItem::join('sales', 'sales.id', '=', 'sale_items.sale_id')
             ->join('products', 'products.id', '=', 'sale_items.product_id');
 
-        if ($groupBy === 'brand') {
+        if ($groupBy === 'rubro') {
+            $query->leftJoin('categories', 'categories.id', '=', 'products.category_id')
+                ->leftJoin('rubros', 'rubros.id', '=', 'categories.rubro_id')
+                ->selectRaw("COALESCE(rubros.name, 'Sin Rubro') as group_name, rubros.id as group_id, products.id as product_id, products.name as product_name");
+            $groupFields = ['rubros.id', 'rubros.name'];
+        } elseif ($groupBy === 'brand') {
             $query->leftJoin('brands', 'brands.id', '=', 'products.brand_id')
-                ->selectRaw('COALESCE(brands.name, "Sin Marca") as group_name, products.brand_id as group_id, products.id as product_id, products.name as product_name');
+                ->selectRaw("COALESCE(brands.name, 'Sin Marca') as group_name, products.brand_id as group_id, products.id as product_id, products.name as product_name");
             $groupFields = ['products.brand_id', 'brands.name'];
         } else {
             $query->leftJoin('categories', 'categories.id', '=', 'products.category_id')
-                ->selectRaw('COALESCE(categories.name, "Sin Categoría") as group_name, products.category_id as group_id, products.id as product_id, products.name as product_name');
+                ->selectRaw("COALESCE(categories.name, 'Sin Categoría') as group_name, products.category_id as group_id, products.id as product_id, products.name as product_name");
             $groupFields = ['products.category_id', 'categories.name'];
+        }
+
+        if ($rubroFilter !== null && $rubroFilter !== '' && $rubroFilter !== []) {
+            $rawIds = is_array($rubroFilter) ? $rubroFilter : [$rubroFilter];
+            $ids = [];
+            foreach ($rawIds as $item) {
+                if (is_string($item) && str_contains($item, ',')) {
+                    $ids = array_merge($ids, explode(',', $item));
+                } else {
+                    $ids[] = $item;
+                }
+            }
+
+            $cleanIds = array_values(array_unique(array_filter(array_map('intval', $ids), fn ($id) => $id > 0)));
+
+            if (!empty($cleanIds)) {
+                if ($groupBy === 'rubro') {
+                    $query->whereIn('rubros.id', $cleanIds);
+                } elseif ($groupBy === 'category') {
+                    $query->whereIn('categories.rubro_id', $cleanIds);
+                } else {
+                    $query->leftJoin('categories as filter_categories', 'filter_categories.id', '=', 'products.category_id');
+                    $query->whereIn('filter_categories.rubro_id', $cleanIds);
+                }
+            } else {
+                $query->whereRaw('1 = 0');
+            }
+        }
+
+        $start = Carbon::parse($startDate)->startOfDay();
+        $end = Carbon::parse($endDate)->endOfDay();
+        if ($start->gt($end)) {
+            [$start, $end] = [Carbon::parse($endDate)->startOfDay(), Carbon::parse($startDate)->endOfDay()];
         }
 
         $productStats = $query->selectRaw('
@@ -58,7 +97,7 @@ class SalesAnalyticsRepository
                 END) as items_with_cost,
                 COUNT(*) as total_items
             ')
-            ->whereBetween('sales.created_at', [Carbon::parse($startDate)->startOfDay(), Carbon::parse($endDate)->endOfDay()])
+            ->whereBetween('sales.created_at', [$start, $end])
             ->where('sales.status', 'completed')
             ->whereNotExists(function ($q) {
                 $q->select(DB::raw(1))
@@ -70,22 +109,28 @@ class SalesAnalyticsRepository
             ->get();
 
         return $productStats->groupBy('group_name')->map(function ($items, $groupName) {
+            $groupId = $items->first()->group_id ?? null;
+
             return [
                 'category_name' => $groupName, // Manteniendo key legacy para el frontend
-                'items_sold' => $items->sum('items_sold'),
-                'total_revenue' => $items->sum('total_revenue'),
-                'total_profit' => $items->sum('total_profit'),
-                'revenue_with_cost' => $items->sum('revenue_with_cost'),
-                'items_with_cost' => $items->sum('items_with_cost'),
-                'total_items' => $items->sum('total_items'),
+                'group_name' => $groupName,
+                'rubro_name' => $groupName,
+                'group_id' => $groupId,
+                'rubro_id' => $groupId,
+                'items_sold' => (float) $items->sum('items_sold'),
+                'total_revenue' => round((float) $items->sum('total_revenue'), 2),
+                'total_profit' => round((float) $items->sum('total_profit'), 2),
+                'revenue_with_cost' => round((float) $items->sum('revenue_with_cost'), 2),
+                'items_with_cost' => (int) $items->sum('items_with_cost'),
+                'total_items' => (int) $items->sum('total_items'),
                 'products' => $items->sortByDesc('total_revenue')->map(function ($prod) {
                     return [
                         'product_id' => $prod->product_id,
                         'product_name' => $prod->product_name,
                         'items_sold' => (float) $prod->items_sold,
-                        'total_revenue' => (float) $prod->total_revenue,
-                        'total_profit' => (float) $prod->total_profit,
-                        'revenue_with_cost' => (float) $prod->revenue_with_cost,
+                        'total_revenue' => round((float) $prod->total_revenue, 2),
+                        'total_profit' => round((float) $prod->total_profit, 2),
+                        'revenue_with_cost' => round((float) $prod->revenue_with_cost, 2),
                         'items_with_cost' => (int) $prod->items_with_cost,
                         'total_items' => (int) $prod->total_items,
                     ];

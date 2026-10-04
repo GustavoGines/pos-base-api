@@ -309,12 +309,12 @@
 
 {{-- ═══════════════════════ TABLA DETALLADA ═══════════════════ --}}
 <div class="content">
-    <div class="section-title">Detalle por Categoría y Producto</div>
+    <div class="section-title">Detalle por {{ $groupLabel ?? 'Categoría' }} y Producto</div>
 
     <table>
         <thead>
             <tr>
-                <th style="width:38%">Categoría / Producto</th>
+                <th style="width:38%">{{ $groupLabel ?? 'Categoría' }} / Producto</th>
                 <th class="num" style="width:10%">Uds. Vend.</th>
                 <th class="num" style="width:17%">Facturación</th>
                 <th class="num" style="width:17%">Ganancia</th>
@@ -345,7 +345,7 @@
                         <span class="cat-icon"></span>
                         {{ $category['category_name'] }}
                     </td>
-                    <td class="num">{{ number_format($catQty, 0, ',', '.') }}</td>
+                    <td class="num">{{ fmod($catQty, 1) != 0 ? number_format($catQty, 2, ',', '.') : number_format($catQty, 0, ',', '.') }}</td>
                     <td class="num">${{ number_format($catRev, 2, ',', '.') }}</td>
                     <td class="num {{ $catProfit >= 0 ? 'profit-pos' : 'profit-neg' }}">
                         ${{ number_format($catProfit, 2, ',', '.') }}
@@ -360,13 +360,14 @@
                         $pProf   = $prod['total_profit'];
                         $pRWC    = $prod['revenue_with_cost'];
                         $pMargin = $pRWC > 0 ? ($pProf / $pRWC) * 100 : 0;
+                        $pQty    = $prod['items_sold'];
                     @endphp
                     <tr class="row-product">
                         <td>
                             <span class="product-arrow">></span>
                             {{ $prod['product_name'] }}
                         </td>
-                        <td class="num">{{ number_format($prod['items_sold'], 0, ',', '.') }}</td>
+                        <td class="num">{{ fmod($pQty, 1) != 0 ? number_format($pQty, 2, ',', '.') : number_format($pQty, 0, ',', '.') }}</td>
                         <td class="num">${{ number_format($pRev, 2, ',', '.') }}</td>
                         <td class="num {{ $pProf >= 0 ? 'profit-pos' : 'profit-neg' }}">
                             ${{ number_format($pProf, 2, ',', '.') }}
@@ -383,7 +384,7 @@
             @endphp
             <tr class="row-total">
                 <td>TOTAL GENERAL</td>
-                <td class="num">{{ number_format($grandQty, 0, ',', '.') }}</td>
+                <td class="num">{{ fmod($grandQty, 1) != 0 ? number_format($grandQty, 2, ',', '.') : number_format($grandQty, 0, ',', '.') }}</td>
                 <td class="num">${{ number_format($grandRevenue, 2, ',', '.') }}</td>
                 <td class="num">${{ number_format($grandProfit, 2, ',', '.') }}</td>
                 <td class="num">{{ number_format($grandMargin, 1, ',', '.') }}%</td>
