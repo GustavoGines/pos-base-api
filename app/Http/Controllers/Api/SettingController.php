@@ -24,6 +24,10 @@ class SettingController extends Controller
             unset($settings[$sensitiveKey]);
         }
 
+        if (!empty($settings['logo_path'])) {
+            $settings['logo_url'] = asset('storage/' . $settings['logo_path']);
+        }
+
         // Agregar metadata dinámica para el DRM Heartbeat
         $settings['server_time'] = now()->toIso8601String();
         $settings['grace_period_hours'] = 72;
@@ -373,6 +377,30 @@ class SettingController extends Controller
             'afip_has_cert' => true,
             'afip_has_key' => true,
             'afip_cert_expires_at' => $expiresAt,
+        ]);
+    }
+
+    /**
+     * Sube y almacena el logotipo del negocio.
+     */
+    public function uploadLogo(Request $request)
+    {
+        $request->validate([
+            'logo' => 'required|image|mimes:jpeg,png,webp|max:2048',
+        ]);
+
+        $file = $request->file('logo');
+        $filename = 'logo_' . time() . '.' . $file->getClientOriginalExtension();
+        $path = $file->storeAs('business', $filename, 'public');
+
+        BusinessSetting::updateOrCreate(
+            ['key' => 'logo_path'],
+            ['value' => $path]
+        );
+
+        return response()->json([
+            'message' => 'Logotipo guardado correctamente.',
+            'logo_path' => asset('storage/' . $path)
         ]);
     }
 

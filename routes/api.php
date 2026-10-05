@@ -102,6 +102,8 @@ Route::middleware(['session.validate'])->group(function () {
         ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
     Route::post('/settings/afip/upload-certificates', [SettingController::class, 'uploadAfipCertificates'])
         ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+    Route::post('/settings/logo', [SettingController::class, 'uploadLogo'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
 
     // ── POS: Procesar venta (CRÍTICO) ────────────────────────────────
     Route::post('/pos/sales', [PosController::class, 'processSale']);
@@ -197,6 +199,10 @@ Route::middleware(['session.validate'])->group(function () {
         ->middleware('permission.or.pin:' . Permissions::BULK_PRICE_UPDATE);
     Route::post('/catalog/products/{product}/adjust-stock', [StockController::class, 'adjust'])
         ->middleware('permission.or.pin:' . Permissions::ADJUST_STOCK);
+    Route::post('/catalog/products/{product}/image', [ProductController::class, 'uploadImage'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+    Route::delete('/catalog/products/{product}/image', [ProductController::class, 'deleteImage'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
     Route::apiResource('catalog/products', ProductController::class)->except(['index', 'show'])
         ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
     Route::apiResource('catalog/categories', CategoryController::class)->except(['index'])

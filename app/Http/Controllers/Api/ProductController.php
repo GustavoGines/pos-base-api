@@ -275,4 +275,44 @@ class ProductController extends Controller
         // Insertamos en bulk
         ProductPriceTier::insert($recordsToInsert);
     }
+    /**
+     * Sube y asocia una imagen fotográfica al catálogo para el producto dado.
+     */
+    public function uploadImage(Request $request, Product $product)
+    {
+        $request->validate([
+            'image' => 'required|image|mimes:jpeg,png,webp|max:2048',
+        ]);
+
+        // Si ya tenía imagen, la eliminamos para no dejar basura
+        if ($product->image_path && \Illuminate\Support\Facades\Storage::disk('public')->exists($product->image_path)) {
+            \Illuminate\Support\Facades\Storage::disk('public')->delete($product->image_path);
+        }
+
+        $file = $request->file('image');
+        $hash = substr(md5(uniqid()), 0, 8);
+        $filename = "{$product->id}_{$hash}." . $file->getClientOriginalExtension();
+        $path = $file->storeAs('products', $filename, 'public');
+
+        $product->update(['image_path' => $path]);
+
+        return response()->json([
+            'message' => 'Imagen de producto cargada correctamente.',
+            'image_url' => asset('storage/' . $path)
+        ]);
+    }
+
+    /**
+     * Elimina la imagen fotográfica asociada al producto.
+     */
+    public function deleteImage(Product $product)
+    {
+        if ($product->image_path && \Illuminate\Support\Facades\Storage::disk('public')->exists($product->image_path)) {
+            \Illuminate\Support\Facades\Storage::disk('public')->delete($product->image_path);
+        }
+
+        $product->update(['image_path' => null]);
+
+        return response()->json(null, 204);
+    }
 }

@@ -17,8 +17,10 @@ class Product extends Model
         'name', 'barcode', 'internal_code', 'cost_price', 'selling_price',
         'price_wholesale', 'price_card',  // [hardware_store] Listas de Precio
         'stock', 'min_stock', 'active', 'is_combo', 'is_sold_by_weight', 'sales_count', 'vencimiento_dias',
-        'unit_type', 'category_id', 'brand_id', 'supplier_id',
+        'unit_type', 'category_id', 'brand_id', 'supplier_id', 'image_path',
     ];
+
+    protected $appends = ['image_url'];
 
     protected $casts = [
         'active' => 'boolean',
@@ -111,5 +113,10 @@ class Product extends Model
         return $applicable->isNotEmpty()
             ? (float) $applicable->last()->unit_price
             : (float) $this->selling_price;
+    }
+
+    public function getImageUrlAttribute(): ?string
+    {
+        return $this->image_path ? asset('storage/' . $this->image_path) : null;
     }
 }
