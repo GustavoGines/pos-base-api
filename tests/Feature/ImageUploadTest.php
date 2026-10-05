@@ -20,15 +20,6 @@ class ImageUploadTest extends TestCase
         Storage::fake('public');
     }
 
-    protected function actingAsAdmin()
-    {
-        $user = User::factory()->create([
-            'role' => 'admin',
-            'permissions' => ['*'] // Giving all permissions if using custom auth
-        ]);
-        // Many POS systems use Sanctum
-        return $this->actingAs($user, 'sanctum');
-    }
 
     public function test_it_can_upload_business_logo()
     {
@@ -50,6 +41,7 @@ class ImageUploadTest extends TestCase
     {
         $product = Product::create([
             'name' => 'Test Product',
+            'internal_code' => 'IMG-001',
             'cost_price' => 10,
             'selling_price' => 20,
             'stock' => 5

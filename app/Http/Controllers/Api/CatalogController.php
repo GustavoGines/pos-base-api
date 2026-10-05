@@ -3,11 +3,13 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Catalog\BulkUpdateProductsRequest;
 use App\Models\BulkPriceHistory;
 use App\Models\BulkPriceHistoryItem;
 use App\Models\Product;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
 class CatalogController extends Controller
@@ -27,36 +29,46 @@ class CatalogController extends Controller
         ]);
     }
 
-    public function bulkUpdate(Request $request)
+    public function bulkUpdate(BulkUpdateProductsRequest $request)
     {
-        $validated = $request->validate([
-            'product_ids' => 'required|array',
-            'product_ids.*' => 'integer|exists:products,id',
-            'category_id' => 'nullable|exists:categories,id',
-            'supplier_id' => ['nullable', Rule::exists('suppliers', 'id')->whereNull('deleted_at')],
-            'active' => 'nullable|boolean',
-        ]);
+        $validated = $request->validated();
 
+        $fillableFields = ['category_id', 'brand_id', 'supplier_id', 'active'];
         $updates = [];
-        if (array_key_exists('category_id', $validated)) {
-            $updates['category_id'] = $validated['category_id'];
-        }
-        if (array_key_exists('supplier_id', $validated)) {
-            $updates['supplier_id'] = $validated['supplier_id'];
-        }
-        if (array_key_exists('active', $validated)) {
-            $updates['active'] = $validated['active'];
+        foreach ($fillableFields as $field) {
+            if (array_key_exists($field, $validated)) {
+                $updates[$field] = $validated[$field];
+            }
         }
 
         if (empty($updates)) {
             return response()->json(['message' => 'No update parameters provided.'], 400);
         }
 
-        $count = Product::whereIn('id', $validated['product_ids'])->update($updates);
+        $productIds = $validated['product_ids'];
+        $count = 0;
+
+        try {
+            DB::transaction(function () use ($productIds, $updates, &$count) {
+                foreach (array_chunk($productIds, 500) as $chunk) {
+                    $count += Product::whereIn('id', $chunk)->update($updates);
+                }
+            });
+        } catch (\Throwable $e) {
+            Log::error('Error en bulkUpdate de productos: '.$e->getMessage(), [
+                'exception' => $e,
+                'payload' => $validated,
+            ]);
+
+            return response()->json([
+                'message' => 'Ocurrió un error al procesar la actualización masiva de productos.',
+            ], 500);
+        }
 
         return response()->json([
             'message' => "Se actualizaron exitosamente {$count} productos.",
             'updated_count' => $count,
+            'affected_ids' => $productIds,
         ]);
     }
 

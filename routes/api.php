@@ -187,7 +187,9 @@ Route::middleware(['session.validate'])->group(function () {
     // ── Catálogo: escritura (crear, editar, borrar productos) ────────
     Route::post('/catalog/products/bulk-delete', [CatalogController::class, 'bulkDelete'])
         ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
-    Route::put('/catalog/products/bulk-update', [CatalogController::class, 'bulkUpdate'])
+    Route::post('/catalog/bulk-update', [CatalogController::class, 'bulkUpdate'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+    Route::match(['put', 'post'], '/catalog/products/bulk-update', [CatalogController::class, 'bulkUpdate'])
         ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
     Route::get('/catalog/bulk-price-history', [CatalogController::class, 'bulkPriceHistory'])
         ->middleware('permission.or.pin:' . Permissions::BULK_PRICE_UPDATE);
