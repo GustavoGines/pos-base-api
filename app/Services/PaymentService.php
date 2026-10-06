@@ -5,6 +5,7 @@ namespace App\Services;
 use App\DTOs\SaleContextDTO;
 use App\Models\Customer;
 use App\Models\CustomerTransaction;
+use App\Models\MpTransaction;
 use App\Models\PaymentMethod;
 use App\Models\Sale;
 use App\Models\ThirdPartyCheck;
@@ -50,7 +51,20 @@ class PaymentService
                 'base_amount' => $payment['base_amount'],
                 'surcharge_amount' => $payment['surcharge_amount'],
                 'total_amount' => $payment['total_amount'],
+                'mp_payment_id' => $payment['mp_payment_id'] ?? null,
+                'mp_order_id' => $payment['mp_order_id'] ?? null,
+                'reference_id' => $payment['reference_id'] ?? null,
             ]);
+
+            // Si existe reference_id, asociar la transacción MP a la venta
+            if (! empty($payment['reference_id'])) {
+                MpTransaction::where('external_reference', $payment['reference_id'])
+                    ->whereNull('sale_id')
+                    ->update([
+                        'sale_id' => $sale->id,
+                        'status' => MpTransaction::STATUS_APPROVED,
+                    ]);
+            }
 
             // Bridge de Cheque
             if ($paymentMethod && $paymentMethod->code === 'cheque' && ! empty($checkDetails)) {

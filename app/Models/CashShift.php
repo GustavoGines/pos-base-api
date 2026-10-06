@@ -25,6 +25,8 @@ class CashShift extends Model
         'cash_sales',
         'card_sales',
         'transfer_sales',
+        'mp_sales',
+        'mp_sales_count',
         'total_surcharge',
         'check_sales',
         'check_count',
@@ -50,6 +52,8 @@ class CashShift extends Model
         'cash_sales' => 'decimal:2',
         'card_sales' => 'decimal:2',
         'transfer_sales' => 'decimal:2',
+        'mp_sales' => 'decimal:2',
+        'mp_sales_count' => 'integer',
         'total_surcharge' => 'decimal:2',
         'cc_sales' => 'decimal:2',
         'total_expenses' => 'decimal:2',
@@ -91,11 +95,17 @@ class CashShift extends Model
         return $this->hasMany(CashMovement::class);
     }
 
+    public function mpTransactions(): HasMany
+    {
+        return $this->hasMany(MpTransaction::class);
+    }
+
     public function getTotalSalesAttribute()
     {
         return ($this->attributes['cash_sales'] ?? 0)
              + ($this->attributes['card_sales'] ?? 0)
              + ($this->attributes['transfer_sales'] ?? 0)
+             + ($this->attributes['mp_sales'] ?? 0)
              + ($this->attributes['check_sales'] ?? 0)
              + ($this->attributes['cc_sales'] ?? 0);
     }

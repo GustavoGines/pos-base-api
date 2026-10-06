@@ -30,6 +30,9 @@ class ProcessSaleRequest extends FormRequest
             'payments.*.base_amount' => 'required|numeric|min:0',
             'payments.*.surcharge_amount' => 'required|numeric|min:0',
             'payments.*.total_amount' => 'required|numeric|min:0',
+            'payments.*.mp_payment_id' => 'nullable|string|max:50',
+            'payments.*.mp_order_id' => 'nullable|string|max:50',
+            'payments.*.reference_id' => 'nullable|string|max:100',
             'tendered_amount' => 'nullable|numeric|min:0',
             'change_amount' => 'nullable|numeric|min:0',
             'cash_shift_id' => [

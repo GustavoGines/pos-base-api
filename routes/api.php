@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\CashShiftController;
 use App\Http\Controllers\Api\CatalogController;
 use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\CustomerController;
+use App\Http\Controllers\Api\MercadoPagoController;
 use App\Http\Controllers\Api\PosController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\QuoteController;
@@ -59,6 +60,9 @@ use App\Http\Controllers\Api\UserController;
 Route::match(['get', 'post'], '/system/rescue-migrate', [SystemController::class, 'rescueMigrate']);
 Route::get('/version-check', [SystemController::class, 'versionCheck']);
 
+// Webhook de Mercado Pago (público, autenticado criptográficamente vía HMAC x-signature)
+Route::post('/webhooks/mercadopago', [MercadoPagoController::class, 'webhook']);
+
 // Verificación de turno activo (necesaria antes del login para decidir ruta inicial)
 Route::prefix('shifts')->group(function () {
     // /current sigue siendo pública: necesaria antes del login para decidir la ruta inicial.
@@ -107,6 +111,14 @@ Route::middleware(['session.validate'])->group(function () {
 
     // ── POS: Procesar venta (CRÍTICO) ────────────────────────────────
     Route::post('/pos/sales', [PosController::class, 'processSale']);
+
+    // ── Mercado Pago (QR & Posnet Point) ─────────────────────────────
+    Route::prefix('pos/mp')->group(function () {
+        Route::post('/create-order', [MercadoPagoController::class, 'createOrder']);
+        Route::post('/create-point-intent', [MercadoPagoController::class, 'createPointIntent']);
+        Route::get('/status/{external_reference}', [MercadoPagoController::class, 'status']);
+        Route::post('/cancel-order', [MercadoPagoController::class, 'cancelOrder']);
+    });
 
     // ── Turnos de caja (CRÍTICO) ─────────────────────────────────────
     Route::prefix('shifts')->group(function () {

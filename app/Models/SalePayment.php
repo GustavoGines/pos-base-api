@@ -12,6 +12,7 @@ class SalePayment extends Model
     protected $fillable = [
         'sale_id', 'payment_method_id',
         'base_amount', 'surcharge_amount', 'total_amount',
+        'mp_payment_id', 'mp_order_id', 'reference_id',
     ];
 
     protected $casts = [
@@ -28,5 +29,10 @@ class SalePayment extends Model
     public function paymentMethod(): BelongsTo
     {
         return $this->belongsTo(PaymentMethod::class);
+    }
+
+    public function mpTransaction(): BelongsTo
+    {
+        return $this->belongsTo(MpTransaction::class, 'reference_id', 'external_reference');
     }
 }

@@ -47,6 +47,11 @@ class Sale extends Model
         return $this->hasMany(SalePayment::class);
     }
 
+    public function mpTransactions(): HasMany
+    {
+        return $this->hasMany(MpTransaction::class);
+    }
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);

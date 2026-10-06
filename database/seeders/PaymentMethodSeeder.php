@@ -55,6 +55,24 @@ class PaymentMethodSeeder extends Seeder
                 'is_active' => true,
                 'sort_order' => 5,
             ],
+            [
+                'name' => 'Mercado Pago QR',
+                'code' => 'mercadopago_qr',
+                'surcharge_type' => 'none',
+                'surcharge_value' => 0,
+                'is_cash' => false,
+                'is_active' => true,
+                'sort_order' => 6,
+            ],
+            [
+                'name' => 'Mercado Pago Point',
+                'code' => 'mercadopago_point',
+                'surcharge_type' => 'none',
+                'surcharge_value' => 0,
+                'is_cash' => false,
+                'is_active' => true,
+                'sort_order' => 7,
+            ],
         ];
 
         foreach ($methods as $method) {

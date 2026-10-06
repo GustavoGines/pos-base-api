@@ -179,6 +179,16 @@ class CashShiftService
             ->whereHas('payments.paymentMethod', fn ($q) => $q->where('code', 'cuenta_corriente'))
             ->count();
 
+        // Ventas Mercado Pago (QR y Point)
+        $mpSales = SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+            ->whereHas('paymentMethod', fn ($q) => $q->whereIn('code', ['mercadopago_qr', 'mercadopago_point']))
+            ->sum('total_amount');
+
+        $mpSalesCount = Sale::where('cash_shift_id', $shiftId)
+            ->where('status', 'completed')
+            ->whereHas('payments.paymentMethod', fn ($q) => $q->whereIn('code', ['mercadopago_qr', 'mercadopago_point']))
+            ->count();
+
         // Movimientos manuales de caja
         $cashDeposits = CashMovement::where('cash_shift_id', $shiftId)->where('payment_method', 'cash')->where('type', 'deposit')->sum('amount');
         $cashExpenses = CashMovement::where('cash_shift_id', $shiftId)->where('payment_method', 'cash')->where('type', 'expense')->sum('amount');
@@ -191,13 +201,15 @@ class CashShiftService
 
         // Total Ventas Neto (Cálculo total de ventas para la UI)
         // NOTA: No sumamos $totalSurcharge porque el monto de los pagos (cashSales, checkSales, etc) YA INCLUYE el recargo que pagó el cliente.
-        $totalSales = $cashSales + $cardSales + $transferSales + $checkSales + $ccSales;
+        $totalSales = $cashSales + $cardSales + $transferSales + $checkSales + $ccSales + $mpSales;
 
         return [
             'expected_balance' => $expectedBalance,
             'cash_sales' => $cashSales,
             'card_sales' => $cardSales,
             'transfer_sales' => $transferSales,
+            'mp_sales' => $mpSales,
+            'mp_sales_count' => $mpSalesCount,
             'total_surcharge' => $totalSurcharge,
             'check_sales' => $checkSales,
             'check_count' => $checkCount,
@@ -237,6 +249,8 @@ class CashShiftService
                 'cash_sales' => $totals['cash_sales'],
                 'card_sales' => $totals['card_sales'],
                 'transfer_sales' => $totals['transfer_sales'],
+                'mp_sales' => $totals['mp_sales'],
+                'mp_sales_count' => $totals['mp_sales_count'],
                 'total_surcharge' => $totals['total_surcharge'],
                 'check_sales' => $totals['check_sales'],
                 'check_count' => $totals['check_count'],

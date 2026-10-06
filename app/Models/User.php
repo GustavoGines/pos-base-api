@@ -76,6 +76,11 @@ class User extends Authenticatable
         return $this->hasMany(CashShift::class);
     }
 
+    public function mpTransactions(): HasMany
+    {
+        return $this->hasMany(MpTransaction::class);
+    }
+
     /**
      * Determina si el usuario posee rol administrativo.
      */
