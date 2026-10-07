@@ -8,6 +8,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class SettingsSecurityTest extends TestCase
@@ -294,4 +295,359 @@ class SettingsSecurityTest extends TestCase
         $this->assertEquals("afip/{$cuit}/cert.crt", BusinessSetting::where('key', 'afip_cert_path')->value('value'));
         $this->assertEquals("afip/{$cuit}/cert.key", BusinessSetting::where('key', 'afip_key_path')->value('value'));
     }
+
+    /**
+     * 9. POST /api/settings/integrations/mercadopago/test prueba conexión con token guardado y retorna 200 sin filtrar secretos.
+     */
+    public function test_mercadopago_test_connection_successful_with_saved_token(): void
+    {
+        BusinessSetting::setSecret('mp_access_token', 'APP_USR-test-valid-saved-token-1234');
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        Http::fake([
+            'https://api.mercadopago.com/users/me' => Http::response([
+                'id' => 98765432,
+                'nickname' => 'TIENDA_OFICIAL_TEST',
+                'first_name' => 'POS',
+                'last_name' => 'Demo',
+            ], 200),
+        ]);
+
+        // Llamada enviando máscara de asteriscos o vacío
+        $response = $this->actingAsAdmin($admin)->postJson('/api/settings/integrations/mercadopago/test', [
+            'mp_access_token' => 'APP_USR-****1234',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('success', true);
+        $response->assertJsonPath('collector_id', 98765432);
+        $response->assertJsonPath('nickname', 'TIENDA_OFICIAL_TEST');
+
+        // Seguridad: el token no debe estar en la respuesta
+        $this->assertStringNotContainsString('APP_USR-test-valid-saved-token-1234', $response->getContent());
+    }
+
+    /**
+     * 10. POST /api/settings/integrations/mercadopago/test usa token directo del request si no está enmascarado.
+     */
+    public function test_mercadopago_test_connection_with_request_token(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        Http::fake([
+            'https://api.mercadopago.com/users/me' => Http::response([
+                'id' => 11223344,
+                'nickname' => 'NUEVO_TOKEN_USER',
+            ], 200),
+        ]);
+
+        $response = $this->actingAsAdmin($admin)->postJson('/api/settings/integrations/mercadopago/test', [
+            'mp_access_token' => 'APP_USR-raw-new-token-9999',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('success', true);
+        $response->assertJsonPath('collector_id', 11223344);
+
+        Http::assertSent(function ($request) {
+            return $request->hasHeader('Authorization', 'Bearer APP_USR-raw-new-token-9999');
+        });
+    }
+
+    /**
+     * 11. POST /api/settings/integrations/mercadopago/test rechaza token inválido con 400 sin exponer credencial.
+     */
+    public function test_mercadopago_test_connection_fails_on_invalid_token(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        Http::fake([
+            'https://api.mercadopago.com/users/me' => Http::response([
+                'message' => 'Invalid credentials',
+                'error' => 'unauthorized',
+                'status' => 401,
+            ], 401),
+        ]);
+
+        $response = $this->actingAsAdmin($admin)->postJson('/api/settings/integrations/mercadopago/test', [
+            'mp_access_token' => 'APP_USR-invalid-token-0000',
+        ]);
+
+        $response->assertStatus(400);
+        $response->assertJsonPath('success', false);
+        $this->assertStringContainsString('inválido', $response->json('message'));
+        $this->assertStringNotContainsString('APP_USR-invalid-token-0000', $response->getContent());
+    }
+
+    /**
+     * 12. POST /api/settings/integrations/mercadopago/test devuelve 422 cuando no hay token configurado.
+     */
+    public function test_mercadopago_test_connection_fails_when_no_token_configured(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $response = $this->actingAsAdmin($admin)->postJson('/api/settings/integrations/mercadopago/test', [
+            'mp_access_token' => '',
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('success', false);
+    }
+
+    /**
+     * 13. POST /api/settings/integrations/mercadopago/test requiere autenticación y permiso manage_settings.
+     */
+    public function test_mercadopago_test_endpoint_requires_auth_and_permission(): void
+    {
+        // 1. Sin autenticación -> 401
+        $unauthResponse = $this->postJson('/api/settings/integrations/mercadopago/test');
+        $unauthResponse->assertStatus(401);
+
+        // 2. Cajero sin permiso ni PIN -> 403
+        $cashier = User::factory()->create(['role' => 'cashier', 'permissions' => ['pos']]);
+        $cashierToken = 'session-cashier-' . uniqid();
+        DB::table('users')->where('id', $cashier->id)->update(['session_token' => $cashierToken]);
+
+        $forbiddenResponse = $this->withHeader('X-Session-Token', $cashierToken)
+            ->postJson('/api/settings/integrations/mercadopago/test');
+        $forbiddenResponse->assertStatus(403);
+    }
+
+    /**
+     * 14. PUT /api/settings/integrations recorta espacios en tokens y limpia a null si es whitespace.
+     */
+    public function test_updating_integrations_trims_tokens_and_clears_whitespace(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        // Guardar con espacios alrededor
+        $response = $this->actingAsAdmin($admin)->putJson('/api/settings/integrations', [
+            'mp_access_token' => '   APP_USR-test-trimmed-token-9999   ',
+            'mp_webhook_secret' => '   whsec_test_secret_1234   ',
+            'afip_pto_vta' => 3,
+        ]);
+        $response->assertStatus(200);
+
+        // Se deben guardar sin espacios
+        $this->assertEquals('APP_USR-test-trimmed-token-9999', BusinessSetting::getSecret('mp_access_token'));
+        $this->assertEquals('whsec_test_secret_1234', BusinessSetting::getSecret('mp_webhook_secret'));
+
+        // Limpiar enviando espacios
+        $clearResponse = $this->actingAsAdmin($admin)->putJson('/api/settings/integrations', [
+            'mp_access_token' => '     ',
+            'mp_webhook_secret' => '',
+            'afip_pto_vta' => null,
+        ]);
+        $clearResponse->assertStatus(200);
+
+        $this->assertNull(BusinessSetting::getSecret('mp_access_token'));
+        $this->assertNull(BusinessSetting::getSecret('mp_webhook_secret'));
+
+        // Verificar que GET /settings/integrations reporta afip_pto_vta como null (NO como 0)
+        $getResp = $this->actingAsAdmin($admin)->getJson('/api/settings/integrations');
+        $getResp->assertStatus(200);
+        $this->assertNull($getResp->json('afip_pto_vta'));
+        $this->assertFalse($getResp->json('mp_has_access_token'));
+        $this->assertFalse($getResp->json('mp_has_webhook_secret'));
+    }
+
+    /**
+     * 15. POST /api/settings/integrations/mercadopago/test con token con espacios hace trim antes de consultar API.
+     */
+    public function test_mercadopago_test_connection_trims_request_token(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        Http::fake([
+            'https://api.mercadopago.com/users/me' => Http::response([
+                'id' => 55443322,
+                'nickname' => 'SPACES_TOKEN_USER',
+            ], 200),
+        ]);
+
+        $response = $this->actingAsAdmin($admin)->postJson('/api/settings/integrations/mercadopago/test', [
+            'mp_access_token' => '   APP_USR-raw-with-spaces-8888   ',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('success', true);
+
+        Http::assertSent(function ($request) {
+            return $request->hasHeader('Authorization', 'Bearer APP_USR-raw-with-spaces-8888');
+        });
+    }
+
+    /**
+     * 16. PUT /api/settings no filtra rutas privadas de certificados en el array settings devuelto.
+     */
+    public function test_put_settings_does_not_leak_afip_private_paths(): void
+    {
+        BusinessSetting::create(['key' => 'afip_key_path', 'value' => 'afip/20123456789/cert.key']);
+        BusinessSetting::create(['key' => 'afip_cert_path', 'value' => 'afip/20123456789/cert.crt']);
+
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $response = $this->actingAsAdmin($admin)->putJson('/api/settings', [
+            'company_name' => 'Comercio Seguro',
+        ]);
+
+        $response->assertStatus(200);
+        $settings = $response->json('settings');
+
+        $this->assertArrayNotHasKey('afip_key_path', $settings, 'Vulnerabilidad: afip_key_path fue retornado en PUT /api/settings');
+        $this->assertArrayNotHasKey('afip_cert_path', $settings, 'Vulnerabilidad: afip_cert_path fue retornado en PUT /api/settings');
+    }
+
+    /**
+     * 17. GET /api/settings/integrations detecta certificados incluso con CUIT formateado con guiones y almacena dígitos limpios.
+     */
+    public function test_integrations_detects_cert_with_formatted_cuit_and_stored_paths(): void
+    {
+        $cuit = '20123456789';
+        $validPair = $this->generateSelfSignedCert('cuit_' . $cuit);
+
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        // Guardar certificados válidos
+        $this->actingAsAdmin($admin)->postJson('/api/settings/afip/certificates', [
+            'cuit' => $cuit,
+            'cert_content' => $validPair['cert'],
+            'key_content' => $validPair['key'],
+        ])->assertStatus(200);
+
+        // Actualizar CUIT comercial con guiones
+        $putResp = $this->actingAsAdmin($admin)->putJson('/api/settings/integrations', [
+            'afip_cuit' => '  20-12345678-9  ',
+        ]);
+        $putResp->assertStatus(200);
+
+        // La base de datos debe almacenar solo dígitos limpios
+        $this->assertEquals($cuit, BusinessSetting::where('key', 'afip_cuit')->value('value'));
+
+        // El endpoint GET /settings/integrations debe reconocer la presencia de cert y key
+        $getResp = $this->actingAsAdmin($admin)->getJson('/api/settings/integrations');
+        $getResp->assertStatus(200);
+        $this->assertTrue($getResp->json('afip_has_cert'));
+        $this->assertTrue($getResp->json('afip_has_key'));
+        $this->assertEquals($cuit, $getResp->json('afip_cuit'));
+    }
+
+    /**
+     * 18. POST /api/settings/integrations/mercadopago/test falla con 422 si se envía token vacío aunque exista secreto guardado en BD.
+     */
+    public function test_mercadopago_test_connection_fails_with_explicit_empty_token_even_when_secret_in_db(): void
+    {
+        BusinessSetting::setSecret('mp_access_token', 'APP_USR-test-valid-saved-token-1234');
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        // Enviando token vacío explícito
+        $response = $this->actingAsAdmin($admin)->postJson('/api/settings/integrations/mercadopago/test', [
+            'mp_access_token' => '',
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('success', false);
+
+        // Enviando token con puros espacios
+        $spacesResp = $this->actingAsAdmin($admin)->postJson('/api/settings/integrations/mercadopago/test', [
+            'mp_access_token' => '   ',
+        ]);
+
+        $spacesResp->assertStatus(422);
+        $spacesResp->assertJsonPath('success', false);
+    }
+
+    /**
+     * 19. Cambiar CUIT a uno sin certificados instalados resetea afip_has_cert a false y limpia fecha de vencimiento.
+     */
+    public function test_changing_afip_cuit_to_unconfigured_cuit_resets_cert_status_and_clears_expiration(): void
+    {
+        $cuitA = '20123456789';
+        $validPair = $this->generateSelfSignedCert('cuit_' . $cuitA);
+
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        // Subir certificados válidos para CUIT A
+        $this->actingAsAdmin($admin)->postJson('/api/settings/afip/certificates', [
+            'cuit' => $cuitA,
+            'cert_content' => $validPair['cert'],
+            'key_content' => $validPair['key'],
+        ])->assertStatus(200);
+
+        // Verificar que CUIT A tiene certificados activos y fecha de vencimiento
+        $getA = $this->actingAsAdmin($admin)->getJson('/api/settings/integrations');
+        $getA->assertStatus(200);
+        $this->assertTrue($getA->json('afip_has_cert'));
+        $this->assertTrue($getA->json('afip_has_key'));
+        $this->assertNotNull($getA->json('afip_cert_expires_at'));
+
+        // Cambiar CUIT comercial a CUIT B (para el cual no se subieron certificados)
+        $cuitB = '20999999999';
+        $putResp = $this->actingAsAdmin($admin)->putJson('/api/settings/integrations', [
+            'afip_cuit' => $cuitB,
+        ]);
+        $putResp->assertStatus(200);
+
+        // GET /settings/integrations NO debe reportar falsamente que CUIT B tiene certificados de CUIT A
+        $getB = $this->actingAsAdmin($admin)->getJson('/api/settings/integrations');
+        $getB->assertStatus(200);
+        $this->assertEquals($cuitB, $getB->json('afip_cuit'));
+        $this->assertFalse($getB->json('afip_has_cert'));
+        $this->assertFalse($getB->json('afip_has_key'));
+        $this->assertNull($getB->json('afip_cert_expires_at'));
+    }
+
+    /**
+     * 20. Limpiar CUIT (a null o vacío) resetea afip_has_cert a false y limpia fecha de vencimiento.
+     */
+    public function test_clearing_afip_cuit_resets_cert_status_and_expires_at(): void
+    {
+        $cuit = '20123456789';
+        $validPair = $this->generateSelfSignedCert('cuit_' . $cuit);
+
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $this->actingAsAdmin($admin)->postJson('/api/settings/afip/certificates', [
+            'cuit' => $cuit,
+            'cert_content' => $validPair['cert'],
+            'key_content' => $validPair['key'],
+        ])->assertStatus(200);
+
+        // Limpiar el CUIT
+        $this->actingAsAdmin($admin)->putJson('/api/settings/integrations', [
+            'afip_cuit' => '',
+        ])->assertStatus(200);
+
+        $getResp = $this->actingAsAdmin($admin)->getJson('/api/settings/integrations');
+        $getResp->assertStatus(200);
+        $this->assertNull($getResp->json('afip_cuit'));
+        $this->assertFalse($getResp->json('afip_has_cert'));
+        $this->assertFalse($getResp->json('afip_has_key'));
+        $this->assertNull($getResp->json('afip_cert_expires_at'));
+    }
+
+    /**
+     * 21. PUT /api/settings no puede sobrescribir ni corromper afip_key_path ni afip_cert_path.
+     */
+    public function test_put_settings_cannot_tamper_afip_private_paths(): void
+    {
+        BusinessSetting::updateOrCreate(['key' => 'afip_key_path'], ['value' => 'afip/20123456789/cert.key']);
+        BusinessSetting::updateOrCreate(['key' => 'afip_cert_path'], ['value' => 'afip/20123456789/cert.crt']);
+
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $response = $this->actingAsAdmin($admin)->putJson('/api/settings', [
+            'afip_key_path' => 'malicious/tampered/path.key',
+            'afip_cert_path' => 'malicious/tampered/path.crt',
+            'company_name' => 'Comercio Seguro',
+        ]);
+
+        $response->assertStatus(200);
+
+        // Las rutas originales no deben haber sido modificadas
+        $this->assertEquals('afip/20123456789/cert.key', BusinessSetting::where('key', 'afip_key_path')->value('value'));
+        $this->assertEquals('afip/20123456789/cert.crt', BusinessSetting::where('key', 'afip_cert_path')->value('value'));
+    }
 }
+
+

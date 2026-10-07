@@ -23,7 +23,7 @@ class QuoteController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Quote::with('items')->latest();
+        $query = Quote::with('items.product')->latest();
 
         if ($search = $request->query('search')) {
             $query->where(function ($q) use ($search) {
@@ -138,7 +138,7 @@ class QuoteController extends Controller
 
                 DB::commit();
 
-                return response()->json($quote->load('items'), 201);
+                return response()->json($quote->load('items.product'), 201);
             } catch (QueryException $e) {
                 DB::rollBack();
                 $isRetryable = in_array($e->getCode(), [23000, '23000', 40001, '40001', 1213])

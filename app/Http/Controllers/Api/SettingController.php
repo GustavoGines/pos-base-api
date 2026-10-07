@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\BusinessSetting;
 use App\Services\LicenseSyncService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
+use Throwable;
 
 class SettingController extends Controller
 {
@@ -76,6 +78,11 @@ class SettingController extends Controller
         $data = $request->all();
 
         foreach ($data as $key => $value) {
+            // afip_key_path y afip_cert_path son gestionados exclusivamente por uploadAfipCertificates
+            if ($key === 'afip_key_path' || $key === 'afip_cert_path') {
+                continue;
+            }
+
             if (in_array($key, BusinessSetting::SENSITIVE_KEYS, true)) {
                 // Si el valor contiene asteriscos de enmascaramiento, preservar secreto existente
                 if (is_string($value) && str_contains($value, '****')) {
@@ -125,17 +132,37 @@ class SettingController extends Controller
         $afipPtoVta = BusinessSetting::where('key', 'afip_pto_vta')->value('value');
         $afipEnvironment = BusinessSetting::where('key', 'afip_environment')->value('value') ?? 'testing';
 
-        $hasCert = false;
-        $hasKey = false;
-        $certExpiresAt = BusinessSetting::where('key', 'afip_cert_expires_at')->value('value');
+        $storedCertPath = BusinessSetting::where('key', 'afip_cert_path')->value('value');
+        $storedKeyPath = BusinessSetting::where('key', 'afip_key_path')->value('value');
+        $cleanCuit = !empty($afipCuit) ? preg_replace('/\D/', '', (string) $afipCuit) : null;
 
-        if (!empty($afipCuit)) {
-            $certPath = storage_path("app/private/afip/{$afipCuit}/cert.crt");
-            $keyPath = storage_path("app/private/afip/{$afipCuit}/cert.key");
-            $hasCert = file_exists($certPath);
-            $hasKey = file_exists($keyPath);
+        $certPath = null;
+        $keyPath = null;
+        $certExpiresAt = null;
 
-            if ($hasCert && empty($certExpiresAt)) {
+        if (!empty($cleanCuit)) {
+            $defaultCert = storage_path("app/private/afip/{$cleanCuit}/cert.crt");
+            $defaultKey = storage_path("app/private/afip/{$cleanCuit}/cert.key");
+
+            if (file_exists($defaultCert)) {
+                $certPath = $defaultCert;
+            } elseif (!empty($storedCertPath) && str_contains($storedCertPath, $cleanCuit) && file_exists(storage_path('app/private/' . $storedCertPath))) {
+                $certPath = storage_path('app/private/' . $storedCertPath);
+            }
+
+            if (file_exists($defaultKey)) {
+                $keyPath = $defaultKey;
+            } elseif (!empty($storedKeyPath) && str_contains($storedKeyPath, $cleanCuit) && file_exists(storage_path('app/private/' . $storedKeyPath))) {
+                $keyPath = storage_path('app/private/' . $storedKeyPath);
+            }
+        }
+
+        $hasCert = !empty($certPath);
+        $hasKey = !empty($keyPath);
+
+        if ($hasCert) {
+            $certExpiresAt = BusinessSetting::where('key', 'afip_cert_expires_at')->value('value');
+            if (empty($certExpiresAt) && !empty($certPath)) {
                 $certContent = @file_get_contents($certPath);
                 if ($certContent) {
                     $parsed = @openssl_x509_parse($certContent);
@@ -146,19 +173,27 @@ class SettingController extends Controller
             }
         }
 
-        $maskedMpToken = $this->maskToken($rawMpToken);
-        $maskedMpSecret = $this->maskToken($rawMpSecret);
+        $hasMpToken = !empty($rawMpToken) && trim($rawMpToken) !== '';
+        $hasMpSecret = !empty($rawMpSecret) && trim($rawMpSecret) !== '';
+
+        $maskedMpToken = $hasMpToken ? $this->maskToken(trim($rawMpToken)) : null;
+        $maskedMpSecret = $hasMpSecret ? $this->maskToken(trim($rawMpSecret)) : null;
+
+        $parsedPtoVta = (!empty($afipPtoVta) && is_numeric($afipPtoVta) && (int) $afipPtoVta > 0)
+            ? (int) $afipPtoVta
+            : null;
 
         $payload = [
             'mp_qr_enabled' => (bool) $mpQrEnabled,
             'mp_point_device_id' => $mpPointDeviceId,
             'mp_access_token' => $maskedMpToken,
             'mp_webhook_secret' => $maskedMpSecret,
-            'mp_has_access_token' => !empty($rawMpToken),
-            'mp_has_webhook_secret' => !empty($rawMpSecret),
+            'mp_has_access_token' => $hasMpToken,
+            'mp_has_webhook_secret' => $hasMpSecret,
+            'mp_webhook_url' => url('/api/webhooks/mercadopago'),
             'afip_enabled' => (bool) $afipEnabled,
             'afip_cuit' => $afipCuit,
-            'afip_pto_vta' => $afipPtoVta !== null ? (int) $afipPtoVta : null,
+            'afip_pto_vta' => $parsedPtoVta,
             'afip_environment' => $afipEnvironment,
             'afip_has_cert' => $hasCert,
             'afip_has_key' => $hasKey,
@@ -168,13 +203,14 @@ class SettingController extends Controller
                 'mp_point_device_id' => $mpPointDeviceId,
                 'mp_access_token' => $maskedMpToken,
                 'mp_webhook_secret' => $maskedMpSecret,
-                'mp_has_access_token' => !empty($rawMpToken),
-                'mp_has_webhook_secret' => !empty($rawMpSecret),
+                'mp_has_access_token' => $hasMpToken,
+                'mp_has_webhook_secret' => $hasMpSecret,
+                'mp_webhook_url' => url('/api/webhooks/mercadopago'),
             ],
             'afip' => [
                 'afip_enabled' => (bool) $afipEnabled,
                 'afip_cuit' => $afipCuit,
-                'afip_pto_vta' => $afipPtoVta !== null ? (int) $afipPtoVta : null,
+                'afip_pto_vta' => $parsedPtoVta,
                 'afip_environment' => $afipEnvironment,
                 'afip_has_cert' => $hasCert,
                 'afip_has_key' => $hasKey,
@@ -197,7 +233,7 @@ class SettingController extends Controller
             'mp_webhook_secret' => 'nullable|string',
             'afip_enabled' => 'sometimes',
             'afip_cuit' => 'nullable|string|max:20',
-            'afip_pto_vta' => 'nullable|integer',
+            'afip_pto_vta' => 'nullable|integer|min:1|max:99999',
             'afip_environment' => 'nullable|in:testing,production',
         ]);
 
@@ -205,8 +241,8 @@ class SettingController extends Controller
             $token = $request->input('mp_access_token');
             if ($token !== null && str_contains($token, '****')) {
                 // Preservar secreto existente
-            } elseif (!empty($token)) {
-                BusinessSetting::setSecret('mp_access_token', $token);
+            } elseif ($token !== null && trim($token) !== '') {
+                BusinessSetting::setSecret('mp_access_token', trim($token));
             } else {
                 BusinessSetting::setSecret('mp_access_token', null);
             }
@@ -216,8 +252,8 @@ class SettingController extends Controller
             $secret = $request->input('mp_webhook_secret');
             if ($secret !== null && str_contains($secret, '****')) {
                 // Preservar secreto existente
-            } elseif (!empty($secret)) {
-                BusinessSetting::setSecret('mp_webhook_secret', $secret);
+            } elseif ($secret !== null && trim($secret) !== '') {
+                BusinessSetting::setSecret('mp_webhook_secret', trim($secret));
             } else {
                 BusinessSetting::setSecret('mp_webhook_secret', null);
             }
@@ -229,9 +265,10 @@ class SettingController extends Controller
         }
 
         if ($request->has('mp_point_device_id')) {
+            $deviceId = $request->input('mp_point_device_id');
             BusinessSetting::updateOrCreate(
                 ['key' => 'mp_point_device_id'],
-                ['value' => $request->input('mp_point_device_id')]
+                ['value' => ($deviceId !== null && trim($deviceId) !== '') ? trim($deviceId) : null]
             );
         }
 
@@ -241,29 +278,114 @@ class SettingController extends Controller
         }
 
         if ($request->has('afip_cuit')) {
+            $cuit = $request->input('afip_cuit');
+            $cleanCuit = ($cuit !== null && trim($cuit) !== '') ? preg_replace('/\D/', '', trim($cuit)) : null;
+            $oldCuit = BusinessSetting::where('key', 'afip_cuit')->value('value');
+
             BusinessSetting::updateOrCreate(
                 ['key' => 'afip_cuit'],
-                ['value' => $request->input('afip_cuit')]
+                ['value' => ($cleanCuit !== null && $cleanCuit !== '') ? $cleanCuit : null]
             );
+
+            // Si el CUIT cambió, sincronizar rutas y certificados con el nuevo CUIT
+            if ($cleanCuit !== $oldCuit) {
+                if ($cleanCuit && file_exists(storage_path("app/private/afip/{$cleanCuit}/cert.crt"))) {
+                    BusinessSetting::updateOrCreate(['key' => 'afip_cert_path'], ['value' => "afip/{$cleanCuit}/cert.crt"]);
+                    BusinessSetting::updateOrCreate(['key' => 'afip_key_path'], ['value' => "afip/{$cleanCuit}/cert.key"]);
+                    $certContent = @file_get_contents(storage_path("app/private/afip/{$cleanCuit}/cert.crt"));
+                    if ($certContent && ($parsed = @openssl_x509_parse($certContent)) && !empty($parsed['validTo_time_t'])) {
+                        BusinessSetting::updateOrCreate(['key' => 'afip_cert_expires_at'], ['value' => date('Y-m-d H:i:s', $parsed['validTo_time_t'])]);
+                    }
+                } else {
+                    BusinessSetting::whereIn('key', ['afip_cert_path', 'afip_key_path', 'afip_cert_expires_at'])->delete();
+                }
+            }
         }
 
         if ($request->has('afip_pto_vta')) {
+            $ptoVta = $request->input('afip_pto_vta');
             BusinessSetting::updateOrCreate(
                 ['key' => 'afip_pto_vta'],
-                ['value' => (string) $request->input('afip_pto_vta')]
+                ['value' => ($ptoVta !== null && $ptoVta !== '' && is_numeric($ptoVta) && (int) $ptoVta > 0) ? (string) (int) $ptoVta : null]
             );
         }
 
         if ($request->has('afip_environment')) {
+            $env = $request->input('afip_environment');
             BusinessSetting::updateOrCreate(
                 ['key' => 'afip_environment'],
-                ['value' => $request->input('afip_environment')]
+                ['value' => in_array($env, ['testing', 'production']) ? $env : 'testing']
             );
         }
 
         return response()->json([
             'message' => 'Configuración de integraciones actualizada correctamente.',
         ]);
+    }
+
+    /**
+     * Valida la conectividad con la API de Mercado Pago usando el access token guardado o proporcionado.
+     * Retorna el estado sin exponer secretos ni logs crudos de error.
+     */
+    public function testMercadoPagoConnection(Request $request)
+    {
+        $request->validate([
+            'mp_access_token' => 'nullable|string',
+        ]);
+
+        $inputToken = $request->input('mp_access_token');
+
+        // Si se provee un token en el request:
+        // - Si contiene máscara de asteriscos, preservar y usar el secreto guardado en BD.
+        // - Si no está enmascarado, usar el token del request (limpiando espacios).
+        // - Si no se incluyó en el request (omitido), usar el secreto guardado en BD.
+        if ($request->has('mp_access_token') && !str_contains((string) $inputToken, '****')) {
+            $token = trim((string) $inputToken);
+        } else {
+            $token = BusinessSetting::getSecret('mp_access_token');
+        }
+
+        if (empty($token) || trim($token) === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'No hay un Access Token de Mercado Pago configurado.',
+            ], 422);
+        }
+
+        $token = trim($token);
+
+        try {
+            $response = Http::withToken($token)
+                ->timeout(10)
+                ->get('https://api.mercadopago.com/users/me');
+
+            if ($response->successful()) {
+                $userData = $response->json();
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Conexión con Mercado Pago exitosa.',
+                    'collector_id' => $userData['id'] ?? null,
+                    'nickname' => $userData['nickname'] ?? null,
+                ]);
+            }
+
+            if ($response->status() === 401 || $response->status() === 403) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El Access Token de Mercado Pago es inválido o no tiene permisos suficientes.',
+                ], 400);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Mercado Pago respondió con error (Código: ' . $response->status() . ').',
+            ], 400);
+        } catch (Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No se pudo conectar con los servidores de Mercado Pago.',
+            ], 400);
+        }
     }
 
     /**
@@ -451,10 +573,11 @@ class SettingController extends Controller
      */
     protected function maskToken(?string $token): ?string
     {
-        if (empty($token)) {
+        if (empty($token) || trim($token) === '') {
             return null;
         }
 
+        $token = trim($token);
         $length = strlen($token);
         if ($length <= 8) {
             return '****';

@@ -16,6 +16,8 @@ class BusinessSetting extends Model
     public const SENSITIVE_KEYS = [
         'mp_access_token',
         'mp_webhook_secret',
+        'afip_key_path',
+        'afip_cert_path',
     ];
 
     public const PUBLIC_KEYS = [

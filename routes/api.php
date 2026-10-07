@@ -102,6 +102,8 @@ Route::middleware(['session.validate'])->group(function () {
         ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
     Route::put('/settings/integrations', [SettingController::class, 'updateIntegrations'])
         ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+    Route::post('/settings/integrations/mercadopago/test', [SettingController::class, 'testMercadoPagoConnection'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
     Route::post('/settings/afip/certificates', [SettingController::class, 'uploadAfipCertificates'])
         ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
     Route::post('/settings/afip/upload-certificates', [SettingController::class, 'uploadAfipCertificates'])

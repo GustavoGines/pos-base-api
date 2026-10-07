@@ -117,7 +117,7 @@ class MercadoPagoService
             ],
         ];
 
-        if ($notificationUrl) {
+        if (!empty($notificationUrl) && str_starts_with(strtolower($notificationUrl), 'https://')) {
             $payload['notification_url'] = $notificationUrl;
         }
 
@@ -133,27 +133,59 @@ class MercadoPagoService
         array $items,
         string $notificationUrl
     ): array {
-        return [
+        $roundedTotal = round($amount, 2);
+        $runningSum = 0.0;
+        $mappedItems = [];
+
+        foreach ($items as $item) {
+            $unitPrice = round((float) ($item['unit_price'] ?? 0), 2);
+            $qty = (int) ($item['quantity'] ?? 1);
+            $lineTotal = round($unitPrice * $qty, 2);
+            $runningSum += $lineTotal;
+
+            $mappedItems[] = [
+                'sku_number' => $item['sku'] ?? $item['sku_number'] ?? 'PROD-001',
+                'category' => 'marketplace',
+                'title' => $item['title'] ?? 'Producto',
+                'description' => $item['title'] ?? 'Producto',
+                'unit_price' => $unitPrice,
+                'quantity' => $qty,
+                'unit_measure' => 'unit',
+                'total_amount' => $lineTotal,
+            ];
+        }
+
+        $diff = round($roundedTotal - $runningSum, 2);
+
+        // Strict Invariant: sum(items.total_amount) === total_amount
+        if (abs($diff) >= 0.01 || empty($mappedItems)) {
+            $mappedItems[] = [
+                'sku_number' => 'DISC-ADJ',
+                'category' => 'marketplace',
+                'title' => ($diff < 0) ? 'Descuento Global / Ajuste' : (($diff > 0) ? 'Recargo / Ajuste Redondeo' : 'Cobro Genérico'),
+                'description' => 'Ajuste de centavos o descuento global',
+                'unit_price' => empty($mappedItems) ? $roundedTotal : $diff,
+                'quantity' => 1,
+                'unit_measure' => 'unit',
+                'total_amount' => empty($mappedItems) ? $roundedTotal : $diff,
+            ];
+        }
+
+        $payload = [
             'external_reference' => $externalRef,
             'title' => "Cobro Mostrador {$externalRef}",
             'description' => 'Sistema POS Mostrador',
-            'notification_url' => $notificationUrl,
-            'total_amount' => round($amount, 2),
-            'items' => array_map(function ($item) {
-                $unitPrice = round((float) ($item['unit_price'] ?? 0), 2);
-                $qty = (int) ($item['quantity'] ?? 1);
-                return [
-                    'sku_number' => $item['sku'] ?? $item['sku_number'] ?? 'PROD-001',
-                    'category' => 'marketplace',
-                    'title' => $item['title'] ?? 'Producto',
-                    'description' => $item['title'] ?? 'Producto',
-                    'unit_price' => $unitPrice,
-                    'quantity' => $qty,
-                    'unit_measure' => 'unit',
-                    'total_amount' => round($unitPrice * $qty, 2),
-                ];
-            }, $items),
+            'total_amount' => $roundedTotal,
+            'items' => $mappedItems,
         ];
+
+        // Mercado Pago strict requirement: Webhooks must be HTTPS and publicly accessible.
+        // If we send a local http:// URL, MP throws preference_creation_error (400).
+        if (!empty($notificationUrl) && str_starts_with(strtolower($notificationUrl), 'https://')) {
+            $payload['notification_url'] = $notificationUrl;
+        }
+
+        return $payload;
     }
 
     /**
@@ -168,13 +200,13 @@ class MercadoPagoService
     ): array {
         $token = $this->getAccessToken();
         $notifUrl = $notificationUrl ?: url('/api/webhooks/mercadopago');
-
-        $payload = $this->buildV1OrderPayload($posId, $externalRef, $amount, $items, $notifUrl);
+        $userId = $this->getCollectorId();
+        $payload = $this->buildInstoreQrPayload($externalRef, $amount, $items, $notifUrl);
 
         $response = Http::withToken($token)
             ->withHeaders(['X-Idempotency-Key' => $externalRef])
             ->timeout(20)
-            ->post('https://api.mercadopago.com/v1/orders', $payload);
+            ->put("https://api.mercadopago.com/instore/orders/qr/seller/collectors/{$userId}/pos/{$posId}/qrs", $payload);
 
         if (! $response->successful()) {
             throw new \RuntimeException(
@@ -296,21 +328,47 @@ class MercadoPagoService
 
         if ($token) {
             try {
-                // Try querying v1/orders first
-                $response = Http::withToken($token)
-                    ->timeout(15)
-                    ->get("https://api.mercadopago.com/v1/orders/{$orderOrIntentId}");
+                $data = null;
+                $isSuccessful = false;
 
-                // If not successful and might be Point intent, try Point endpoint
-                if (! $response->successful()) {
+                // 1. Search by external_reference (QR orders)
+                $extRefToSearch = $externalRef ?? $tx?->external_reference ?? $orderOrIntentId;
+                if ($extRefToSearch) {
+                    $response = Http::withToken($token)
+                        ->timeout(15)
+                        ->get("https://api.mercadopago.com/merchant_orders/search?external_reference={$extRefToSearch}");
+
+                    if ($response->successful() && !empty($response->json()['elements'])) {
+                        $data = $response->json()['elements'][0];
+                        $isSuccessful = true;
+                    }
+                }
+
+                // 2. Try v1/orders (if order ID is numeric)
+                if (!$isSuccessful && is_numeric($orderOrIntentId)) {
+                    $response = Http::withToken($token)
+                        ->timeout(15)
+                        ->get("https://api.mercadopago.com/v1/orders/{$orderOrIntentId}");
+                    
+                    if ($response->successful()) {
+                        $data = $response->json();
+                        $isSuccessful = true;
+                    }
+                }
+
+                // 3. Try Point intents (if uuid)
+                if (!$isSuccessful && !is_numeric($orderOrIntentId)) {
                     $response = Http::withToken($token)
                         ->timeout(15)
                         ->get("https://api.mercadopago.com/point/integration-api/payment-intents/{$orderOrIntentId}");
+                    
+                    if ($response->successful()) {
+                        $data = $response->json();
+                        $isSuccessful = true;
+                    }
                 }
 
-                if ($response->successful()) {
-                    $data = $response->json();
-
+                if ($isSuccessful && is_array($data)) {
                     if (! empty($data['payments']) && is_array($data['payments'])) {
                         foreach ($data['payments'] as $payment) {
                             if (($payment['status'] ?? '') === 'approved') {

@@ -38,7 +38,7 @@ class MercadoPagoController extends Controller
 
         try {
             $result = $this->mpService->createInStoreOrder(
-                posId: $validated['pos_id'],
+                posId: strtoupper(str_replace('-', '', $validated['pos_id'])),
                 externalRef: $externalRef,
                 amount: (float) $validated['amount'],
                 items: $items
