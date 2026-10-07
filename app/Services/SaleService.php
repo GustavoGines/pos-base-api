@@ -11,6 +11,7 @@ use App\Models\PaymentMethod;
 use App\Models\Quote;
 use App\Models\Sale;
 use App\Models\ThirdPartyCheck;
+use App\Services\Afip\AfipHelper;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -271,6 +272,9 @@ class SaleService
 
             $costPrice = $this->stockService->calculateCostPrice($product);
 
+            $ivaRate = (float) ($product->iva_rate ?? 21.00);
+            $taxCalc = AfipHelper::calculateNetAndIva($subtotal, $ivaRate);
+
             $sale->items()->create([
                 'product_id' => $product->id,
                 'product_name' => $product->name,
@@ -278,6 +282,9 @@ class SaleService
                 'unit_cost_price' => $costPrice,
                 'unit_price' => $unitPrice,
                 'subtotal' => $subtotal,
+                'iva_rate' => $ivaRate,
+                'net_amount' => $taxCalc['net'],
+                'iva_amount' => $taxCalc['iva'],
             ]);
         }
     }

@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\CashShiftController;
 use App\Http\Controllers\Api\CatalogController;
 use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\CustomerController;
+use App\Http\Controllers\Api\ElectronicInvoiceController;
 use App\Http\Controllers\Api\MercadoPagoController;
 use App\Http\Controllers\Api\PosController;
 use App\Http\Controllers\Api\ProductController;
@@ -137,6 +138,8 @@ Route::middleware(['session.validate'])->group(function () {
         ->middleware('permission.or.pin:' . Permissions::COLLECT_CUSTOMER_DEBT);
     Route::get('/sales/{sale}/ticket-pdf', [SalesController::class, 'ticketPdf']);
     Route::get('/sales/{sale}', [SalesController::class, 'show']);
+    Route::post('/sales/{sale}/invoice', [ElectronicInvoiceController::class, 'issueInvoice']);
+    Route::get('/sales/{sale}/electronic-invoice', [ElectronicInvoiceController::class, 'show']);
 
     // ── Clientes: gestión completa y cuentas corrientes ──────────────
     Route::get('/customers', [CustomerController::class, 'index']);

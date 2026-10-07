@@ -13,7 +13,7 @@ class Sale extends Model
 
     protected $fillable = [
         'total', 'total_surcharge', 'payment_status', 'amount_due',
-        'status', 'cash_shift_id', 'tendered_amount', 'change_amount',
+        'status', 'invoice_status', 'cash_shift_id', 'tendered_amount', 'change_amount',
         'user_id', 'cashier_id', 'customer_id', 'shipping_cost', 'delivery_address',
         'price_list',
         'voided_by_user_id', 'void_authorized_by_admin_id', 'voided_at', 'void_reason',
@@ -40,6 +40,11 @@ class Sale extends Model
     public function items(): HasMany
     {
         return $this->hasMany(SaleItem::class);
+    }
+
+    public function electronicInvoice(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(ElectronicInvoice::class);
     }
 
     public function payments(): HasMany

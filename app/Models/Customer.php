@@ -15,6 +15,9 @@ class Customer extends Model
         'name',
         'phone',
         'document_number',
+        'document_type',
+        'tax_condition',
+        'fiscal_address',
         'credit_limit',
         'balance',
         'is_active',
@@ -24,6 +27,7 @@ class Customer extends Model
     ];
 
     protected $casts = [
+        'document_type' => 'integer',
         'credit_limit' => 'decimal:2',
         'balance' => 'decimal:2',
         'is_active' => 'boolean',
