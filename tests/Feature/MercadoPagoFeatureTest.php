@@ -32,7 +32,7 @@ class MercadoPagoFeatureTest extends TestCase
     public function test_create_order_endpoint_returns_200_and_qr_data(): void
     {
         Http::fake([
-            'https://api.mercadopago.com/v1/orders' => Http::response([
+            'https://api.mercadopago.com/instore/orders/qr/seller/collectors/*' => Http::response([
                 'id' => 'ord_feat_111',
                 'qr_data' => '00020126360014COM.MERCADOPAGO52040000',
                 'status' => 'opened',
@@ -40,7 +40,7 @@ class MercadoPagoFeatureTest extends TestCase
         ]);
 
         $response = $this->actingAsAdmin()->postJson('/api/pos/mp/create-order', [
-            'pos_id' => 'caja-principal',
+            'pos_id' => 'CAJAPRINCIPAL',
             'amount' => 1500.50,
             'items' => [
                 ['title' => 'Producto Prueba', 'unit_price' => 1500.50, 'quantity' => 1],
@@ -58,7 +58,7 @@ class MercadoPagoFeatureTest extends TestCase
 
         $this->assertDatabaseHas('mp_transactions', [
             'external_reference' => 'POS-FEAT-ORDER-1',
-            'pos_id' => 'caja-principal',
+            'pos_id' => 'CAJAPRINCIPAL',
             'amount' => 1500.50,
             'status' => MpTransaction::STATUS_OPENED,
             'mp_order_id' => 'ord_feat_111',
@@ -102,7 +102,22 @@ class MercadoPagoFeatureTest extends TestCase
         ]);
 
         Http::fake([
-            'https://api.mercadopago.com/v1/orders/ord_poll_123' => Http::response([
+            'https://api.mercadopago.com/merchant_orders/search*' => Http::response([
+        'elements' => [
+            [
+                'id' => 'ord_poll_123',
+                'status' => 'closed',
+                'payments' => [
+                    [
+                        'id' => 55443322,
+                        'status' => 'approved',
+                        'amount' => 4500.00,
+                    ],
+                ],
+            ]
+        ]
+    ], 200),
+    'ignore' => Http::response([
                 'id' => 'ord_poll_123',
                 'status' => 'closed',
                 'payments' => [
@@ -189,7 +204,7 @@ class MercadoPagoFeatureTest extends TestCase
         ]);
 
         Http::fake([
-            'https://api.mercadopago.com/v1/orders/ord_feat_cancel_1/cancel' => Http::response([], 200),
+            'https://api.mercadopago.com/v1/orders/*/cancel' => Http::response([], 200),
         ]);
 
         $response = $this->actingAsAdmin()->postJson('/api/pos/mp/cancel-order', [

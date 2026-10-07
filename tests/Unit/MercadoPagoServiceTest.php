@@ -157,7 +157,7 @@ class MercadoPagoServiceTest extends TestCase
     public function test_create_in_store_order_calls_api_and_creates_transaction(): void
     {
         Http::fake([
-            'https://api.mercadopago.com/v1/orders' => Http::response([
+            'https://api.mercadopago.com/instore/orders/qr/seller/collectors/*' => Http::response([
                 'id' => 'ord_test_123',
                 'qr_data' => '00020101021243650016COM.MERCADOPAGO',
                 'status' => 'opened',
@@ -228,7 +228,22 @@ class MercadoPagoServiceTest extends TestCase
         ]);
 
         Http::fake([
-            'https://api.mercadopago.com/v1/orders/ord_check_300' => Http::response([
+            'https://api.mercadopago.com/merchant_orders/search*' => Http::response([
+        'elements' => [
+            [
+                'id' => 'ord_check_300',
+                'status' => 'closed',
+                'payments' => [
+                    [
+                        'id' => 99887766,
+                        'status' => 'approved',
+                        'amount' => 1200.00,
+                    ],
+                ],
+            ]
+        ]
+    ], 200),
+    'ignore' => Http::response([
                 'id' => 'ord_check_300',
                 'status' => 'closed',
                 'payments' => [
@@ -268,7 +283,7 @@ class MercadoPagoServiceTest extends TestCase
         ]);
 
         Http::fake([
-            'https://api.mercadopago.com/v1/orders/ord_cancel_400/cancel' => Http::response([], 200),
+            'https://api.mercadopago.com/v1/orders/*/cancel' => Http::response([], 200),
         ]);
 
         $res = $this->service->cancelInStoreOrder('POS-CANCEL-400');
