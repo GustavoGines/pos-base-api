@@ -270,6 +270,7 @@ class AfipWsfeService
             '<ImpIVA>' . number_format($ivaAmount, 2, '.', '') . '</ImpIVA>' .
             '<MonId>PES</MonId>' .
             '<MonCotiz>1</MonCotiz>' .
+            '<CondicionIVAReceptorId>' . AfipHelper::getCondicionIvaReceptorId($receiverTaxCondition) . '</CondicionIVAReceptorId>' .
             $ivaXml .
             '</FECAEDetRequest>' .
             '</FeDetReq>' .

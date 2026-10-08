@@ -181,4 +181,21 @@ class AfipHelper
             default => self::VOUCHER_FACTURA_B,
         };
     }
+    /**
+     * Resuelve el ID de la Condición Frente al IVA del Receptor
+     * según la Resolución General Nro 5616.
+     *
+     * @param string 
+     * @return int
+     */
+    public static function getCondicionIvaReceptorId(string $taxCondition): int
+    {
+        return match (strtolower($taxCondition)) {
+            'responsable_inscripto' => 1,
+            'exento' => 4,
+            'consumidor_final' => 5,
+            'monotributo' => 6,
+            default => 5, // Fallback por defecto a Consumidor Final
+        };
+    }
 }
