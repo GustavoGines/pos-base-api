@@ -53,6 +53,11 @@ class CustomerController extends Controller
             'default_price_tier' => 'nullable|string|in:base,wholesale,card',
             'delivery_address' => 'nullable|string|max:500',
             'is_internal_account' => 'nullable|boolean',
+            'document_type' => 'nullable|integer',
+            'tax_condition' => 'nullable|string|max:50',
+            'fiscal_address' => 'nullable|string|max:500',
+            'applies_iibb_perception' => 'nullable|boolean',
+            'iibb_perception_rate' => 'nullable|numeric|min:0|max:100',
         ], [
             'name.required' => 'El nombre del cliente es obligatorio.',
             'document_number.required' => 'El número de documento es obligatorio.',
@@ -100,6 +105,11 @@ class CustomerController extends Controller
             'default_price_tier' => 'nullable|string|in:base,wholesale,card',
             'delivery_address' => 'nullable|string|max:500',
             'is_internal_account' => 'sometimes|boolean',
+            'document_type' => 'nullable|integer',
+            'tax_condition' => 'nullable|string|max:50',
+            'fiscal_address' => 'nullable|string|max:500',
+            'applies_iibb_perception' => 'nullable|boolean',
+            'iibb_perception_rate' => 'nullable|numeric|min:0|max:100',
         ], [
             'name.required' => 'El nombre del cliente es obligatorio.',
             'document_number.required' => 'El número de documento es obligatorio.',

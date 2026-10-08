@@ -64,6 +64,8 @@ class SaleService
                 'cash_shift_id' => $context->cashShiftId,
                 'delivery_address' => $context->deliveryAddress,
                 'price_list' => $context->priceList,
+                'iibb_perception_amount' => $dto->iibbPerceptionAmount,
+                'iibb_perception_rate' => $dto->iibbPerceptionRate,
                 'status' => $dto->status,
             ]);
 

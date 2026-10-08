@@ -59,6 +59,8 @@ class BusinessSetting extends Model
         'mp_qr_enabled',
         'mp_point_device_id',
         'theme',
+        'is_iibb_perception_agent',
+        'default_iibb_perception_rate',
     ];
 
     public static function getSecret(string $key, ?string $default = null): ?string

@@ -153,6 +153,22 @@ class AfipWsfeService
         $lastNumber = $this->getLastVoucherNumber($ptoVta, $voucherType);
         $cbteNro = $lastNumber + 1;
 
+        // Percepción IIBB
+        $perceptionAmount = round((float) ($options['iibb_perception_amount'] ?? $sale->iibb_perception_amount ?? 0.0), 2);
+        $perceptionRate = (float) ($options['iibb_perception_rate'] ?? $sale->iibb_perception_rate ?? 0.0);
+
+        // Auto-cálculo de tasa si el cliente aplica y negocio es agente
+        if ($perceptionAmount <= 0.0 && ! empty($customer?->applies_iibb_perception)) {
+            $isAgent = BusinessSetting::where('key', 'is_iibb_perception_agent')->value('value');
+            if ($isAgent === '1' || $isAgent === 'true' || $isAgent === true || $isAgent === 1) {
+                if ($perceptionRate <= 0.0) {
+                    $perceptionRate = (float) ($customer->iibb_perception_rate
+                        ?? BusinessSetting::where('key', 'default_iibb_perception_rate')->value('value')
+                        ?? 0.0);
+                }
+            }
+        }
+
         // Cálculos e invariante matemático
         $totalAmount = round((float) $sale->total, 2);
         $ivaBreakdown = [];
@@ -161,9 +177,26 @@ class AfipWsfeService
         if ($voucherType === AfipHelper::VOUCHER_FACTURA_C) {
             // REGLA CRÍTICA MONOTRIBUTO (FACTURA C):
             // 1. ImpIVA debe ser estrictamente 0.00
-            // 2. ImpNeto es igual al total
+            // 2. ImpNeto es igual al total base (restando percepción si el total de la venta ya la contenía)
             // 3. El nodo <Iva> DEBE SER ESTRICTAMENTE OMITIDO
-            $netAmount = $totalAmount;
+            $baseSaleAmount = $totalAmount;
+            if ($perceptionAmount > 0.0 && $baseSaleAmount > $perceptionAmount && round((float) ($sale->iibb_perception_amount ?? 0), 2) > 0) {
+                $netAmount = round($baseSaleAmount - $perceptionAmount, 2);
+            } else {
+                $netAmount = $baseSaleAmount;
+            }
+
+            if ($perceptionAmount <= 0.0 && $perceptionRate > 0.0 && ! empty($customer?->applies_iibb_perception)) {
+                $isAgent = BusinessSetting::where('key', 'is_iibb_perception_agent')->value('value');
+                if ($isAgent === '1' || $isAgent === 'true' || $isAgent === true || $isAgent === 1) {
+                    $perceptionAmount = round($netAmount * ($perceptionRate / 100), 2);
+                }
+            }
+
+            if ($perceptionAmount > 0.0 && $perceptionRate <= 0.0 && $netAmount > 0.0) {
+                $perceptionRate = round(($perceptionAmount / $netAmount) * 100, 2);
+            }
+
             $ivaAmount = 0.00;
         } else {
             // FACTURAS A Y B: Desglose por alícuotas
@@ -186,9 +219,13 @@ class AfipWsfeService
 
             if (empty($groupedByAliquot)) {
                 // Fallback por si la venta no tiene items cargados
+                $fallbackSubtotal = $totalAmount;
+                if ($perceptionAmount > 0.0 && $totalAmount > $perceptionAmount && round((float) ($sale->iibb_perception_amount ?? 0), 2) > 0) {
+                    $fallbackSubtotal = round($totalAmount - $perceptionAmount, 2);
+                }
                 $groupedByAliquot[AfipHelper::ALIQUOT_21_PERCENT] = [
                     'rate' => 21.00,
-                    'subtotal' => $totalAmount,
+                    'subtotal' => $fallbackSubtotal,
                 ];
             }
 
@@ -210,11 +247,25 @@ class AfipWsfeService
             $netAmount = round($totalNet, 2);
             $ivaAmount = round($totalIva, 2);
 
-            // Cumplimiento estricto del invariante matemático de AFIP:
-            // ImpTotal = ImpNeto + ImpIVA (al centavo exacto)
-            $diff = round($totalAmount - ($netAmount + $ivaAmount), 2);
-            if ($diff !== 0.00) {
-                $netAmount = round($totalAmount - $ivaAmount, 2);
+            if ($perceptionAmount <= 0.0 && $perceptionRate > 0.0 && ! empty($customer?->applies_iibb_perception)) {
+                $isAgent = BusinessSetting::where('key', 'is_iibb_perception_agent')->value('value');
+                if ($isAgent === '1' || $isAgent === 'true' || $isAgent === true || $isAgent === 1) {
+                    $perceptionAmount = round($netAmount * ($perceptionRate / 100), 2);
+                }
+            }
+
+            if ($perceptionAmount > 0.0 && $perceptionRate <= 0.0 && $netAmount > 0.0) {
+                $perceptionRate = round(($perceptionAmount / $netAmount) * 100, 2);
+            }
+
+            // Base esperada de los items para chequear redondeo
+            $baseSale = $totalAmount;
+            if ($perceptionAmount > 0.0 && round((float) ($sale->iibb_perception_amount ?? 0), 2) > 0) {
+                $baseSale = round($totalAmount - $perceptionAmount, 2);
+            }
+            $diff = round($baseSale - ($netAmount + $ivaAmount), 2);
+            if ($diff !== 0.00 && abs($diff) < 1.00) {
+                $netAmount = round($baseSale - $ivaAmount, 2);
                 $firstKey = array_key_first($aliquotResults);
                 if ($firstKey !== null) {
                     $aliquotResults[$firstKey]['BaseImp'] = round($aliquotResults[$firstKey]['BaseImp'] + $diff, 2);
@@ -233,6 +284,35 @@ class AfipWsfeService
                     '</AlicIva>';
             }
             $ivaXml .= '</Iva>';
+        }
+
+        // Cumplimiento estricto del invariante matemático de AFIP:
+        // ImpTotal = ImpNeto + ImpIVA + ImpTrib (al centavo exacto)
+        $totalAmount = round($netAmount + $ivaAmount + $perceptionAmount, 2);
+
+        // Construir nodo XML <Tributos> si y solo si $perceptionAmount > 0
+        $tributosXml = '';
+        $tributesBreakdown = null;
+        if ($perceptionAmount > 0.00) {
+            $tributesBreakdown = [
+                [
+                    'Id' => 2,
+                    'Desc' => 'Percepcion IIBB Formosa',
+                    'BaseImp' => $netAmount,
+                    'Alic' => $perceptionRate,
+                    'Importe' => $perceptionAmount,
+                ],
+            ];
+
+            $tributosXml = '<Tributos>' .
+                '<Tributo>' .
+                '<Id>2</Id>' .
+                '<Desc>Percepcion IIBB Formosa</Desc>' .
+                '<BaseImp>' . number_format($netAmount, 2, '.', '') . '</BaseImp>' .
+                '<Alic>' . number_format($perceptionRate, 2, '.', '') . '</Alic>' .
+                '<Importe>' . number_format($perceptionAmount, 2, '.', '') . '</Importe>' .
+                '</Tributo>' .
+                '</Tributos>';
         }
 
         $cbteFch = date('Ymd');
@@ -266,11 +346,12 @@ class AfipWsfeService
             '<ImpTotConc>0.00</ImpTotConc>' .
             '<ImpNeto>' . number_format($netAmount, 2, '.', '') . '</ImpNeto>' .
             '<ImpOpEx>0.00</ImpOpEx>' .
-            '<ImpTrib>0.00</ImpTrib>' .
+            '<ImpTrib>' . number_format($perceptionAmount, 2, '.', '') . '</ImpTrib>' .
             '<ImpIVA>' . number_format($ivaAmount, 2, '.', '') . '</ImpIVA>' .
             '<MonId>PES</MonId>' .
             '<MonCotiz>1</MonCotiz>' .
             '<CondicionIVAReceptorId>' . AfipHelper::getCondicionIvaReceptorId($receiverTaxCondition) . '</CondicionIVAReceptorId>' .
+            $tributosXml .
             $ivaXml .
             '</FECAEDetRequest>' .
             '</FeDetReq>' .
@@ -361,6 +442,8 @@ class AfipWsfeService
             'receiver_tax_condition'  => $receiverTaxCondition,
             'net_amount'              => $netAmount,
             'iva_amount'              => $ivaAmount,
+            'tribute_amount'          => $perceptionAmount,
+            'tributes_breakdown'      => $tributesBreakdown,
             'exempt_amount'           => 0.00,
             'untaxed_amount'          => 0.00,
             'total_amount'            => $totalAmount,

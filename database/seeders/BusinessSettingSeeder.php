@@ -30,6 +30,8 @@ class BusinessSettingSeeder extends Seeder
             ['key' => 'printer_ip_address',      'value' => null],
             ['key' => 'printer_ip_port',         'value' => null],
             ['key' => 'com_port_scale',          'value' => null],
+            ['key' => 'is_iibb_perception_agent', 'value' => '0'],
+            ['key' => 'default_iibb_perception_rate', 'value' => '0.00'],
         ];
 
         foreach ($settings as $setting) {

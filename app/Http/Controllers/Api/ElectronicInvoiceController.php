@@ -35,6 +35,8 @@ class ElectronicInvoiceController extends Controller
             'receiver_address' => 'nullable|string|max:255',
             'receiver_tax_condition' => 'nullable|string|max:50',
             'point_of_sale' => 'nullable|integer',
+            'iibb_perception_amount' => 'nullable|numeric|min:0',
+            'iibb_perception_rate' => 'nullable|numeric|min:0|max:100',
         ]);
 
         if ($sale->isVoided()) {

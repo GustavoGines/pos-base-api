@@ -24,6 +24,8 @@ class Customer extends Model
         'default_price_tier',
         'delivery_address',
         'is_internal_account',
+        'applies_iibb_perception',
+        'iibb_perception_rate',
     ];
 
     protected $casts = [
@@ -32,6 +34,8 @@ class Customer extends Model
         'balance' => 'decimal:2',
         'is_active' => 'boolean',
         'is_internal_account' => 'boolean',
+        'applies_iibb_perception' => 'boolean',
+        'iibb_perception_rate' => 'decimal:2',
     ];
 
     public function transactions(): HasMany

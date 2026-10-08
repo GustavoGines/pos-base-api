@@ -25,6 +25,8 @@ class ProcessSaleRequest extends FormRequest
             'total' => 'required|numeric|min:0',
             'total_surcharge' => 'required|numeric|min:0',
             'shipping_cost' => 'nullable|numeric|min:0',
+            'iibb_perception_amount' => 'nullable|numeric|min:0',
+            'iibb_perception_rate' => 'nullable|numeric|min:0|max:100',
             'payments' => 'exclude_if:status,pending|required|array|min:1',
             'payments.*.payment_method_id' => 'required|integer|exists:payment_methods,id',
             'payments.*.base_amount' => 'required|numeric|min:0',
