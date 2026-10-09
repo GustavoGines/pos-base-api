@@ -61,6 +61,9 @@ class BusinessSetting extends Model
         'theme',
         'is_iibb_perception_agent',
         'default_iibb_perception_rate',
+        'tax_condition',
+        'iibb',
+        'activity_start_date',
     ];
 
     public static function getSecret(string $key, ?string $default = null): ?string
