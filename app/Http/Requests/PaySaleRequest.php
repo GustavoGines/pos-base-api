@@ -28,6 +28,8 @@ class PaySaleRequest extends FormRequest
             'payments.*.total_amount' => 'required|numeric|min:0',
             'total_surcharge' => 'required|numeric|min:0',
             'shipping_cost' => 'nullable|numeric|min:0',
+            'iibb_perception_amount' => 'nullable|numeric|min:0',
+            'iibb_perception_rate' => 'nullable|numeric|min:0|max:100',
             'tendered_amount' => 'nullable|numeric|min:0',
             'change_amount' => 'nullable|numeric|min:0',
             'items' => 'nullable|array',

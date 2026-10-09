@@ -131,7 +131,7 @@ class SaleService
                 $lockedSale->total = $newTotal;
             }
 
-            $totalToValidate = $lockedSale->total + $dto->totalSurcharge + $dto->shippingCost + $dto->iibbPerceptionAmount;
+            $totalToValidate = $lockedSale->total + $dto->totalSurcharge + $dto->shippingCost;
             $this->paymentService->validatePaymentsTotal($dto->payments, $totalToValidate);
             $this->paymentService->registerPayments($lockedSale, $dto->payments, $dto->checkDetails, $context);
 

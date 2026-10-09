@@ -298,7 +298,7 @@ class AfipWsfeService
             $tributesBreakdown = [
                 [
                     'Id' => 2,
-                    'Desc' => 'Percepcion IIBB Formosa',
+                    'Desc' => 'Percepcion de Ingresos Brutos',
                     'BaseImp' => $netAmount,
                     'Alic' => $perceptionRate,
                     'Importe' => $perceptionAmount,
@@ -308,7 +308,7 @@ class AfipWsfeService
             $tributosXml = '<Tributos>' .
                 '<Tributo>' .
                 '<Id>2</Id>' .
-                '<Desc>Percepcion IIBB Formosa</Desc>' .
+                '<Desc>Percepcion de Ingresos Brutos</Desc>' .
                 '<BaseImp>' . number_format($netAmount, 2, '.', '') . '</BaseImp>' .
                 '<Alic>' . number_format($perceptionRate, 2, '.', '') . '</Alic>' .
                 '<Importe>' . number_format($perceptionAmount, 2, '.', '') . '</Importe>' .
