@@ -128,7 +128,7 @@ class SaleService
 
                 // Recalculate Totals based on new items
                 $newTotal = (float) $lockedSale->items()->sum('subtotal');
-                $lockedSale->total = $newTotal;
+                $lockedSale->total = $newTotal + (float) $dto->iibbPerceptionAmount;
             }
 
             $totalToValidate = $lockedSale->total + $dto->totalSurcharge + $dto->shippingCost;

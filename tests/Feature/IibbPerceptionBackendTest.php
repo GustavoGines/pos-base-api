@@ -406,7 +406,7 @@ class IibbPerceptionBackendTest extends TestCase
         // 3. Nodo <Tributos>
         $this->assertStringContainsString('<Tributos>', $interceptedXml);
         $this->assertStringContainsString('<Id>2</Id>', $interceptedXml);
-        $this->assertStringContainsString('<Desc>Percepcion IIBB Formosa</Desc>', $interceptedXml);
+        $this->assertStringContainsString('<Desc>Percepcion de Ingresos Brutos</Desc>', $interceptedXml);
         $this->assertStringContainsString('<BaseImp>1000.00</BaseImp>', $interceptedXml);
         $this->assertStringContainsString('<Alic>3.00</Alic>', $interceptedXml);
         $this->assertStringContainsString('<Importe>30.00</Importe>', $interceptedXml);
