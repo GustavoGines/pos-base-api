@@ -83,6 +83,14 @@ class SettingController extends Controller
                 continue;
             }
 
+            // Proteger claves críticas de licencia y sistema contra modificación no autorizada vía update general
+            if (
+                str_starts_with($key, 'license_') ||
+                in_array($key, ['app_plan', 'installation_id', 'last_license_check'], true)
+            ) {
+                continue;
+            }
+
             if (in_array($key, BusinessSetting::SENSITIVE_KEYS, true)) {
                 // Si el valor contiene asteriscos de enmascaramiento, preservar secreto existente
                 if (is_string($value) && str_contains($value, '****')) {

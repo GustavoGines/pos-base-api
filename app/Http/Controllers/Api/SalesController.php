@@ -30,6 +30,7 @@ class SalesController extends Controller
             'user:id,name',
             'cashier:id,name',
             'payments.paymentMethod:id,name,code,is_cash',
+            'electronicInvoice',
         ])
             ->where('status', '!=', 'pending')
             ->latest();
@@ -76,6 +77,7 @@ class SalesController extends Controller
             'cashier:id,name',
             'customer:id,name,document_number',
             'payments.paymentMethod:id,name,code,is_cash',
+            'electronicInvoice',
         ]);
 
         return response()->json($sale);

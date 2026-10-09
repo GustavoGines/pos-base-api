@@ -39,6 +39,11 @@ class ElectronicInvoice extends Model
         'afip_response',
         'error_message',
         'issued_at',
+        'credit_note_cae',
+        'credit_note_expiration',
+        'credit_note_number',
+        'credit_note_issued_at',
+        'credit_note_voucher_type',
     ];
 
     protected $casts = [
@@ -48,6 +53,9 @@ class ElectronicInvoice extends Model
         'doc_type' => 'integer',
         'cae_expiration' => 'date',
         'issued_at' => 'datetime',
+        'credit_note_expiration' => 'date',
+        'credit_note_issued_at' => 'datetime',
+        'credit_note_voucher_type' => 'integer',
         'net_amount' => 'decimal:2',
         'iva_amount' => 'decimal:2',
         'tribute_amount' => 'decimal:2',

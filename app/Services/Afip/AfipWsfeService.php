@@ -318,6 +318,22 @@ class AfipWsfeService
         $cbteFch = date('Ymd');
         $endpoint = $this->getWsfeEndpoint();
 
+        // ── Nodo CbtesAsoc (Para Notas de Crédito / Débito) ──
+        $cbtesAsocXml = '';
+        if (!empty($options['cbtes_asoc']) && is_array($options['cbtes_asoc'])) {
+            $cbtesAsocXml .= '<CbtesAsoc>';
+            foreach ($options['cbtes_asoc'] as $asoc) {
+                $cbtesAsocXml .= '<CbteAsoc>' .
+                    '<Tipo>' . ($asoc['Tipo'] ?? '') . '</Tipo>' .
+                    '<PtoVta>' . ($asoc['PtoVta'] ?? '') . '</PtoVta>' .
+                    '<Nro>' . ($asoc['Nro'] ?? '') . '</Nro>' .
+                    (!empty($asoc['Cuit']) ? '<Cuit>' . $asoc['Cuit'] . '</Cuit>' : '') .
+                    (!empty($asoc['CbteFch']) ? '<CbteFch>' . $asoc['CbteFch'] . '</CbteFch>' : '') .
+                    '</CbteAsoc>';
+            }
+            $cbtesAsocXml .= '</CbtesAsoc>';
+        }
+
         // Armado del Envelope SOAP FECAESolicitar
         $soapEnvelope = '<?xml version="1.0" encoding="utf-8"?>' .
             '<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">' .
@@ -351,6 +367,7 @@ class AfipWsfeService
             '<MonId>PES</MonId>' .
             '<MonCotiz>1</MonCotiz>' .
             '<CondicionIVAReceptorId>' . AfipHelper::getCondicionIvaReceptorId($receiverTaxCondition) . '</CondicionIVAReceptorId>' .
+            $cbtesAsocXml .
             $tributosXml .
             $ivaXml .
             '</FECAEDetRequest>' .

@@ -648,6 +648,35 @@ class SettingsSecurityTest extends TestCase
         $this->assertEquals('afip/20123456789/cert.key', BusinessSetting::where('key', 'afip_key_path')->value('value'));
         $this->assertEquals('afip/20123456789/cert.crt', BusinessSetting::where('key', 'afip_cert_path')->value('value'));
     }
+
+    /**
+     * 22. PUT /api/settings no puede alterar claves críticas de licencia ni de sistema.
+     */
+    public function test_put_settings_cannot_tamper_license_and_system_keys(): void
+    {
+        BusinessSetting::updateOrCreate(['key' => 'license_features_dict'], ['value' => json_encode(['multiple_prices' => false])]);
+        BusinessSetting::updateOrCreate(['key' => 'app_plan'], ['value' => 'starter']);
+        BusinessSetting::updateOrCreate(['key' => 'installation_id'], ['value' => 'valid-uuid-1234']);
+
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $response = $this->actingAsAdmin($admin)->putJson('/api/settings', [
+            'license_features_dict' => ['multiple_prices' => true, 'unlimited_users' => true],
+            'app_plan' => 'enterprise_hacked',
+            'installation_id' => 'forged-uuid',
+            'company_name' => 'Comercio Auditado',
+        ]);
+
+        $response->assertStatus(200);
+
+        // Los valores críticos de licencia deben permanecer intactos
+        $this->assertEquals(json_encode(['multiple_prices' => false]), BusinessSetting::where('key', 'license_features_dict')->value('value'));
+        $this->assertEquals('starter', BusinessSetting::where('key', 'app_plan')->value('value'));
+        $this->assertEquals('valid-uuid-1234', BusinessSetting::where('key', 'installation_id')->value('value'));
+
+        // La configuración legítima sí debe actualizarse
+        $this->assertEquals('Comercio Auditado', BusinessSetting::where('key', 'company_name')->value('value'));
+    }
 }
 
 

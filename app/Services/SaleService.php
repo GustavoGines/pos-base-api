@@ -12,6 +12,7 @@ use App\Models\Quote;
 use App\Models\Sale;
 use App\Models\ThirdPartyCheck;
 use App\Services\Afip\AfipHelper;
+use App\Services\Afip\AfipWsfeService;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -19,7 +20,8 @@ class SaleService
 {
     public function __construct(
         protected StockService $stockService,
-        protected PaymentService $paymentService
+        protected PaymentService $paymentService,
+        protected AfipWsfeService $afipWsfeService
     ) {}
 
     public function executeSale(ProcessSaleDTO $dto, SaleContextDTO $context): Sale
@@ -187,6 +189,50 @@ class SaleService
             }
             if ($lockedSale->status !== 'pending' && $lockedSale->status !== 'completed') {
                 throw new \InvalidArgumentException('No se puede anular una venta en este estado.');
+            }
+
+            // ── Emisión de Nota de Crédito AFIP si corresponde ──
+            $electronicInvoice = $lockedSale->electronicInvoice;
+            if ($electronicInvoice && $electronicInvoice->cae && empty($electronicInvoice->credit_note_cae)) {
+                $ncVoucherType = match ($electronicInvoice->voucher_type) {
+                    AfipHelper::VOUCHER_FACTURA_A => AfipHelper::VOUCHER_NOTA_CREDITO_A,
+                    AfipHelper::VOUCHER_FACTURA_C => AfipHelper::VOUCHER_NOTA_CREDITO_C,
+                    default => AfipHelper::VOUCHER_NOTA_CREDITO_B,
+                };
+
+                $cbtesAsoc = [
+                    [
+                        'Tipo' => $electronicInvoice->voucher_type,
+                        'PtoVta' => $electronicInvoice->point_of_sale,
+                        'Nro' => $electronicInvoice->voucher_number,
+                        'Cuit' => $electronicInvoice->doc_type === AfipHelper::DOC_CUIT ? $electronicInvoice->doc_number : null,
+                        'CbteFch' => $electronicInvoice->issued_at ? $electronicInvoice->issued_at->format('Ymd') : date('Ymd'),
+                    ]
+                ];
+
+                $options = [
+                    'voucher_type' => $ncVoucherType,
+                    'point_of_sale' => $electronicInvoice->point_of_sale,
+                    'doc_type' => $electronicInvoice->doc_type,
+                    'doc_number' => $electronicInvoice->doc_number,
+                    'receiver_name' => $electronicInvoice->receiver_name,
+                    'receiver_address' => $electronicInvoice->receiver_address,
+                    'receiver_tax_condition' => $electronicInvoice->receiver_tax_condition,
+                    'cbtes_asoc' => $cbtesAsoc,
+                ];
+
+                try {
+                    $ncData = $this->afipWsfeService->authorizeInvoice($lockedSale, $options);
+                    $electronicInvoice->update([
+                        'credit_note_cae' => $ncData['cae'],
+                        'credit_note_expiration' => $ncData['cae_expiration'],
+                        'credit_note_number' => $ncData['voucher_number'],
+                        'credit_note_issued_at' => now(),
+                        'credit_note_voucher_type' => $ncVoucherType,
+                    ]);
+                } catch (\Exception $e) {
+                    throw new \InvalidArgumentException("No se pudo emitir la Nota de Crédito en AFIP. Motivo: " . $e->getMessage());
+                }
             }
 
             $deliveryNote = DeliveryNote::with('items')->where('sale_id', $lockedSale->id)->first();
