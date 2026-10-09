@@ -11,6 +11,7 @@ use App\Models\Product;
 use App\Models\ProductPriceTier;
 use App\Models\Sale;
 use App\Models\User;
+use App\Services\Afip\AfipWsfeService;
 use App\Services\PaymentService;
 use App\Services\ReportCacheService;
 use App\Services\SaleService;
@@ -39,7 +40,7 @@ class SaleServiceTest extends TestCase
 
         $this->stockService = app(StockService::class);
         $this->paymentService = app(PaymentService::class);
-        $this->saleService = new SaleService($this->stockService, $this->paymentService);
+        $this->saleService = new SaleService($this->stockService, $this->paymentService, app(AfipWsfeService::class));
 
         $this->user = User::factory()->create(['role' => 'admin']);
         $this->cashMethod = $this->crearMetodoEfectivo();

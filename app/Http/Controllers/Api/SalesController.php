@@ -153,7 +153,7 @@ class SalesController extends Controller
 
         return response()->json([
             'message' => "Venta #{$voidedSale->id} anulada correctamente. El stock fue restaurado.",
-            'sale' => $voidedSale->fresh()->load('items.product', 'user:id,name', 'cashier:id,name', 'payments.paymentMethod:id,name,code,is_cash'),
+            'sale' => $voidedSale->fresh()->load('items.product', 'user:id,name', 'cashier:id,name', 'payments.paymentMethod:id,name,code,is_cash', 'electronicInvoice'),
         ]);
     }
 

@@ -121,10 +121,11 @@ class AfipWsfeService
         $receiverTaxCondition = $options['receiver_tax_condition'] ?? ($customer?->tax_condition ?? 'consumidor_final');
 
         // Validaciones por tipo de comprobante
-        if ($voucherType === AfipHelper::VOUCHER_FACTURA_A) {
+        // Clase A (Factura A, Nota de Débito A, Nota de Crédito A): CUIT receptor obligatorio
+        if ($voucherLetter === 'A') {
             $docType = AfipHelper::DOC_CUIT;
             if (! AfipHelper::validateCuit($docNumber)) {
-                throw new InvalidArgumentException("Para emitir Factura A, el CUIT del receptor es obligatorio y debe ser válido ({$docNumber}).");
+                throw new InvalidArgumentException("Para emitir comprobantes clase A, el CUIT del receptor es obligatorio y debe ser válido ({$docNumber}).");
             }
         } elseif ($docType === AfipHelper::DOC_CONSUMIDOR_FINAL) {
             // Verificar tope de Consumidor Final anónimo
@@ -174,8 +175,8 @@ class AfipWsfeService
         $ivaBreakdown = [];
         $ivaXml = '';
 
-        if ($voucherType === AfipHelper::VOUCHER_FACTURA_C) {
-            // REGLA CRÍTICA MONOTRIBUTO (FACTURA C):
+        if ($voucherLetter === 'C') {
+            // REGLA CRÍTICA MONOTRIBUTO (CLASE C: Factura C, Nota de Débito C, Nota de Crédito C):
             // 1. ImpIVA debe ser estrictamente 0.00
             // 2. ImpNeto es igual al total base (restando percepción si el total de la venta ya la contenía)
             // 3. El nodo <Iva> DEBE SER ESTRICTAMENTE OMITIDO
@@ -319,16 +320,19 @@ class AfipWsfeService
         $endpoint = $this->getWsfeEndpoint();
 
         // ── Nodo CbtesAsoc (Para Notas de Crédito / Débito) ──
+        // <Cuit> = CUIT del EMISOR del comprobante asociado. En este sistema el comprobante
+        // asociado siempre es propio, por lo que se usa el CUIT emisor (Auth), nunca el del receptor.
         $cbtesAsocXml = '';
         if (!empty($options['cbtes_asoc']) && is_array($options['cbtes_asoc'])) {
             $cbtesAsocXml .= '<CbtesAsoc>';
             foreach ($options['cbtes_asoc'] as $asoc) {
+                $asocFch = preg_replace('/\D/', '', (string) ($asoc['CbteFch'] ?? ''));
                 $cbtesAsocXml .= '<CbteAsoc>' .
-                    '<Tipo>' . ($asoc['Tipo'] ?? '') . '</Tipo>' .
-                    '<PtoVta>' . ($asoc['PtoVta'] ?? '') . '</PtoVta>' .
-                    '<Nro>' . ($asoc['Nro'] ?? '') . '</Nro>' .
-                    (!empty($asoc['Cuit']) ? '<Cuit>' . $asoc['Cuit'] . '</Cuit>' : '') .
-                    (!empty($asoc['CbteFch']) ? '<CbteFch>' . $asoc['CbteFch'] . '</CbteFch>' : '') .
+                    '<Tipo>' . (int) ($asoc['Tipo'] ?? 0) . '</Tipo>' .
+                    '<PtoVta>' . (int) ($asoc['PtoVta'] ?? 0) . '</PtoVta>' .
+                    '<Nro>' . (int) ($asoc['Nro'] ?? 0) . '</Nro>' .
+                    '<Cuit>' . $issuerCuit . '</Cuit>' .
+                    (strlen($asocFch) === 8 ? '<CbteFch>' . $asocFch . '</CbteFch>' : '') .
                     '</CbteAsoc>';
             }
             $cbtesAsocXml .= '</CbtesAsoc>';

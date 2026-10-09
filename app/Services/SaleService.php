@@ -191,59 +191,7 @@ class SaleService
                 throw new \InvalidArgumentException('No se puede anular una venta en este estado.');
             }
 
-            // ── Emisión de Nota de Crédito AFIP si corresponde ──
-            $electronicInvoice = $lockedSale->electronicInvoice;
-            if ($electronicInvoice && $electronicInvoice->cae && empty($electronicInvoice->credit_note_cae)) {
-                $ncVoucherType = match ($electronicInvoice->voucher_type) {
-                    AfipHelper::VOUCHER_FACTURA_A => AfipHelper::VOUCHER_NOTA_CREDITO_A,
-                    AfipHelper::VOUCHER_FACTURA_C => AfipHelper::VOUCHER_NOTA_CREDITO_C,
-                    default => AfipHelper::VOUCHER_NOTA_CREDITO_B,
-                };
-
-                $cbtesAsoc = [
-                    [
-                        'Tipo' => $electronicInvoice->voucher_type,
-                        'PtoVta' => $electronicInvoice->point_of_sale,
-                        'Nro' => $electronicInvoice->voucher_number,
-                        'Cuit' => $electronicInvoice->doc_type === AfipHelper::DOC_CUIT ? $electronicInvoice->doc_number : null,
-                        'CbteFch' => $electronicInvoice->issued_at ? $electronicInvoice->issued_at->format('Ymd') : date('Ymd'),
-                    ]
-                ];
-
-                $options = [
-                    'voucher_type' => $ncVoucherType,
-                    'point_of_sale' => $electronicInvoice->point_of_sale,
-                    'doc_type' => $electronicInvoice->doc_type,
-                    'doc_number' => $electronicInvoice->doc_number,
-                    'receiver_name' => $electronicInvoice->receiver_name,
-                    'receiver_address' => $electronicInvoice->receiver_address,
-                    'receiver_tax_condition' => $electronicInvoice->receiver_tax_condition,
-                    'cbtes_asoc' => $cbtesAsoc,
-                ];
-
-                try {
-                    $ncData = $this->afipWsfeService->authorizeInvoice($lockedSale, $options);
-                    $electronicInvoice->update([
-                        'credit_note_cae' => $ncData['cae'],
-                        'credit_note_expiration' => $ncData['cae_expiration'],
-                        'credit_note_number' => $ncData['voucher_number'],
-                        'credit_note_issued_at' => now(),
-                        'credit_note_voucher_type' => $ncVoucherType,
-                    ]);
-                } catch (\Exception $e) {
-                    throw new \InvalidArgumentException("No se pudo emitir la Nota de Crédito en AFIP. Motivo: " . $e->getMessage());
-                }
-            }
-
-            $deliveryNote = DeliveryNote::with('items')->where('sale_id', $lockedSale->id)->first();
-
-            $this->stockService->restoreStockForVoid($lockedSale, $context, $deliveryNote);
-
-            if ($deliveryNote) {
-                $deliveryNote->update(['status' => 'cancelled']);
-            }
-
-            // Validar estado de Cheques antes de anular (con bloqueo pesimista contra carreras)
+            // ── PASO 1: Validar estado de Cheques antes de AFIP (bloqueo pesimista) ──
             $checks = ThirdPartyCheck::with('supplier')->where('sale_id', $lockedSale->id)->lockForUpdate()->get();
             foreach ($checks as $check) {
                 if ($check->status === 'endorsed') {
@@ -269,6 +217,62 @@ class SaleService
                     );
                 }
             }
+
+            // ── PASO 2: Emisión de Nota de Crédito AFIP si corresponde ──
+            $electronicInvoice = $lockedSale->electronicInvoice;
+            if ($electronicInvoice && $electronicInvoice->cae && empty($electronicInvoice->credit_note_cae)) {
+                $ncVoucherType = match ($electronicInvoice->voucher_type) {
+                    AfipHelper::VOUCHER_FACTURA_A => AfipHelper::VOUCHER_NOTA_CREDITO_A,
+                    AfipHelper::VOUCHER_FACTURA_C => AfipHelper::VOUCHER_NOTA_CREDITO_C,
+                    default => AfipHelper::VOUCHER_NOTA_CREDITO_B,
+                };
+
+                $cbtesAsoc = [
+                    [
+                        'Tipo' => $electronicInvoice->voucher_type,
+                        'PtoVta' => $electronicInvoice->point_of_sale,
+                        'Nro' => $electronicInvoice->voucher_number,
+                        // 'Cuit' lo completa AfipWsfeService con el CUIT emisor (comprobante propio)
+                        'CbteFch' => $electronicInvoice->issued_at ? $electronicInvoice->issued_at->format('Ymd') : date('Ymd'),
+                    ]
+                ];
+
+                $options = [
+                    'voucher_type' => $ncVoucherType,
+                    'point_of_sale' => $electronicInvoice->point_of_sale,
+                    'doc_type' => $electronicInvoice->doc_type,
+                    'doc_number' => $electronicInvoice->doc_number,
+                    'receiver_name' => $electronicInvoice->receiver_name,
+                    'receiver_address' => $electronicInvoice->receiver_address,
+                    'receiver_tax_condition' => $electronicInvoice->receiver_tax_condition,
+                    'cbtes_asoc' => $cbtesAsoc,
+                ];
+
+                try {
+                    $ncData = $this->afipWsfeService->authorizeInvoice($lockedSale, $options);
+                    $electronicInvoice->update([
+                        'credit_note_cae' => $ncData['cae'],
+                        'credit_note_expiration' => $ncData['cae_expiration'],
+                        'credit_note_number' => $ncData['voucher_number'],
+                        'credit_note_issued_at' => now(),
+                        'credit_note_voucher_type' => $ncVoucherType,
+                        // H-09: Save QR Data (TODO in next step if required)
+                    ]);
+                } catch (\Exception $e) {
+                    throw new \InvalidArgumentException("No se pudo emitir la Nota de Crédito en AFIP. Motivo: " . $e->getMessage());
+                }
+            }
+
+            // ── PASO 3: Restitución local (Stock, Remito) ──
+            $deliveryNote = DeliveryNote::with('items')->where('sale_id', $lockedSale->id)->first();
+
+            $this->stockService->restoreStockForVoid($lockedSale, $context, $deliveryNote);
+
+            if ($deliveryNote) {
+                $deliveryNote->update(['status' => 'cancelled']);
+            }
+
+            // ── PASO 4: Si los cheques están 'in_wallet', procedemos a anularlos ──
 
             // Si están 'in_wallet', procedemos a anularlos
             foreach ($checks as $check) {
