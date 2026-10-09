@@ -171,7 +171,8 @@ class AfipWsfeService
         }
 
         // Cálculos e invariante matemático
-        $totalAmount = round((float) $sale->total, 2);
+        $extraAmount = round((float) $sale->total_surcharge + (float) $sale->shipping_cost, 2);
+        $totalAmount = round((float) $sale->total + $extraAmount, 2);
         $ivaBreakdown = [];
         $ivaXml = '';
 
@@ -216,6 +217,17 @@ class AfipWsfeService
                     ];
                 }
                 $groupedByAliquot[$aliquotId]['subtotal'] += $subtotal;
+            }
+
+            if ($extraAmount > 0) {
+                $generalAliquotId = AfipHelper::ALIQUOT_21_PERCENT;
+                if (! isset($groupedByAliquot[$generalAliquotId])) {
+                    $groupedByAliquot[$generalAliquotId] = [
+                        'rate' => 21.00,
+                        'subtotal' => 0.0,
+                    ];
+                }
+                $groupedByAliquot[$generalAliquotId]['subtotal'] += $extraAmount;
             }
 
             if (empty($groupedByAliquot)) {
