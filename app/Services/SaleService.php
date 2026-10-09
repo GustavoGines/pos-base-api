@@ -50,7 +50,7 @@ class SaleService
 
             $paymentStatus = $isPendingSale ? 'pending' :
                 ($isCuentaCorriente ? ($ccPaymentTotal >= ($total + $totalSurcharge + $dto->shippingCost - 0.1) ? 'pending' : 'partial') : 'paid');
-            $amountDue = $isCuentaCorriente ? $ccPaymentTotal : ($isPendingSale ? $total + $dto->shippingCost : 0);
+            $amountDue = $isCuentaCorriente ? $ccPaymentTotal : ($isPendingSale ? $total + $totalSurcharge + $dto->shippingCost : 0);
 
             $sale = Sale::create([
                 'total' => $total,
@@ -131,7 +131,7 @@ class SaleService
                 $lockedSale->total = $newTotal;
             }
 
-            $totalToValidate = $lockedSale->total + $dto->totalSurcharge + $dto->shippingCost;
+            $totalToValidate = $lockedSale->total + $dto->totalSurcharge + $dto->shippingCost + $dto->iibbPerceptionAmount;
             $this->paymentService->validatePaymentsTotal($dto->payments, $totalToValidate);
             $this->paymentService->registerPayments($lockedSale, $dto->payments, $dto->checkDetails, $context);
 
@@ -164,6 +164,8 @@ class SaleService
                 'total' => $lockedSale->total,
                 'total_surcharge' => $dto->totalSurcharge,
                 'shipping_cost' => $dto->shippingCost,
+                'iibb_perception_amount' => $dto->iibbPerceptionAmount,
+                'iibb_perception_rate' => $dto->iibbPerceptionRate,
                 'amount_due' => $isCuentaCorriente ? $ccPaymentTotal : 0,
                 'tendered_amount' => $dto->tenderedAmount,
                 'change_amount' => $dto->changeAmount,
@@ -256,7 +258,7 @@ class SaleService
                         'credit_note_number' => $ncData['voucher_number'],
                         'credit_note_issued_at' => now(),
                         'credit_note_voucher_type' => $ncVoucherType,
-                        // H-09: Save QR Data (TODO in next step if required)
+                        'credit_note_qr_data' => $ncData['qr_data'] ?? null,
                     ]);
                 } catch (\Exception $e) {
                     throw new \InvalidArgumentException("No se pudo emitir la Nota de Crédito en AFIP. Motivo: " . $e->getMessage());
@@ -283,6 +285,24 @@ class SaleService
 
             // Revertir Cuenta Corriente
             $this->paymentService->revertCustomerTransactionsForVoid($lockedSale, $context);
+
+            if ($lockedSale->cash_shift_id !== $context->cashShiftId) {
+                $cashRefundAmount = $lockedSale->payments()
+                    ->whereHas('paymentMethod', fn($q) => $q->where('is_cash', true))
+                    ->sum('total_amount');
+                
+                if ($cashRefundAmount > 0) {
+                    \App\Models\CashMovement::create([
+                        'cash_shift_id' => $context->cashShiftId,
+                        'user_id' => $context->userId,
+                        'amount' => $cashRefundAmount,
+                        'payment_method' => 'efectivo',
+                        'type' => 'expense',
+                        'category' => 'refund',
+                        'description' => "Devolución en efectivo por anulación de Venta #{$lockedSale->id} (Turno anterior)",
+                    ]);
+                }
+            }
 
             $lockedSale->update([
                 'status' => 'voided',

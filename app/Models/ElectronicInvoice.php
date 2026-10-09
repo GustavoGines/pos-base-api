@@ -44,6 +44,7 @@ class ElectronicInvoice extends Model
         'credit_note_number',
         'credit_note_issued_at',
         'credit_note_voucher_type',
+        'credit_note_qr_data',
     ];
 
     protected $casts = [

@@ -67,8 +67,8 @@ class AfipWsfeService
         }
 
         if (preg_match('/<Errors>(.*?)<\/Errors>/s', $xml, $errMatch)) {
-            preg_match('/<Msg>(.*?)<\/Msg>/s', $errMatch[1], $msgMatch);
-            $msg = $msgMatch[1] ?? 'Error al consultar último comprobante';
+            preg_match_all('/<Msg>(.*?)<\/Msg>/s', $errMatch[1], $msgMatch);
+            $msg = implode('; ', $msgMatch[1] ?? ['Error al consultar último comprobante']);
             throw new RuntimeException("AFIP WSFE Error: {$msg}");
         }
 

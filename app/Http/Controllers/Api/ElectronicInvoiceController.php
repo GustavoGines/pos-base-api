@@ -39,76 +39,80 @@ class ElectronicInvoiceController extends Controller
             'iibb_perception_rate' => 'nullable|numeric|min:0|max:100',
         ]);
 
-        if ($sale->isVoided()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'No es posible emitir factura electrónica para una venta anulada.',
-                'invoice_status' => 'failed',
-            ], 422);
-        }
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($sale, $validated) {
+            $lockedSale = Sale::with('electronicInvoice')->lockForUpdate()->find($sale->id);
+            
+            if ($lockedSale->isVoided()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No es posible emitir factura electrónica para una venta anulada.',
+                    'invoice_status' => 'failed',
+                ], 422);
+            }
 
-        // Si ya fue autorizada, retornar la factura existente
-        $existingInvoice = $sale->electronicInvoice;
-        if ($existingInvoice && $existingInvoice->isAuthorized()) {
-            return response()->json([
-                'success' => true,
-                'message' => 'La venta ya posee una factura electrónica autorizada previamente.',
-                'invoice' => $existingInvoice,
-            ]);
-        }
+            // Si ya fue autorizada, retornar la factura existente
+            $existingInvoice = $lockedSale->electronicInvoice;
+            if ($existingInvoice && $existingInvoice->isAuthorized()) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'La venta ya posee una factura electrónica autorizada previamente.',
+                    'invoice' => $existingInvoice,
+                ]);
+            }
 
-        try {
-            $invoiceData = $this->wsfeService->authorizeInvoice($sale, $validated);
+            try {
+                $invoiceData = $this->wsfeService->authorizeInvoice($lockedSale, $validated);
 
-            $invoice = ElectronicInvoice::updateOrCreate(
-                ['sale_id' => $sale->id],
-                array_merge($invoiceData, [
-                    'issued_at' => now(),
-                ])
-            );
+                $invoice = ElectronicInvoice::updateOrCreate(
+                    ['sale_id' => $lockedSale->id],
+                    array_merge($invoiceData, [
+                        'issued_at' => now(),
+                    ])
+                );
 
-            $sale->update(['invoice_status' => 'invoiced']);
+                $lockedSale->update(['invoice_status' => 'invoiced']);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Factura autorizada exitosamente',
-                'invoice' => $invoice,
-            ]);
-        } catch (Throwable $e) {
-            $errorMessage = $e->getMessage();
-            Log::error("Error al autorizar factura electrónica para venta #{$sale->id}: {$errorMessage}", [
-                'exception' => $e,
-            ]);
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Factura autorizada exitosamente',
+                    'invoice' => $invoice,
+                ]);
+            } catch (Throwable $e) {
+                $errorMessage = $e->getMessage();
+                Log::error("Error al autorizar factura electrónica para venta #{$lockedSale->id}: {$errorMessage}", [
+                    'exception' => $e,
+                ]);
 
-            // Determinar si es una falla de conexión / timeout de AFIP (Contingencia)
-            $isTimeout = str_contains(strtolower($errorMessage), 'timeout')
-                || str_contains(strtolower($errorMessage), 'timed out')
-                || str_contains(strtolower($errorMessage), 'connection')
-                || str_contains(strtolower($errorMessage), 'curl error 28')
-                || str_contains(strtolower($errorMessage), '504')
-                || str_contains(strtolower($errorMessage), 'no disponible');
+                // Determinar si es una falla de conexión / timeout de AFIP (Contingencia)
+                $isTimeout = str_contains(strtolower($errorMessage), 'timeout')
+                    || str_contains(strtolower($errorMessage), 'timed out')
+                    || str_contains(strtolower($errorMessage), 'connection')
+                    || str_contains(strtolower($errorMessage), 'curl error 28')
+                    || str_contains(strtolower($errorMessage), '504')
+                    || str_contains(strtolower($errorMessage), 'no disponible');
 
-            if ($isTimeout) {
-                $sale->update(['invoice_status' => 'pending']);
+                if ($isTimeout) {
+                    $lockedSale->update(['invoice_status' => 'pending']);
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Servicio de AFIP no disponible. Venta registrada en contingencia.',
+                        'invoice_status' => 'pending',
+                        'error' => $errorMessage,
+                    ], 504);
+                }
+
+                // Rechazo de AFIP o validación impositiva
+                $lockedSale->update(['invoice_status' => 'failed']);
 
                 return response()->json([
                     'success' => false,
-                    'message' => 'Servicio de AFIP no disponible. Venta registrada en contingencia.',
-                    'invoice_status' => 'pending',
+                    'message' => "La solicitud fiscal no pudo ser autorizada: {$errorMessage}",
+                    'invoice_status' => 'failed',
                     'error' => $errorMessage,
-                ], 504);
+                ], 422);
             }
-
-            // Rechazo de AFIP o validación impositiva
-            $sale->update(['invoice_status' => 'failed']);
-
-            return response()->json([
-                'success' => false,
-                'message' => "La solicitud fiscal no pudo ser autorizada: {$errorMessage}",
-                'invoice_status' => 'failed',
-                'error' => $errorMessage,
-            ], 422);
-        }
+        });
     }
 
     /**
