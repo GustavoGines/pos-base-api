@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\CashShiftController;
 use App\Http\Controllers\Api\CatalogController;
 use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\CustomerController;
+use App\Http\Controllers\Api\EcommerceIntegrationController;
 use App\Http\Controllers\Api\ElectronicInvoiceController;
 use App\Http\Controllers\Api\MercadoPagoController;
 use App\Http\Controllers\Api\PosController;
@@ -98,19 +99,25 @@ Route::middleware(['session.validate'])->group(function () {
 
     // ── 1. CONFIGURACIÓN Y ADMINISTRACIÓN ─────────────────────────────
     Route::put('/settings', [SettingController::class, 'update'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     Route::get('/settings/integrations', [SettingController::class, 'integrations'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     Route::put('/settings/integrations', [SettingController::class, 'updateIntegrations'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     Route::post('/settings/integrations/mercadopago/test', [SettingController::class, 'testMercadoPagoConnection'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     Route::post('/settings/afip/certificates', [SettingController::class, 'uploadAfipCertificates'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     Route::post('/settings/afip/upload-certificates', [SettingController::class, 'uploadAfipCertificates'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     Route::post('/settings/logo', [SettingController::class, 'uploadLogo'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
+    Route::apiResource('ecommerce/integrations', EcommerceIntegrationController::class)
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
+    Route::post('/ecommerce/integrations/{integration}/test-connection', [EcommerceIntegrationController::class, 'testConnection'])
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
+    Route::post('/ecommerce/integrations/{integration}/toggle-active', [EcommerceIntegrationController::class, 'toggleActive'])
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
 
     // ── POS: Procesar venta (CRÍTICO) ────────────────────────────────
     Route::post('/pos/sales', [PosController::class, 'processSale']);
@@ -133,9 +140,9 @@ Route::middleware(['session.validate'])->group(function () {
     Route::get('/sales', [SalesController::class, 'index']);
     Route::get('/sales/pending', [SalesController::class, 'pending']);
     Route::post('/sales/{sale}/void', [SalesController::class, 'void'])
-        ->middleware('permission.or.pin:' . Permissions::VOID_SALES);
+        ->middleware('permission.or.pin:'.Permissions::VOID_SALES);
     Route::put('/sales/{sale}/pay', [SalesController::class, 'pay'])
-        ->middleware('permission.or.pin:' . Permissions::COLLECT_CUSTOMER_DEBT);
+        ->middleware('permission.or.pin:'.Permissions::COLLECT_CUSTOMER_DEBT);
     Route::get('/sales/{sale}/ticket-pdf', [SalesController::class, 'ticketPdf']);
     Route::get('/sales/{sale}', [SalesController::class, 'show']);
     Route::post('/sales/{sale}/invoice', [ElectronicInvoiceController::class, 'issueInvoice']);
@@ -146,150 +153,150 @@ Route::middleware(['session.validate'])->group(function () {
     Route::get('/customers/{customer}', [CustomerController::class, 'show']);
     Route::apiResource('customers', CustomerController::class)
         ->except(['index', 'show'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_CUSTOMERS);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_CUSTOMERS);
     Route::get('/customers/{customer}/pending-sales', [CustomerController::class, 'getPendingSales'])
-        ->middleware('permission.or.pin:' . Permissions::VIEW_CUSTOMERS_ACCOUNT);
+        ->middleware('permission.or.pin:'.Permissions::VIEW_CUSTOMERS_ACCOUNT);
     Route::post('/customers/{customer}/payments', [CustomerController::class, 'registerPayment'])
-        ->middleware('permission.or.pin:' . Permissions::COLLECT_CUSTOMER_DEBT);
+        ->middleware('permission.or.pin:'.Permissions::COLLECT_CUSTOMER_DEBT);
 
     // 💸 Módulo Movimientos de Caja y Gastos 💸
     Route::get('/cash-movements', [CashMovementController::class, 'index'])
-        ->middleware('permission.or.pin:' . Permissions::VIEW_EXPENSES);
+        ->middleware('permission.or.pin:'.Permissions::VIEW_EXPENSES);
     Route::get('/cash-movements/export', [CashMovementController::class, 'export'])
-        ->middleware('permission.or.pin:' . Permissions::VIEW_EXPENSES);
+        ->middleware('permission.or.pin:'.Permissions::VIEW_EXPENSES);
     Route::post('/cash-movements/upload', [CashMovementController::class, 'uploadAttachment'])
-        ->middleware('permission.or.pin:' . Permissions::CREATE_EXPENSES);
+        ->middleware('permission.or.pin:'.Permissions::CREATE_EXPENSES);
     Route::post('/cash-movements', [CashMovementController::class, 'store'])
-        ->middleware('permission.or.pin:' . Permissions::CREATE_EXPENSES);
+        ->middleware('permission.or.pin:'.Permissions::CREATE_EXPENSES);
     Route::delete('/cash-movements/{cash_movement}', [CashMovementController::class, 'destroy'])
-        ->middleware('permission.or.pin:' . Permissions::DELETE_CASH_MOVEMENTS);
+        ->middleware('permission.or.pin:'.Permissions::DELETE_CASH_MOVEMENTS);
 
     Route::middleware(['feature:expenses'])->group(function () {
         Route::get('/expense-categories', [ExpenseCategoryController::class, 'index']);
         Route::apiResource('expense-categories', ExpenseCategoryController::class)
             ->except(['index'])
-            ->middleware('permission.or.pin:' . Permissions::MANAGE_EXPENSE_CATEGORIES);
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_EXPENSE_CATEGORIES);
     });
 
     // ── Módulo Cartera de Cheques ────────────────────────────────────
     Route::middleware(['feature:checks'])->group(function () {
         Route::get('/third-party-checks', [ThirdPartyCheckController::class, 'index'])
-            ->middleware('permission.or.pin:' . Permissions::VIEW_CHECKS);
+            ->middleware('permission.or.pin:'.Permissions::VIEW_CHECKS);
         Route::patch('/third-party-checks/{check}/status', [ThirdPartyCheckController::class, 'updateStatus'])
-            ->middleware('permission.or.pin:' . Permissions::ENDORSE_CHECKS);
+            ->middleware('permission.or.pin:'.Permissions::ENDORSE_CHECKS);
     });
 
     // ── Módulo Proveedores ───────────────────────────────────────────
     Route::middleware(['feature:suppliers'])->group(function () {
         Route::get('/suppliers', [SupplierController::class, 'index'])
-            ->middleware('permission.or.pin:' . Permissions::VIEW_SUPPLIERS);
+            ->middleware('permission.or.pin:'.Permissions::VIEW_SUPPLIERS);
         Route::get('/suppliers/{supplier}', [SupplierController::class, 'show'])
-            ->middleware('permission.or.pin:' . Permissions::VIEW_SUPPLIERS);
+            ->middleware('permission.or.pin:'.Permissions::VIEW_SUPPLIERS);
         Route::get('/suppliers/{supplier}/current-account', [SupplierController::class, 'currentAccount'])
-            ->middleware('permission.or.pin:' . Permissions::VIEW_SUPPLIERS);
+            ->middleware('permission.or.pin:'.Permissions::VIEW_SUPPLIERS);
 
         Route::post('/suppliers', [SupplierController::class, 'store'])
-            ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
         Route::put('/suppliers/{supplier}', [SupplierController::class, 'update'])
-            ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
         Route::delete('/suppliers/{supplier}', [SupplierController::class, 'destroy'])
-            ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
 
         Route::post('/suppliers/{supplier}/invoices', [SupplierInvoiceController::class, 'store'])
-            ->middleware('permission.or.pin:' . Permissions::CREATE_SUPPLIER_INVOICE);
+            ->middleware('permission.or.pin:'.Permissions::CREATE_SUPPLIER_INVOICE);
         Route::post('/supplier-invoices/upload', [SupplierInvoiceController::class, 'uploadAttachment'])
-            ->middleware('permission.or.pin:' . Permissions::CREATE_SUPPLIER_INVOICE);
+            ->middleware('permission.or.pin:'.Permissions::CREATE_SUPPLIER_INVOICE);
     });
 
     // ── Catálogo: escritura (crear, editar, borrar productos) ────────
     Route::post('/catalog/products/bulk-delete', [CatalogController::class, 'bulkDelete'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
     Route::post('/catalog/bulk-update', [CatalogController::class, 'bulkUpdate'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
     Route::match(['put', 'post'], '/catalog/products/bulk-update', [CatalogController::class, 'bulkUpdate'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
     Route::get('/catalog/bulk-price-history', [CatalogController::class, 'bulkPriceHistory'])
-        ->middleware('permission.or.pin:' . Permissions::BULK_PRICE_UPDATE);
+        ->middleware('permission.or.pin:'.Permissions::BULK_PRICE_UPDATE);
     Route::post('/catalog/bulk-price-history/{id}/revert', [CatalogController::class, 'bulkPriceRevert'])
-        ->middleware('permission.or.pin:' . Permissions::BULK_PRICE_UPDATE);
+        ->middleware('permission.or.pin:'.Permissions::BULK_PRICE_UPDATE);
     Route::post('/catalog/products/bulk-price-preview', [CatalogController::class, 'bulkPricePreview'])
-        ->middleware('permission.or.pin:' . Permissions::BULK_PRICE_UPDATE);
+        ->middleware('permission.or.pin:'.Permissions::BULK_PRICE_UPDATE);
     Route::put('/catalog/products/bulk-price-update', [CatalogController::class, 'bulkPriceUpdate'])
-        ->middleware('permission.or.pin:' . Permissions::BULK_PRICE_UPDATE);
+        ->middleware('permission.or.pin:'.Permissions::BULK_PRICE_UPDATE);
     Route::post('/catalog/products/{product}/adjust-stock', [StockController::class, 'adjust'])
-        ->middleware('permission.or.pin:' . Permissions::ADJUST_STOCK);
+        ->middleware('permission.or.pin:'.Permissions::ADJUST_STOCK);
     Route::post('/catalog/products/{product}/image', [ProductController::class, 'uploadImage'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
     Route::delete('/catalog/products/{product}/image', [ProductController::class, 'deleteImage'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
     Route::post('/catalog/products/import', [CatalogController::class, 'import'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
     Route::get('/catalog/products/import-template', [CatalogController::class, 'downloadImportTemplate'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
     Route::apiResource('catalog/products', ProductController::class)->except(['index', 'show'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
     Route::apiResource('catalog/categories', CategoryController::class)->except(['index'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
     Route::middleware(['feature:multi_rubro'])->group(function () {
         Route::apiResource('catalog/rubros', RubroController::class)->except(['index', 'show'])
-            ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
     });
     Route::apiResource('catalog/brands', BrandController::class)->except(['index'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
 
     // ── Cajas (escritura: crear/editar/borrar) ───────────────────────
     Route::middleware(['feature:multi_caja'])->group(function () {
         Route::post('/registers', [CashRegisterController::class, 'store'])
-            ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
         Route::put('/registers/{id}', [CashRegisterController::class, 'update'])
-            ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
         Route::delete('/registers/{id}', [CashRegisterController::class, 'destroy'])
-            ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     });
 
     Route::apiResource('users', UserController::class)
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_USERS);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_USERS);
 
     Route::get('/shifts', [CashShiftController::class, 'index']);
 
     // ── Métodos de pago y papelera ───────────────────────────────────
     Route::apiResource('payment-methods', PaymentMethodController::class)->except(['index'])
-        ->middleware('permission.or.pin:' . Permissions::MANAGE_SETTINGS);
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     Route::prefix('trash')->group(function () {
         Route::get('/{model}', [TrashController::class, 'index'])
-            ->middleware('permission.or.pin:' . Permissions::MANAGE_TRASH);
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_TRASH);
         Route::post('/{model}/{id}/restore', [TrashController::class, 'restore'])
-            ->middleware('permission.or.pin:' . Permissions::MANAGE_TRASH);
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_TRASH);
         Route::delete('/{model}/{id}/force', [TrashController::class, 'forceDelete'])
-            ->middleware('permission.or.pin:' . Permissions::MANAGE_TRASH);
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_TRASH);
     });
 
     // ── Auditoría (Kardex) ───────────────────────────────────────────
     Route::prefix('audit')->group(function () {
         Route::get('/stock', [StockController::class, 'kardex'])
-            ->middleware('permission.or.pin:' . Permissions::VIEW_KARDEX);
+            ->middleware('permission.or.pin:'.Permissions::VIEW_KARDEX);
     });
 
     // ── Módulo Presupuestos [hardware_store] ─────────────────────────
     Route::middleware(['feature:quotes'])->prefix('quotes')->group(function () {
         Route::get('/', [QuoteController::class, 'index'])
-            ->middleware('permission.or.pin:' . Permissions::MANAGE_QUOTES);
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_QUOTES);
         Route::post('/', [QuoteController::class, 'store'])
-            ->middleware('permission.or.pin:' . Permissions::MANAGE_QUOTES);
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_QUOTES);
         Route::get('/number/{number}', [QuoteController::class, 'showByNumber'])
-            ->middleware('permission.or.pin:' . Permissions::MANAGE_QUOTES);
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_QUOTES);
         Route::get('/{quote}', [QuoteController::class, 'show'])
-            ->middleware('permission.or.pin:' . Permissions::MANAGE_QUOTES);
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_QUOTES);
         Route::patch('/{quote}/status', [QuoteController::class, 'updateStatus'])
-            ->middleware('permission.or.pin:' . Permissions::MANAGE_QUOTES);
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_QUOTES);
         Route::put('/{quote}', [QuoteController::class, 'update'])
-            ->middleware('permission.or.pin:' . Permissions::MANAGE_QUOTES);
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_QUOTES);
         Route::delete('/{quote}', [QuoteController::class, 'destroy'])
-            ->middleware('permission.or.pin:' . Permissions::MANAGE_QUOTES);
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_QUOTES);
     });
 
     // ── Módulo de Reportes Gerenciales ───────────────────────────────
-    Route::prefix('reports')->middleware('permission.or.pin:' . Permissions::VIEW_REPORTS)->group(function () {
+    Route::prefix('reports')->middleware('permission.or.pin:'.Permissions::VIEW_REPORTS)->group(function () {
         Route::get('/sales-by-category/export', [ReportController::class, 'exportProfitByCategory']);
         Route::get('/sales-by-category/pdf', [ReportController::class, 'exportPdfByCategory']);
         Route::get('/sales-by-category', [ReportController::class, 'profitByCategory']);
@@ -315,7 +322,7 @@ Route::middleware(['session.validate'])->group(function () {
     Route::get('/inventory/alerts', [ProductController::class, 'inventoryAlerts']);
 
     // ── Módulo Logística (Remitos / Corralón) ──────────────────────────
-    Route::prefix('delivery-notes')->middleware('permission.or.pin:' . Permissions::MANAGE_DELIVERY_NOTES)->group(function () {
+    Route::prefix('delivery-notes')->middleware('permission.or.pin:'.Permissions::MANAGE_DELIVERY_NOTES)->group(function () {
         Route::get('/', [DeliveryNoteController::class, 'index']);
         Route::post('/from-sale/{saleId}', [DeliveryNoteController::class, 'generateFromSale']);
         Route::put('/{id}/deliver', [DeliveryNoteController::class, 'updateDelivery']);
