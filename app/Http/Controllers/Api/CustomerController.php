@@ -53,7 +53,15 @@ class CustomerController extends Controller
             'default_price_tier' => 'nullable|string|in:base,wholesale,card',
             'delivery_address' => 'nullable|string|max:500',
             'is_internal_account' => 'nullable|boolean',
-            'document_type' => 'nullable|integer',
+            'document_type' => [
+                'nullable',
+                'integer',
+                function ($attribute, $value, $fail) use ($request) {
+                    if ($request->input('applies_iibb_perception') && $value != 80) {
+                        $fail('Para aplicar percepciones IIBB el cliente debe tener tipo de documento CUIT (80).');
+                    }
+                },
+            ],
             'tax_condition' => 'nullable|string|max:50',
             'fiscal_address' => 'nullable|string|max:500',
             'applies_iibb_perception' => 'nullable|boolean',
@@ -105,7 +113,15 @@ class CustomerController extends Controller
             'default_price_tier' => 'nullable|string|in:base,wholesale,card',
             'delivery_address' => 'nullable|string|max:500',
             'is_internal_account' => 'sometimes|boolean',
-            'document_type' => 'nullable|integer',
+            'document_type' => [
+                'nullable',
+                'integer',
+                function ($attribute, $value, $fail) use ($request) {
+                    if ($request->input('applies_iibb_perception') && $value != 80) {
+                        $fail('Para aplicar percepciones IIBB el cliente debe tener tipo de documento CUIT (80).');
+                    }
+                },
+            ],
             'tax_condition' => 'nullable|string|max:50',
             'fiscal_address' => 'nullable|string|max:500',
             'applies_iibb_perception' => 'nullable|boolean',
