@@ -81,7 +81,7 @@ Route::get('/pos/products/search', [PosController::class, 'searchProducts']);
 // Lectura de catálogo, clientes e historial (pantallas de solo lectura)
 Route::get('/catalog/products/alerts/critical', [ProductController::class, 'criticalAlerts']);
 Route::get('/catalog/products/stock', [ProductController::class, 'stockBulk']);
-Route::apiResource('catalog/products', ProductController::class)->only(['index', 'show']);
+Route::apiResource('catalog/products', ProductController::class)->only(['index', 'show'])->parameters(['products' => 'product'])->where(['product' => '[0-9]+']);
 Route::get('/catalog/categories', [CategoryController::class, 'index']);
 Route::get('/catalog/rubros', [RubroController::class, 'index']);
 Route::get('/catalog/rubros/{rubro}', [RubroController::class, 'show']);
@@ -228,6 +228,8 @@ Route::middleware(['session.validate'])->group(function () {
     Route::post('/catalog/products/{product}/image', [ProductController::class, 'uploadImage'])
         ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
     Route::delete('/catalog/products/{product}/image', [ProductController::class, 'deleteImage'])
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
+    Route::get('/catalog/products/export', [CatalogController::class, 'export'])
         ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
     Route::post('/catalog/products/import', [CatalogController::class, 'import'])
         ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);

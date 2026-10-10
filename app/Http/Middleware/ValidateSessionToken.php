@@ -25,7 +25,7 @@ class ValidateSessionToken
 {
     public function handle(Request $request, Closure $next): Response
     {
-        $token = $request->header('X-Session-Token');
+        $token = $request->header('X-Session-Token') ?? $request->query('token');
 
         if (! $token) {
             return response()->json([

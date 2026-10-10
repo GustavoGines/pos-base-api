@@ -8,6 +8,6 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-// SincronizaciÃ³n diaria del estado de la licencia con el servidor remoto.
+// Sincronización diaria del estado de la licencia con el servidor remoto.
 // Si no hay internet, el comando falla silenciosamente sin afectar la operaria.
 Schedule::command('license:sync')->everyThreeMinutes()->withoutOverlapping();

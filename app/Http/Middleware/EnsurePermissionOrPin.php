@@ -25,9 +25,9 @@ class EnsurePermissionOrPin
         /** @var \App\Models\User|null $user */
         $user = $request->user() ?? $request->attributes->get('authenticated_user');
 
-        if (! $user && $request->header('X-Session-Token')) {
+        if (! $user && ($request->header('X-Session-Token') ?? $request->query('token'))) {
             $user = User::withoutGlobalScope('visible')
-                ->where('session_token', $request->header('X-Session-Token'))
+                ->where('session_token', $request->header('X-Session-Token') ?? $request->query('token'))
                 ->first();
             if ($user) {
                 $request->attributes->set('authenticated_user', $user);

@@ -319,6 +319,16 @@ class CatalogController extends Controller
 
         return response()->json(['message' => 'Aumento masivo revertido exitosamente.']);
     }
+    public function export(\Illuminate\Http\Request $request)
+    {
+        $categoryId = $request->query('category_id');
+        $brandId = $request->query('brand_id');
+
+        return \Maatwebsite\Excel\Facades\Excel::download(
+            new \App\Exports\PriceListExport($categoryId, $brandId), 
+            'lista_precios.xlsx'
+        );
+    }
 
     public function import(Request $request)
     {
