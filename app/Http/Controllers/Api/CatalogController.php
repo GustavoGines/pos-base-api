@@ -402,12 +402,38 @@ class CatalogController extends Controller
                         $product->brand_id = $bnd->id;
                     }
 
+                    $parseNumber = function($val) {
+                        if ($val === null || $val === '') return null;
+                        if (is_numeric($val)) return (float) $val;
+                        $val = (string) $val;
+                        // Remover todo excepto dígitos, coma, punto y signo menos
+                        $val = preg_replace('/[^\d\,\.\-]/', '', $val);
+                        
+                        $lastComma = strrpos($val, ',');
+                        $lastDot = strrpos($val, '.');
+                        
+                        if ($lastComma !== false && $lastDot !== false) {
+                            if ($lastComma > $lastDot) {
+                                // 1.234,56
+                                $val = str_replace('.', '', $val);
+                                $val = str_replace(',', '.', $val);
+                            } else {
+                                // 1,234.56
+                                $val = str_replace(',', '', $val);
+                            }
+                        } elseif ($lastComma !== false) {
+                            // Solo coma, asumimos decimal argentino: 1234,56
+                            $val = str_replace(',', '.', $val);
+                        }
+                        return (float) $val;
+                    };
+
                     if ($nombre) { $product->name = $nombre; }
                     if ($codBarras) { $product->barcode = $codBarras; }
-                    if ($costo !== null) { $product->cost_price = (float) str_replace(',', '.', $costo); }
-                    if ($precio !== null) { $product->selling_price = (float) str_replace(',', '.', $precio); }
-                    if ($stock !== null) { $product->stock = (float) str_replace(',', '.', $stock); }
-                    if ($iva !== null) { $product->iva_rate = (float) str_replace(',', '.', $iva); }
+                    if ($costo !== null) { $product->cost_price = $parseNumber($costo); }
+                    if ($precio !== null) { $product->selling_price = $parseNumber($precio); }
+                    if ($stock !== null) { $product->stock = $parseNumber($stock); }
+                    if ($iva !== null) { $product->iva_rate = $parseNumber($iva); }
                     if ($activo !== null) { $product->active = filter_var($activo, FILTER_VALIDATE_BOOLEAN); }
 
                     $product->save();
