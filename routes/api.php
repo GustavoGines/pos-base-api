@@ -222,6 +222,10 @@ Route::middleware(['session.validate'])->group(function () {
         ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
     Route::delete('/catalog/products/{product}/image', [ProductController::class, 'deleteImage'])
         ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+    Route::post('/catalog/products/import', [CatalogController::class, 'import'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
+    Route::get('/catalog/products/import-template', [CatalogController::class, 'downloadImportTemplate'])
+        ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
     Route::apiResource('catalog/products', ProductController::class)->except(['index', 'show'])
         ->middleware('permission.or.pin:' . Permissions::MANAGE_CATALOG);
     Route::apiResource('catalog/categories', CategoryController::class)->except(['index'])

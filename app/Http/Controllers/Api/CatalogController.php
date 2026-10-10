@@ -319,4 +319,141 @@ class CatalogController extends Controller
 
         return response()->json(['message' => 'Aumento masivo revertido exitosamente.']);
     }
+
+    public function import(Request $request)
+    {
+        $request->validate([
+            'file' => 'required|file|mimes:xlsx,csv,xls,txt',
+        ]);
+
+        ini_set('memory_limit', '1024M');
+        set_time_limit(600);
+
+        try {
+            $createdCount = 0;
+            $updatedCount = 0;
+            $failedCount = 0;
+            $errors = [];
+
+            $defaultRubro = \App\Models\Rubro::where('is_system', true)->first();
+            $path = $request->file('file')->getRealPath();
+
+            (new \Rap2hpoutre\FastExcel\FastExcel)->import($path, function ($row) use (&$createdCount, &$updatedCount, &$failedCount, &$errors, $defaultRubro) {
+                $rowLower = [];
+                foreach ($row as $k => $v) {
+                    $key = strtolower(trim($k));
+                    $key = str_replace(' ', '_', $key);
+                    $rowLower[$key] = $v;
+                }
+
+                $getVal = function($keys) use ($rowLower) {
+                    foreach ($keys as $k) {
+                        if (isset($rowLower[$k]) && $rowLower[$k] !== '') {
+                            return trim($rowLower[$k]);
+                        }
+                    }
+                    return null;
+                };
+
+                $nombre = $getVal(['nombre', 'descripcion', 'descripción', 'articulo', 'artículo', 'producto', 'detalle']);
+                $codInterno = $getVal(['codigo_interno', 'código_interno', 'codigo', 'cod', 'id']);
+                $codBarras = $getVal(['codigo_barras', 'código_barras', 'barra', 'ean']);
+                $costo = $getVal(['costo', 'precios_costos_g3', 'precio_costo', 'costo_unitario']);
+                $precio = $getVal(['precio', 'precios_pesos_g3_nomas', 'precio_venta', 'precio_publico', 'venta']);
+                $stock = $getVal(['stock', 'cantidad', 'cant', 'existencia']);
+                $categoria = $getVal(['categoria', 'categoría', 'rubro', 'familia']);
+                $marca = $getVal(['marca', 'laboratorio', 'fabricante']);
+                $iva = $getVal(['iva', 'impuesto', 'tasa']);
+                $activo = $getVal(['activo', 'estado']);
+
+                if (!$nombre && !$codInterno && !$codBarras) {
+                    return null;
+                }
+
+                try {
+                    $internalCode = $codInterno ?? ($codBarras ?? 'PROD-' . \Illuminate\Support\Str::random(8));
+
+                    $product = null;
+                    if ($codInterno) { $product = \App\Models\Product::where('internal_code', $codInterno)->first(); }
+                    if (!$product && $codBarras) { $product = \App\Models\Product::where('barcode', $codBarras)->first(); }
+                    if (!$product && $nombre) { $product = \App\Models\Product::where('name', $nombre)->first(); }
+
+                    $isNew = false;
+                    if (!$product) {
+                        if (!$nombre) {
+                            $failedCount++;
+                            return null;
+                        }
+                        $product = new \App\Models\Product();
+                        $product->internal_code = $internalCode;
+                        $isNew = true;
+                    }
+
+                    if ($categoria) {
+                        $cat = \App\Models\Category::firstOrCreate(
+                            ['name' => $categoria],
+                            ['rubro_id' => $defaultRubro ? $defaultRubro->id : null]
+                        );
+                        $product->category_id = $cat->id;
+                    }
+
+                    if ($marca) {
+                        $bnd = \App\Models\Brand::firstOrCreate(['name' => $marca]);
+                        $product->brand_id = $bnd->id;
+                    }
+
+                    if ($nombre) { $product->name = $nombre; }
+                    if ($codBarras) { $product->barcode = $codBarras; }
+                    if ($costo !== null) { $product->cost_price = (float) str_replace(',', '.', $costo); }
+                    if ($precio !== null) { $product->selling_price = (float) str_replace(',', '.', $precio); }
+                    if ($stock !== null) { $product->stock = (float) str_replace(',', '.', $stock); }
+                    if ($iva !== null) { $product->iva_rate = (float) str_replace(',', '.', $iva); }
+                    if ($activo !== null) { $product->active = filter_var($activo, FILTER_VALIDATE_BOOLEAN); }
+
+                    $product->save();
+
+                    if ($isNew) {
+                        $createdCount++;
+                    } else {
+                        $updatedCount++;
+                    }
+                } catch (\Exception $e) {
+                    $failedCount++;
+                }
+                return null;
+            });
+
+            return response()->json([
+                'message' => 'Importación completada',
+                'created_count' => $createdCount,
+                'updated_count' => $updatedCount,
+                'failed_count' => $failedCount,
+                'errors' => $errors,
+            ]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error("Error general en importación: " . $e->getMessage());
+            return response()->json([
+                'message' => 'Error al procesar el archivo.',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function downloadImportTemplate()
+    {
+        $headers = ['codigo_interno', 'codigo_barras', 'nombre', 'costo', 'precio', 'stock', 'categoria', 'marca', 'iva', 'activo'];
+        $callback = function() use ($headers) {
+            $file = fopen('php://output', 'w');
+            // Necesario para que Excel abra el CSV UTF-8 correctamente sin romper acentos
+            fprintf($file, chr(0xEF).chr(0xBB).chr(0xBF));
+            fputcsv($file, $headers, ';');
+            fputcsv($file, ['PROD-001', '7791234567890', 'Ejemplo Arroz', '100.00', '150.00', '10', 'Almacen', 'Marolio', '21.00', 'true'], ';');
+            fclose($file);
+        };
+
+        return response()->stream($callback, 200, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => 'attachment; filename="plantilla_productos.csv"',
+        ]);
+    }
 }
