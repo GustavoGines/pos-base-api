@@ -48,6 +48,14 @@ class EcommerceWebhookController extends Controller
     }
 
     /**
+     * Handle inbound webhook for Internal Ecommerce Platform.
+     */
+    public function ecommerce_platform(Request $request): JsonResponse
+    {
+        return $this->handleWebhook(EcommerceIntegration::PLATFORM_INTERNAL, $request);
+    }
+
+    /**
      * Unified handler for external ecommerce webhooks.
      */
     protected function handleWebhook(string $platform, Request $request): JsonResponse

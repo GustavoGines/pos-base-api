@@ -72,6 +72,7 @@ Route::prefix('webhooks/ecommerce')->group(function () {
     Route::post('/mercadolibre', [EcommerceWebhookController::class, 'mercadolibre']);
     Route::post('/tiendanube', [EcommerceWebhookController::class, 'tiendanube']);
     Route::post('/woocommerce', [EcommerceWebhookController::class, 'woocommerce']);
+    Route::post('/ecommerce_platform', [EcommerceWebhookController::class, 'ecommerce_platform']);
 });
 
 // Verificación de turno activo (necesaria antes del login para decidir ruta inicial)
