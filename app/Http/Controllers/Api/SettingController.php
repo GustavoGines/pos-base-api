@@ -142,8 +142,8 @@ class SettingController extends Controller
         $afipPtoVta = BusinessSetting::where('key', 'afip_pto_vta')->value('value');
         $afipEnvironment = BusinessSetting::where('key', 'afip_environment')->value('value') ?? 'testing';
 
-        $storedCertPath = BusinessSetting::where('key', 'afip_cert_path')->value('value');
-        $storedKeyPath = BusinessSetting::where('key', 'afip_key_path')->value('value');
+        $storedCertPath = BusinessSetting::getSecret('afip_cert_path');
+        $storedKeyPath = BusinessSetting::getSecret('afip_key_path');
         $cleanCuit = ! empty($afipCuit) ? preg_replace('/\D/', '', (string) $afipCuit) : null;
 
         $certPath = null;
@@ -290,8 +290,8 @@ class SettingController extends Controller
             // Si el CUIT cambió, sincronizar rutas y certificados con el nuevo CUIT
             if ($cleanCuit !== $oldCuit) {
                 if ($cleanCuit && file_exists(storage_path("app/private/afip/{$cleanCuit}/cert.crt"))) {
-                    BusinessSetting::updateOrCreate(['key' => 'afip_cert_path'], ['value' => "afip/{$cleanCuit}/cert.crt"]);
-                    BusinessSetting::updateOrCreate(['key' => 'afip_key_path'], ['value' => "afip/{$cleanCuit}/cert.key"]);
+                    BusinessSetting::setSecret('afip_cert_path', "afip/{$cleanCuit}/cert.crt");
+                    BusinessSetting::setSecret('afip_key_path', "afip/{$cleanCuit}/cert.key");
                     $certContent = @file_get_contents(storage_path("app/private/afip/{$cleanCuit}/cert.crt"));
                     if ($certContent && ($parsed = @openssl_x509_parse($certContent)) && ! empty($parsed['validTo_time_t'])) {
                         BusinessSetting::updateOrCreate(['key' => 'afip_cert_expires_at'], ['value' => date('Y-m-d H:i:s', $parsed['validTo_time_t'])]);

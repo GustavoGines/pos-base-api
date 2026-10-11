@@ -227,7 +227,7 @@ class AfipWsaaService
      */
     protected function resolveCertPath(string $cuit): string
     {
-        $stored = BusinessSetting::where('key', 'afip_cert_path')->value('value');
+        $stored = BusinessSetting::getSecret('afip_cert_path');
         if (! empty($stored)) {
             $p = storage_path('app/private/'.$stored);
             if (file_exists($p)) {
@@ -248,7 +248,7 @@ class AfipWsaaService
      */
     protected function resolveKeyPath(string $cuit): string
     {
-        $stored = BusinessSetting::where('key', 'afip_key_path')->value('value');
+        $stored = BusinessSetting::getSecret('afip_key_path');
         if (! empty($stored)) {
             $p = storage_path('app/private/'.$stored);
             if (file_exists($p)) {

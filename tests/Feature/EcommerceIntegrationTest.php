@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature;
 
 use App\Models\EcommerceIntegration;
+use App\Models\EcommerceSyncLog;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
@@ -649,5 +650,79 @@ class EcommerceIntegrationTest extends TestCase
         $integration->refresh();
         $this->assertEquals('error', $integration->last_health_status);
         $this->assertNotNull($integration->last_health_check_at);
+    }
+
+    public function test_can_list_ecommerce_sync_logs(): void
+    {
+        $integration = $this->createIntegration();
+
+        EcommerceSyncLog::create([
+            'integration_id' => $integration->id,
+            'direction' => 'outbound',
+            'action' => 'stock_update',
+            'stock_before' => 10,
+            'stock_after' => 8,
+            'http_status' => 200,
+            'duration_ms' => 150,
+            'status' => 'success',
+            'request_payload' => ['available_quantity' => 8],
+            'response_payload' => ['id' => 'MLA123'],
+        ]);
+
+        $response = $this->actingAsAdmin()->getJson('/api/ecommerce/logs');
+
+        $response->assertStatus(200);
+        $response->assertJsonStructure([
+            'data' => [
+                '*' => [
+                    'id',
+                    'integration_id',
+                    'direction',
+                    'action',
+                    'stock_before',
+                    'stock_after',
+                    'status',
+                    'duration_ms',
+                    'created_at',
+                ],
+            ],
+            'total',
+        ]);
+        $response->assertJsonPath('total', 1);
+        $response->assertJsonPath('data.0.status', 'success');
+        $response->assertJsonPath('data.0.direction', 'outbound');
+    }
+
+    public function test_can_filter_ecommerce_sync_logs_by_status_and_integration(): void
+    {
+        $integration1 = $this->createIntegration(['platform' => 'mercadolibre', 'name' => 'Meli']);
+        $integration2 = $this->createIntegration(['platform' => 'woocommerce', 'name' => 'Woo', 'base_url' => 'https://woo.test']);
+
+        EcommerceSyncLog::create([
+            'integration_id' => $integration1->id,
+            'direction' => 'outbound',
+            'action' => 'stock_update',
+            'status' => 'success',
+        ]);
+
+        EcommerceSyncLog::create([
+            'integration_id' => $integration2->id,
+            'direction' => 'outbound',
+            'action' => 'stock_update',
+            'status' => 'failed',
+            'error_message' => 'Connection timeout',
+        ]);
+
+        // Filter by status failed
+        $resFailed = $this->actingAsAdmin()->getJson('/api/ecommerce/logs?status=failed');
+        $resFailed->assertStatus(200);
+        $resFailed->assertJsonPath('total', 1);
+        $resFailed->assertJsonPath('data.0.error_message', 'Connection timeout');
+
+        // Filter by integration1
+        $resMeli = $this->actingAsAdmin()->getJson("/api/ecommerce/logs?integration_id={$integration1->id}");
+        $resMeli->assertStatus(200);
+        $resMeli->assertJsonPath('total', 1);
+        $resMeli->assertJsonPath('data.0.integration_id', $integration1->id);
     }
 }

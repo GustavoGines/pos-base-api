@@ -59,8 +59,8 @@ class AfipCertificateService
         }
 
         BusinessSetting::updateOrCreate(['key' => 'afip_cuit'], ['value' => $cuit]);
-        BusinessSetting::updateOrCreate(['key' => 'afip_cert_path'], ['value' => "afip/{$cuit}/cert.crt"]);
-        BusinessSetting::updateOrCreate(['key' => 'afip_key_path'], ['value' => "afip/{$cuit}/cert.key"]);
+        BusinessSetting::setSecret('afip_cert_path', "afip/{$cuit}/cert.crt");
+        BusinessSetting::setSecret('afip_key_path', "afip/{$cuit}/cert.key");
         if ($expiresAt) {
             BusinessSetting::updateOrCreate(['key' => 'afip_cert_expires_at'], ['value' => $expiresAt]);
         }

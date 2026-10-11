@@ -127,6 +127,10 @@ Route::middleware(['session.validate'])->group(function () {
         ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     Route::post('/ecommerce/integrations/{integration}/toggle-active', [EcommerceIntegrationController::class, 'toggleActive'])
         ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
+    Route::get('/ecommerce/logs', [EcommerceIntegrationController::class, 'logs'])
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
+    Route::get('/settings/ecommerce/logs', [EcommerceIntegrationController::class, 'logs'])
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
 
     // ── POS: Procesar venta (CRÍTICO) ────────────────────────────────
     Route::post('/pos/sales', [PosController::class, 'processSale']);

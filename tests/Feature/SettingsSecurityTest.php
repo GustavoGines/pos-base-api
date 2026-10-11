@@ -291,9 +291,10 @@ class SettingsSecurityTest extends TestCase
         $this->assertEquals(trim($validPair['cert']), trim(file_get_contents($certPath)));
         $this->assertEquals(trim($validPair['key']), trim(file_get_contents($keyPath)));
 
-        // Verificar persistencia de rutas en business_settings
-        $this->assertEquals("afip/{$cuit}/cert.crt", BusinessSetting::where('key', 'afip_cert_path')->value('value'));
-        $this->assertEquals("afip/{$cuit}/cert.key", BusinessSetting::where('key', 'afip_key_path')->value('value'));
+        // Verificar persistencia de rutas encriptadas en business_settings
+        $this->assertNotEquals("afip/{$cuit}/cert.crt", BusinessSetting::where('key', 'afip_cert_path')->value('value'), 'Fallo de seguridad: La ruta del certificado se guardó en texto plano');
+        $this->assertEquals("afip/{$cuit}/cert.crt", BusinessSetting::getSecret('afip_cert_path'));
+        $this->assertEquals("afip/{$cuit}/cert.key", BusinessSetting::getSecret('afip_key_path'));
     }
 
     /**

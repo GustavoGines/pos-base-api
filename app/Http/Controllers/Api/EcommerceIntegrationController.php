@@ -8,8 +8,10 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreEcommerceIntegrationRequest;
 use App\Http\Requests\UpdateEcommerceIntegrationRequest;
 use App\Models\EcommerceIntegration;
+use App\Models\EcommerceSyncLog;
 use App\Services\Ecommerce\EcommerceManager;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Crypt;
 use Throwable;
 
@@ -143,6 +145,31 @@ class EcommerceIntegrationController extends Controller
             'message' => 'Estado de la integración actualizado correctamente.',
             'integration' => $this->transformIntegration($integration->fresh()),
         ]);
+    }
+
+    /**
+     * Retrieve paginated synchronization audit logs.
+     */
+    public function logs(Request $request): JsonResponse
+    {
+        $query = EcommerceSyncLog::with(['integration', 'mapping.product'])
+            ->latest('id');
+
+        if ($request->filled('integration_id')) {
+            $query->where('integration_id', $request->query('integration_id'));
+        }
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->query('status'));
+        }
+
+        if ($request->filled('direction')) {
+            $query->where('direction', $request->query('direction'));
+        }
+
+        $logs = $query->paginate($request->integer('per_page', 30));
+
+        return response()->json($logs);
     }
 
     /**
