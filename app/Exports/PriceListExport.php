@@ -17,6 +17,7 @@ use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 class PriceListExport implements FromQuery, ShouldAutoSize, WithColumnFormatting, WithHeadings, WithMapping, WithStyles
 {
     protected $categoryId;
+
     protected $brandId;
 
     public function __construct($categoryId = null, $brandId = null)
@@ -46,9 +47,9 @@ class PriceListExport implements FromQuery, ShouldAutoSize, WithColumnFormatting
     public function headings(): array
     {
         return [
-            'Código Interno', 'Código Barras', 'Producto', 'Categoría', 
-            'Marca', 'Proveedor', 'Stock', 'IVA (%)', 'Costo', 
-            'Precio Mostrador', 'Precio Tarjeta', 'Precio Mayorista'
+            'Código Interno', 'Código Barras', 'Producto', 'Categoría',
+            'Marca', 'Proveedor', 'Stock', 'IVA (%)', 'Costo',
+            'Precio Mostrador', 'Precio Tarjeta', 'Precio Mayorista',
         ];
     }
 

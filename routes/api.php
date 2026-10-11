@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\CatalogController;
 use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\EcommerceIntegrationController;
+use App\Http\Controllers\Api\EcommerceWebhookController;
 use App\Http\Controllers\Api\ElectronicInvoiceController;
 use App\Http\Controllers\Api\MercadoPagoController;
 use App\Http\Controllers\Api\PosController;
@@ -61,9 +62,17 @@ use App\Http\Controllers\Api\UserController;
 // Endpoint de rescate de migraciones OTA (silencioso)
 Route::match(['get', 'post'], '/system/rescue-migrate', [SystemController::class, 'rescueMigrate']);
 Route::get('/version-check', [SystemController::class, 'versionCheck']);
+Route::get('/system/install-path', [SystemController::class, 'installPath'])->middleware('auth:sanctum');
 
 // Webhook de Mercado Pago (público, autenticado criptográficamente vía HMAC x-signature)
 Route::post('/webhooks/mercadopago', [MercadoPagoController::class, 'webhook']);
+
+// Webhooks E-Commerce (públicos, autenticados y desacoplados a colas asíncronas)
+Route::prefix('webhooks/ecommerce')->group(function () {
+    Route::post('/mercadolibre', [EcommerceWebhookController::class, 'mercadolibre']);
+    Route::post('/tiendanube', [EcommerceWebhookController::class, 'tiendanube']);
+    Route::post('/woocommerce', [EcommerceWebhookController::class, 'woocommerce']);
+});
 
 // Verificación de turno activo (necesaria antes del login para decidir ruta inicial)
 Route::prefix('shifts')->group(function () {

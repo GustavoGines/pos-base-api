@@ -2,7 +2,6 @@
 
 namespace Tests\Feature;
 
-use App\Constants\Permissions;
 use App\Models\CashShift;
 use App\Models\Product;
 use App\Models\Sale;
@@ -28,7 +27,7 @@ class InSituPermissionAuthorizationTest extends TestCase
             ]);
         }
 
-        $token = 'cashier-session-' . uniqid();
+        $token = 'cashier-session-'.uniqid();
         DB::table('users')->where('id', $user->id)->update(['session_token' => $token]);
         $this->withHeader('X-Session-Token', $token);
 

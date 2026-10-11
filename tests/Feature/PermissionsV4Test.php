@@ -4,7 +4,6 @@ namespace Tests\Feature;
 
 use App\Constants\Permissions;
 use App\Models\CashShift;
-use App\Models\PaymentMethod;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
@@ -13,7 +12,6 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\RateLimiter;
 use Tests\TestCase;
 
 class PermissionsV4Test extends TestCase
@@ -30,7 +28,7 @@ class PermissionsV4Test extends TestCase
             ]);
         }
 
-        $token = 'cashier-token-' . uniqid();
+        $token = 'cashier-token-'.uniqid();
         DB::table('users')->where('id', $user->id)->update(['session_token' => $token]);
         $this->withHeader('X-Session-Token', $token);
 

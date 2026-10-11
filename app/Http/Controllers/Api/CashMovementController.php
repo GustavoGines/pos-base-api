@@ -6,6 +6,7 @@ use App\Exports\CashMovementsExport;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreCashMovementRequest;
 use App\Models\CashMovement;
+use App\Models\CashShift;
 use App\Models\Supplier;
 use App\Models\ThirdPartyCheck;
 use App\Models\User;
@@ -135,7 +136,7 @@ class CashMovementController extends Controller
                     ], 403);
                 }
 
-                $throttleKey = 'pin_attempts:' . ($user ? $user->id : 'guest') . ':' . $request->ip();
+                $throttleKey = 'pin_attempts:'.($user ? $user->id : 'guest').':'.$request->ip();
                 if (RateLimiter::tooManyAttempts($throttleKey, 5)) {
                     $seconds = RateLimiter::availableIn($throttleKey);
 
@@ -175,7 +176,7 @@ class CashMovementController extends Controller
             $createdMovements = [];
             $batchUuid = (string) Str::uuid();
 
-            DB::transaction(function () use ($validated, $shift, $user, $authorizedBy, &$createdMovements, $batchUuid) {
+            DB::transaction(function () use ($validated, $shift, $user, $authorizedBy, &$createdMovements) {
                 $totalAmountPaid = 0;
 
                 foreach ($validated['payments'] as $payment) {
@@ -213,7 +214,7 @@ class CashMovementController extends Controller
                         $check->update([
                             'status' => 'endorsed',
                             'supplier_id' => $validated['supplier_id'] ?? null,
-                            'endorsement_note' => 'Endosado a proveedor en Movimiento #' . $movement->id . ' (' . ($movement->receipt_number ?? 'S/N') . ')',
+                            'endorsement_note' => 'Endosado a proveedor en Movimiento #'.$movement->id.' ('.($movement->receipt_number ?? 'S/N').')',
                         ]);
                     }
                 }
@@ -261,11 +262,11 @@ class CashMovementController extends Controller
         $user = $request->attributes->get('authenticated_user');
 
         // Candado de Seguridad 1: Debe haber un turno abierto
-        $activeShift = \App\Models\CashShift::where('status', 'open')->latest('id')->first();
-        if (!$activeShift) {
+        $activeShift = CashShift::where('status', 'open')->latest('id')->first();
+        if (! $activeShift) {
             return response()->json([
                 'message' => 'No hay un turno de caja abierto.',
-                'error' => 'Para anular un movimiento, debe tener una caja abierta.'
+                'error' => 'Para anular un movimiento, debe tener una caja abierta.',
             ], 403);
         }
 
@@ -273,7 +274,7 @@ class CashMovementController extends Controller
         if ($movement->cash_shift_id !== $activeShift->id) {
             return response()->json([
                 'message' => 'Movimiento bloqueado por seguridad.',
-                'error' => 'Solo se pueden anular movimientos pertenecientes al turno de caja actual. Los movimientos de turnos cerrados están bloqueados y son inmutables.'
+                'error' => 'Solo se pueden anular movimientos pertenecientes al turno de caja actual. Los movimientos de turnos cerrados están bloqueados y son inmutables.',
             ], 403);
         }
 

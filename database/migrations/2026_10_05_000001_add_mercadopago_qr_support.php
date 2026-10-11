@@ -16,26 +16,26 @@ return new class extends Migration
         if (Schema::hasTable('payment_methods')) {
             $methods = [
                 [
-                    'name'            => 'Mercado Pago QR',
-                    'code'            => 'mercadopago_qr',
-                    'surcharge_type'  => 'none',
+                    'name' => 'Mercado Pago QR',
+                    'code' => 'mercadopago_qr',
+                    'surcharge_type' => 'none',
                     'surcharge_value' => 0.00,
-                    'is_cash'         => false,
-                    'is_active'       => true,
-                    'sort_order'      => 6,
-                    'created_at'      => now(),
-                    'updated_at'      => now(),
+                    'is_cash' => false,
+                    'is_active' => true,
+                    'sort_order' => 6,
+                    'created_at' => now(),
+                    'updated_at' => now(),
                 ],
                 [
-                    'name'            => 'Mercado Pago Point',
-                    'code'            => 'mercadopago_point',
-                    'surcharge_type'  => 'none',
+                    'name' => 'Mercado Pago Point',
+                    'code' => 'mercadopago_point',
+                    'surcharge_type' => 'none',
                     'surcharge_value' => 0.00,
-                    'is_cash'         => false,
-                    'is_active'       => true,
-                    'sort_order'      => 7,
-                    'created_at'      => now(),
-                    'updated_at'      => now(),
+                    'is_cash' => false,
+                    'is_active' => true,
+                    'sort_order' => 7,
+                    'created_at' => now(),
+                    'updated_at' => now(),
                 ],
             ];
 
@@ -87,8 +87,8 @@ return new class extends Migration
                 $table->string('pos_id', 50)->nullable();
                 $table->decimal('amount', 12, 2);
                 $table->enum('status', ['pending', 'opened', 'approved', 'rejected', 'cancelled', 'expired'])
-                      ->default('pending')
-                      ->index();
+                    ->default('pending')
+                    ->index();
 
                 $table->string('mp_payment_id', 50)->nullable()->index();
                 $table->string('mp_order_id', 50)->nullable();

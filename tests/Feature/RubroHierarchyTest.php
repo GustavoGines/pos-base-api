@@ -15,6 +15,7 @@ class RubroHierarchyTest extends TestCase
     use RefreshDatabase;
 
     protected User $admin;
+
     protected Rubro $systemRubro;
 
     protected function setUp(): void

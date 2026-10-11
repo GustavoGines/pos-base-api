@@ -2,20 +2,17 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Exports\ExpensesAnalysisExport;
-use App\Exports\MonthlyBalanceExport;
-use App\Exports\ProfitByCategoryExport;
-use App\Exports\ProfitByRubroExport;
 use App\Http\Controllers\Controller;
 use App\Models\SaleItem;
 use App\Repositories\SalesAnalyticsRepository;
 use App\Services\ReportCacheService;
-use Barryvdh\DomPDF\Facade\Pdf;
+use App\Services\Reports\ReportExpenseService;
+use App\Services\Reports\ReportExportService;
 use Carbon\Carbon;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
-use Maatwebsite\Excel\Facades\Excel;
 
 class ReportController extends Controller
 {
@@ -23,9 +20,18 @@ class ReportController extends Controller
 
     private SalesAnalyticsRepository $analyticsRepo;
 
-    public function __construct(SalesAnalyticsRepository $analyticsRepo)
-    {
+    private ReportExportService $exportService;
+
+    private ReportExpenseService $expenseService;
+
+    public function __construct(
+        SalesAnalyticsRepository $analyticsRepo,
+        ReportExportService $exportService,
+        ReportExpenseService $expenseService
+    ) {
         $this->analyticsRepo = $analyticsRepo;
+        $this->exportService = $exportService;
+        $this->expenseService = $expenseService;
     }
 
     private function getProfitDataArray(string $startDate, string $endDate): Collection
@@ -46,7 +52,7 @@ class ReportController extends Controller
         });
     }
 
-    private function ensureMultiRubroEnabled(): ?\Illuminate\Http\JsonResponse
+    private function ensureMultiRubroEnabled(): ?JsonResponse
     {
         $featuresJson = DB::table('business_settings')
             ->where('key', 'license_features_dict')
@@ -272,10 +278,7 @@ class ReportController extends Controller
             $rubroFilter = $request->query('rubro_id');
         }
 
-        return Excel::download(
-            new ProfitByRubroExport($startDate, $endDate, $rubroFilter),
-            'reporte_ganancias_rubros.xlsx'
-        );
+        return $this->exportService->exportProfitByRubroExcel($startDate, $endDate, $rubroFilter);
     }
 
     public function exportProfitByCategory(Request $request)
@@ -293,18 +296,11 @@ class ReportController extends Controller
             if ($rubroFilter === null || $rubroFilter === '' || $rubroFilter === []) {
                 $rubroFilter = $request->query('rubro_id');
             }
-            return Excel::download(
-                new ProfitByRubroExport($startDate, $endDate, $rubroFilter),
-                'reporte_ganancias_rubros.xlsx'
-            );
+
+            return $this->exportService->exportProfitByRubroExcel($startDate, $endDate, $rubroFilter);
         }
 
-        $filename = $type === 'brand' ? 'reporte_ganancias_marcas.xlsx' : 'reporte_ganancias_categorias.xlsx';
-
-        return Excel::download(
-            new ProfitByCategoryExport($startDate, $endDate, $type),
-            $filename
-        );
+        return $this->exportService->exportProfitByCategoryExcel($startDate, $endDate, $type);
     }
 
     // ─── Endpoint: Exportar PDF ───────────────────────────────────────────────
@@ -325,43 +321,15 @@ class ReportController extends Controller
         }
 
         $data = $this->getProfitByRubroDataArray($startDate, $endDate, $rubroFilter);
-        $reportTitle = 'Reporte de Rentabilidad por Rubro';
 
-        $totalRevenue = $data->sum('total_revenue');
-        $totalProfit = $data->sum('total_profit');
-        $totalWithCost = $data->sum('revenue_with_cost');
-        $totalCost = $totalWithCost - $data->sum('total_profit');
-        $avgMargin = $totalWithCost > 0 ? ($totalProfit / $totalWithCost) * 100 : 0;
-
-        $salesByPlan = DB::table('sales')
-            ->selectRaw("COALESCE(price_list, 'base') as plan_name, COUNT(*) as total_tickets, SUM(total) as total_revenue")
-            ->whereBetween('created_at', [Carbon::parse($startDate)->startOfDay(), Carbon::parse($endDate)->endOfDay()])
-            ->where('status', 'completed')
-            ->whereNotExists(function ($query) {
-                $query->select(DB::raw(1))
-                    ->from('customers')
-                    ->whereColumn('customers.id', 'sales.customer_id')
-                    ->where('customers.is_internal_account', true);
-            })
-            ->groupByRaw("COALESCE(price_list, 'base')")
-            ->orderByDesc('total_revenue')
-            ->get();
-
-        $pdf = Pdf::loadView('reports.pdf_profit', [
-            'data' => $data,
-            'reportTitle' => $reportTitle,
-            'groupLabel' => 'Rubro',
-            'startDate' => $startDate,
-            'endDate' => $endDate,
-            'totalRevenue' => $totalRevenue,
-            'totalProfit' => $totalProfit,
-            'totalCost' => $totalCost,
-            'avgMargin' => $avgMargin,
-            'salesByPlan' => $salesByPlan,
-            'generatedAt' => Carbon::now()->format('d/m/Y H:i'),
-        ])->setPaper('a4', 'portrait');
-
-        return $pdf->download('reporte_ganancias_rubros_'.$startDate.'_'.$endDate.'.pdf');
+        return $this->exportService->exportProfitPdf(
+            $data,
+            'Reporte de Rentabilidad por Rubro',
+            'Rubro',
+            $startDate,
+            $endDate,
+            'rubro'
+        );
     }
 
     public function exportPdfByCategory(Request $request)
@@ -392,47 +360,14 @@ class ReportController extends Controller
             $groupLabel = 'Categoría';
         }
 
-        $totalRevenue = $data->sum('total_revenue');
-        $totalProfit = $data->sum('total_profit');
-        $totalWithCost = $data->sum('revenue_with_cost');
-        $totalCost = $totalWithCost - $data->sum('total_profit');
-        $avgMargin = $totalWithCost > 0 ? ($totalProfit / $totalWithCost) * 100 : 0;
-
-        $salesByPlan = DB::table('sales')
-            ->selectRaw("COALESCE(price_list, 'base') as plan_name, COUNT(*) as total_tickets, SUM(total) as total_revenue")
-            ->whereBetween('created_at', [Carbon::parse($startDate)->startOfDay(), Carbon::parse($endDate)->endOfDay()])
-            ->where('status', 'completed')
-            ->whereNotExists(function ($query) {
-                $query->select(DB::raw(1))
-                    ->from('customers')
-                    ->whereColumn('customers.id', 'sales.customer_id')
-                    ->where('customers.is_internal_account', true);
-            })
-            ->groupByRaw("COALESCE(price_list, 'base')")
-            ->orderByDesc('total_revenue')
-            ->get();
-
-        $pdf = Pdf::loadView('reports.pdf_profit', [
-            'data' => $data,
-            'reportTitle' => $reportTitle,
-            'groupLabel' => $groupLabel,
-            'startDate' => $startDate,
-            'endDate' => $endDate,
-            'totalRevenue' => $totalRevenue,
-            'totalProfit' => $totalProfit,
-            'totalCost' => $totalCost,
-            'avgMargin' => $avgMargin,
-            'salesByPlan' => $salesByPlan,
-            'generatedAt' => Carbon::now()->format('d/m/Y H:i'),
-        ])->setPaper('a4', 'portrait');
-
-        $filePrefix = match ($type) {
-            'brand' => 'reporte_ganancias_marcas_',
-            'rubro' => 'reporte_ganancias_rubros_',
-            default => 'reporte_ganancias_categorias_',
-        };
-
-        return $pdf->download($filePrefix.$startDate.'_'.$endDate.'.pdf');
+        return $this->exportService->exportProfitPdf(
+            $data,
+            $reportTitle,
+            $groupLabel,
+            $startDate,
+            $endDate,
+            $type
+        );
     }
 
     // ─── Endpoint: Balance Mensual Flexible ──────────────────────────────────
@@ -471,10 +406,7 @@ class ReportController extends Controller
         $startMonth = $request->query('start_month', Carbon::now()->subMonths(5)->format('Y-m'));
         $endMonth = $request->query('end_month', Carbon::now()->format('Y-m'));
 
-        return Excel::download(
-            new MonthlyBalanceExport($startMonth, $endMonth),
-            'balance_mensual_'.$startMonth.'_al_'.$endMonth.'.xlsx'
-        );
+        return $this->exportService->exportMonthlyBalanceExcel($startMonth, $endMonth);
     }
 
     public function exportMonthlyBalancePdf(Request $request)
@@ -484,14 +416,7 @@ class ReportController extends Controller
 
         $data = $this->getMonthlyBalanceData($startMonth, $endMonth);
 
-        $pdf = Pdf::loadView('reports.pdf_monthly_balance', [
-            'data' => $data,
-            'startMonth' => $startMonth,
-            'endMonth' => $endMonth,
-            'generatedAt' => Carbon::now()->format('d/m/Y H:i'),
-        ])->setPaper('a4', 'portrait');
-
-        return $pdf->download('balance_mensual_'.$startMonth.'_al_'.$endMonth.'.pdf');
+        return $this->exportService->exportMonthlyBalancePdf($data, $startMonth, $endMonth);
     }
 
     public function internalConsumption(Request $request)
@@ -536,211 +461,25 @@ class ReportController extends Controller
         ]);
     }
 
-    /**
-     * Parse and normalize query filters for expense analysis.
-     */
-    private function parseExpenseFilters(Request $request): array
-    {
-        $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
-        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
-
-        $includeSuppliers = true;
-        if ($request->has('include_suppliers')) {
-            $rawInclude = $request->query('include_suppliers');
-            if ($rawInclude !== '' && $rawInclude !== null) {
-                $includeSuppliers = filter_var($rawInclude, FILTER_VALIDATE_BOOLEAN);
-            }
-        }
-
-        $paymentMethod = $request->query('payment_method');
-        if ($paymentMethod !== null && $paymentMethod !== '') {
-            $normalized = strtolower(trim((string) $paymentMethod));
-            $map = [
-                'efectivo' => 'cash',
-                'cash' => 'cash',
-                'transferencia' => 'transfer',
-                'transfer' => 'transfer',
-                'cheque' => 'check',
-                'check' => 'check',
-            ];
-            $paymentMethod = $map[$normalized] ?? null;
-        } else {
-            $paymentMethod = null;
-        }
-
-        $minAmount = null;
-        if ($request->filled('min_amount') && is_numeric($request->query('min_amount'))) {
-            $val = (float) $request->query('min_amount');
-            if ($val > 0) {
-                $minAmount = $val;
-            }
-        }
-
-        return [
-            'startDate' => $startDate,
-            'endDate' => $endDate,
-            'includeSuppliers' => $includeSuppliers,
-            'paymentMethod' => $paymentMethod,
-            'minAmount' => $minAmount,
-        ];
-    }
-
-    /**
-     * Build base query for cash movements filtered by date, supplier inclusion, payment method, and min amount.
-     */
-    private function buildBaseExpensesQuery(
-        string $startDate,
-        string $endDate,
-        bool $includeSuppliers = true,
-        ?string $paymentMethod = null,
-        ?float $minAmount = null
-    ) {
-        $types = $includeSuppliers ? ['expense', 'supplier_payment'] : ['expense'];
-
-        $query = DB::table('cash_movements')
-            ->leftJoin('expense_categories', 'cash_movements.expense_category_id', '=', 'expense_categories.id')
-            ->whereIn('cash_movements.type', $types)
-            ->whereNull('cash_movements.deleted_at')
-            ->whereBetween('cash_movements.created_at', [
-                Carbon::parse($startDate)->startOfDay(),
-                Carbon::parse($endDate)->endOfDay(),
-            ]);
-
-        if ($paymentMethod !== null) {
-            $query->where('cash_movements.payment_method', $paymentMethod);
-        }
-
-        if ($minAmount !== null && $minAmount > 0) {
-            $query->where('cash_movements.amount', '>=', $minAmount);
-        }
-
-        return $query;
-    }
-
     public function expensesAnalysis(Request $request)
     {
-        $filters = $this->parseExpenseFilters($request);
+        $filters = $this->expenseService->parseExpenseFilters($request);
+        $analysis = $this->expenseService->getAnalysis($filters);
 
-        $movements = $this->buildBaseExpensesQuery(
-            $filters['startDate'],
-            $filters['endDate'],
-            $filters['includeSuppliers'],
-            $filters['paymentMethod'],
-            $filters['minAmount']
-        )
-            ->select(
-                'cash_movements.id',
-                'cash_movements.amount',
-                'cash_movements.description',
-                'cash_movements.created_at',
-                'cash_movements.type',
-                DB::raw("
-                CASE 
-                    WHEN cash_movements.type = 'supplier_payment' THEN 'Pago a Proveedor'
-                    ELSE COALESCE(expense_categories.name, 'Sin Categoría')
-                END as category_name
-            ")
-            )
-            ->orderByDesc('cash_movements.created_at')
-            ->get();
-
-        $grouped = $movements->groupBy('category_name');
-
-        $expenses = [];
-        $totalExpenses = 0;
-
-        foreach ($grouped as $categoryName => $items) {
-            $sum = $items->sum('amount');
-            $totalExpenses += $sum;
-
-            $expenses[] = [
-                'category_name' => $categoryName,
-                'total_amount' => $sum,
-                'transactions' => $items->count(),
-                'movements' => $items->map(function ($m) {
-                    return [
-                        'id' => $m->id,
-                        'amount' => (float) $m->amount,
-                        'description' => $m->description,
-                        'date' => $m->created_at,
-                    ];
-                })->values()->all(),
-            ];
-        }
-
-        // Sort by total amount desc
-        usort($expenses, function ($a, $b) {
-            return $b['total_amount'] <=> $a['total_amount'];
-        });
-
-        $expenses = collect($expenses);
-
-        return response()->json([
-            'start_date' => $filters['startDate'],
-            'end_date' => $filters['endDate'],
-            'total_expenses' => round($totalExpenses, 2),
-            'by_category' => $expenses->map(function ($row) use ($totalExpenses) {
-                return [
-                    'category' => $row['category_name'],
-                    'amount' => round((float) $row['total_amount'], 2),
-                    'transactions' => (int) $row['transactions'],
-                    'percentage' => $totalExpenses > 0 ? round(($row['total_amount'] / $totalExpenses) * 100, 1) : 0,
-                    'movements' => $row['movements'],
-                ];
-            }),
-        ]);
+        return response()->json($analysis);
     }
 
     public function exportExpensesAnalysisExcel(Request $request)
     {
-        $filters = $this->parseExpenseFilters($request);
+        $filters = $this->expenseService->parseExpenseFilters($request);
 
-        return Excel::download(
-            new ExpensesAnalysisExport(
-                $filters['startDate'],
-                $filters['endDate'],
-                $filters['includeSuppliers'],
-                $filters['paymentMethod'],
-                $filters['minAmount']
-            ),
-            'analisis_gastos_'.str_replace('-', '', $filters['startDate']).'_al_'.str_replace('-', '', $filters['endDate']).'.xlsx'
-        );
+        return $this->exportService->exportExpensesAnalysisExcel($filters);
     }
 
     public function exportExpensesAnalysisPdf(Request $request)
     {
-        $filters = $this->parseExpenseFilters($request);
+        $filters = $this->expenseService->parseExpenseFilters($request);
 
-        $expenses = $this->buildBaseExpensesQuery(
-            $filters['startDate'],
-            $filters['endDate'],
-            $filters['includeSuppliers'],
-            $filters['paymentMethod'],
-            $filters['minAmount']
-        )
-            ->selectRaw("
-            CASE 
-                WHEN cash_movements.type = 'supplier_payment' THEN 'Pago a Proveedor'
-                ELSE COALESCE(expense_categories.name, 'Sin Categoría')
-            END as category_name,
-            SUM(cash_movements.amount) as total_amount,
-            COUNT(*) as transactions
-        ")
-            ->groupBy(DB::raw("
-            CASE 
-                WHEN cash_movements.type = 'supplier_payment' THEN 'Pago a Proveedor'
-                ELSE COALESCE(expense_categories.name, 'Sin Categoría')
-            END
-        "))
-            ->orderByDesc('total_amount')
-            ->get();
-
-        $totalExpenses = $expenses->sum('total_amount');
-        $startDate = $filters['startDate'];
-        $endDate = $filters['endDate'];
-
-        $pdf = Pdf::loadView('reports.pdf_expenses_analysis', compact('expenses', 'startDate', 'endDate', 'totalExpenses'));
-
-        return $pdf->download('analisis_gastos_'.str_replace('-', '', $startDate).'_al_'.str_replace('-', '', $endDate).'.pdf');
+        return $this->exportService->exportExpensesAnalysisPdf($filters, $this->expenseService);
     }
 }

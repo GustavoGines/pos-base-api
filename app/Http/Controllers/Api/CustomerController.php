@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Customer\StoreCustomerRequest;
+use App\Http\Requests\Customer\UpdateCustomerRequest;
 use App\Models\CashShift;
 use App\Models\Customer;
 use App\Models\CustomerTransaction;
@@ -11,7 +13,6 @@ use App\Models\ThirdPartyCheck;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class CustomerController extends Controller
@@ -37,40 +38,9 @@ class CustomerController extends Controller
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request)
+    public function store(StoreCustomerRequest $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'phone' => 'nullable|string|max:20',
-            'document_number' => [
-                'required',
-                'string',
-                'max:50',
-                Rule::unique('customers')->whereNull('deleted_at'),
-            ],
-            'credit_limit' => 'nullable|numeric|min:0',
-            'balance' => 'nullable|numeric',
-            'default_price_tier' => 'nullable|string|in:base,wholesale,card',
-            'delivery_address' => 'nullable|string|max:500',
-            'is_internal_account' => 'nullable|boolean',
-            'document_type' => [
-                'nullable',
-                'integer',
-                function ($attribute, $value, $fail) use ($request) {
-                    if ($request->input('applies_iibb_perception') && $value != 80) {
-                        $fail('Para aplicar percepciones IIBB el cliente debe tener tipo de documento CUIT (80).');
-                    }
-                },
-            ],
-            'tax_condition' => 'nullable|string|max:50',
-            'fiscal_address' => 'nullable|string|max:500',
-            'applies_iibb_perception' => 'nullable|boolean',
-            'iibb_perception_rate' => 'nullable|numeric|min:0|max:100',
-        ], [
-            'name.required' => 'El nombre del cliente es obligatorio.',
-            'document_number.required' => 'El número de documento es obligatorio.',
-            'document_number.unique' => 'Ya existe un cliente con ese número de documento (DNI/RUT). Verificá los datos.',
-        ]);
+        $validated = $request->validated();
 
         if (! isset($validated['balance'])) {
             $validated['balance'] = 0.00;
@@ -96,41 +66,9 @@ class CustomerController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, Customer $customer)
+    public function update(UpdateCustomerRequest $request, Customer $customer)
     {
-        $validated = $request->validate([
-            'name' => 'sometimes|required|string|max:255',
-            'phone' => 'nullable|string|max:20',
-            'document_number' => [
-                'sometimes',
-                'required',
-                'string',
-                'max:50',
-                Rule::unique('customers')->ignore($customer->id)->whereNull('deleted_at'),
-            ],
-            'credit_limit' => 'nullable|numeric|min:0',
-            'is_active' => 'sometimes|boolean',
-            'default_price_tier' => 'nullable|string|in:base,wholesale,card',
-            'delivery_address' => 'nullable|string|max:500',
-            'is_internal_account' => 'sometimes|boolean',
-            'document_type' => [
-                'nullable',
-                'integer',
-                function ($attribute, $value, $fail) use ($request) {
-                    if ($request->input('applies_iibb_perception') && $value != 80) {
-                        $fail('Para aplicar percepciones IIBB el cliente debe tener tipo de documento CUIT (80).');
-                    }
-                },
-            ],
-            'tax_condition' => 'nullable|string|max:50',
-            'fiscal_address' => 'nullable|string|max:500',
-            'applies_iibb_perception' => 'nullable|boolean',
-            'iibb_perception_rate' => 'nullable|numeric|min:0|max:100',
-        ], [
-            'name.required' => 'El nombre del cliente es obligatorio.',
-            'document_number.required' => 'El número de documento es obligatorio.',
-            'document_number.unique' => 'Ya existe otro cliente con ese número de documento (DNI/RUT).',
-        ]);
+        $validated = $request->validated();
 
         $customer->update($validated);
 

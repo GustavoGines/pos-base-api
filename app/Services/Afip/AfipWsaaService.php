@@ -7,12 +7,12 @@ namespace App\Services\Afip;
 use App\Models\BusinessSetting;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
 class AfipWsaaService
 {
     public const URL_WSAA_HOMO = 'https://wsaahomo.afip.gov.ar/ws/services/LoginCms';
+
     public const URL_WSAA_PROD = 'https://wsaa.afip.gov.ar/ws/services/LoginCms';
 
     public function __construct()
@@ -27,7 +27,7 @@ class AfipWsaaService
     {
         $envConf = getenv('OPENSSL_CONF');
         if (empty($envConf)) {
-            $candidate = dirname(PHP_BINARY) . '/extras/ssl/openssl.cnf';
+            $candidate = dirname(PHP_BINARY).'/extras/ssl/openssl.cnf';
             if (file_exists($candidate)) {
                 putenv("OPENSSL_CONF={$candidate}");
                 $_ENV['OPENSSL_CONF'] = $candidate;
@@ -44,15 +44,15 @@ class AfipWsaaService
         $generationTime = date('c', time() - 600); // 10 minutos en el pasado
         $expirationTime = date('c', time() + 600); // 10 minutos en el futuro
 
-        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" .
-            "<loginTicketRequest version=\"1.0\">\n" .
-            "  <header>\n" .
-            "    <uniqueId>{$uniqueId}</uniqueId>\n" .
-            "    <generationTime>{$generationTime}</generationTime>\n" .
-            "    <expirationTime>{$expirationTime}</expirationTime>\n" .
-            "  </header>\n" .
-            "  <service>{$service}</service>\n" .
-            "</loginTicketRequest>";
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n".
+            "<loginTicketRequest version=\"1.0\">\n".
+            "  <header>\n".
+            "    <uniqueId>{$uniqueId}</uniqueId>\n".
+            "    <generationTime>{$generationTime}</generationTime>\n".
+            "    <expirationTime>{$expirationTime}</expirationTime>\n".
+            "  </header>\n".
+            "  <service>{$service}</service>\n".
+            '</loginTicketRequest>';
     }
 
     /**
@@ -81,8 +81,8 @@ class AfipWsaaService
             $signed = openssl_pkcs7_sign(
                 $traFile,
                 $cmsFile,
-                'file://' . realpath($certPath),
-                ['file://' . realpath($keyPath), $passphrase],
+                'file://'.realpath($certPath),
+                ['file://'.realpath($keyPath), $passphrase],
                 [],
                 0 // CRÍTICO AFIP: Attached / Enveloped CMS (NO usar PKCS7_DETACHED)
             );
@@ -94,7 +94,7 @@ class AfipWsaaService
 
             $cmsRaw = file_get_contents($cmsFile);
             if ($cmsRaw === false) {
-                throw new RuntimeException("Error al leer el archivo CMS generado");
+                throw new RuntimeException('Error al leer el archivo CMS generado');
             }
 
             // Saneamiento de encabezados MIME de OpenSSL
@@ -102,7 +102,7 @@ class AfipWsaaService
             $cmsBase64 = preg_replace('/[\r\n\s]+/', '', trim($parts[1] ?? $cmsRaw));
 
             if (empty($cmsBase64)) {
-                throw new RuntimeException("El CMS firmado generado está vacío");
+                throw new RuntimeException('El CMS firmado generado está vacío');
             }
 
             return $cmsBase64;
@@ -163,19 +163,19 @@ class AfipWsaaService
      */
     public function callLoginCms(string $endpoint, string $cmsBase64): array
     {
-        $soapEnvelope = '<?xml version="1.0" encoding="UTF-8"?>' .
-            '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:wsaa="http://wsaa.view.sua.dvad.ar.gov.afip.biz/">' .
-            '<soapenv:Header/>' .
-            '<soapenv:Body>' .
-            '<wsaa:loginCms>' .
-            '<wsaa:in0>' . htmlspecialchars($cmsBase64, ENT_XML1) . '</wsaa:in0>' .
-            '</wsaa:loginCms>' .
-            '</soapenv:Body>' .
+        $soapEnvelope = '<?xml version="1.0" encoding="UTF-8"?>'.
+            '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:wsaa="http://wsaa.view.sua.dvad.ar.gov.afip.biz/">'.
+            '<soapenv:Header/>'.
+            '<soapenv:Body>'.
+            '<wsaa:loginCms>'.
+            '<wsaa:in0>'.htmlspecialchars($cmsBase64, ENT_XML1).'</wsaa:in0>'.
+            '</wsaa:loginCms>'.
+            '</soapenv:Body>'.
             '</soapenv:Envelope>';
 
         $response = Http::withHeaders([
             'Content-Type' => 'text/xml; charset=utf-8',
-            'SOAPAction'   => '""',
+            'SOAPAction' => '""',
         ])->timeout(12)->send('POST', $endpoint, [
             'body' => $soapEnvelope,
         ]);
@@ -212,7 +212,7 @@ class AfipWsaaService
         $expirationTime = trim($expMatch[1] ?? '');
 
         if (empty($token) || empty($sign)) {
-            throw new RuntimeException("Respuesta de WSAA incompleta: no se encontraron token o sign válidos.");
+            throw new RuntimeException('Respuesta de WSAA incompleta: no se encontraron token o sign válidos.');
         }
 
         return [
@@ -229,7 +229,7 @@ class AfipWsaaService
     {
         $stored = BusinessSetting::where('key', 'afip_cert_path')->value('value');
         if (! empty($stored)) {
-            $p = storage_path('app/private/' . $stored);
+            $p = storage_path('app/private/'.$stored);
             if (file_exists($p)) {
                 return $p;
             }
@@ -250,7 +250,7 @@ class AfipWsaaService
     {
         $stored = BusinessSetting::where('key', 'afip_key_path')->value('value');
         if (! empty($stored)) {
-            $p = storage_path('app/private/' . $stored);
+            $p = storage_path('app/private/'.$stored);
             if (file_exists($p)) {
                 return $p;
             }

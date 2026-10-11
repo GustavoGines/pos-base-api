@@ -15,7 +15,7 @@ class SalesAnalyticsRepository
      * @param  string  $startDate  Fecha inicio (Y-m-d)
      * @param  string  $endDate  Fecha fin (Y-m-d)
      * @param  string  $groupBy  'category', 'brand' o 'rubro'
-     * @param  mixed   $rubroFilter  ID único o array de IDs de rubros para filtrar/comparar
+     * @param  mixed  $rubroFilter  ID único o array de IDs de rubros para filtrar/comparar
      */
     public function getProfitReport(string $startDate, string $endDate, string $groupBy = 'category', mixed $rubroFilter = null): Collection
     {
@@ -50,7 +50,7 @@ class SalesAnalyticsRepository
 
             $cleanIds = array_values(array_unique(array_filter(array_map('intval', $ids), fn ($id) => $id > 0)));
 
-            if (!empty($cleanIds)) {
+            if (! empty($cleanIds)) {
                 if ($groupBy === 'rubro') {
                     $query->whereIn('rubros.id', $cleanIds);
                 } elseif ($groupBy === 'category') {

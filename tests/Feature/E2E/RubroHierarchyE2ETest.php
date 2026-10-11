@@ -2,7 +2,6 @@
 
 namespace Tests\Feature\E2E;
 
-use App\Constants\Permissions;
 use App\Models\Category;
 use App\Models\Product;
 use App\Models\User;
@@ -73,7 +72,7 @@ class RubroHierarchyE2ETest extends TestCase
      */
     protected function ensureSystemRubro(string $name = 'Ferretería'): int
     {
-        if (!Schema::hasTable('rubros')) {
+        if (! Schema::hasTable('rubros')) {
             $this->markTestSkipped('Tabla rubros aún no existe en la base de datos (pendiente migración M2).');
         }
 
@@ -102,7 +101,7 @@ class RubroHierarchyE2ETest extends TestCase
             'pin' => Hash::make('5678'),
         ]);
 
-        $token = 'test-cashier-token-' . uniqid();
+        $token = 'test-cashier-token-'.uniqid();
         DB::table('users')->where('id', $cashier->id)->update(['session_token' => $token]);
         $this->withHeader('X-Session-Token', $token);
 
@@ -432,7 +431,7 @@ class RubroHierarchyE2ETest extends TestCase
         $deleteRes = $this->deleteJson("/api/catalog/rubros/{$systemRubroId}");
 
         $deleteRes->assertStatus(422)
-            ->assertJsonPath('message', fn($msg) => str_contains(strtolower($msg), 'sistema') || str_contains(strtolower($msg), 'defecto'));
+            ->assertJsonPath('message', fn ($msg) => str_contains(strtolower($msg), 'sistema') || str_contains(strtolower($msg), 'defecto'));
 
         // El rubro del sistema debe seguir existiendo en la base de datos
         $this->assertDatabaseHas('rubros', [
@@ -463,7 +462,7 @@ class RubroHierarchyE2ETest extends TestCase
         $deleteRes = $this->deleteJson("/api/catalog/rubros/{$rubroId}");
 
         $deleteRes->assertStatus(422)
-            ->assertJsonPath('message', fn($msg) => str_contains(strtolower($msg), 'categoría') || str_contains(strtolower($msg), 'categoria'));
+            ->assertJsonPath('message', fn ($msg) => str_contains(strtolower($msg), 'categoría') || str_contains(strtolower($msg), 'categoria'));
 
         // El rubro debe permanecer intacto en la base de datos
         $this->assertDatabaseHas('rubros', ['id' => $rubroId]);

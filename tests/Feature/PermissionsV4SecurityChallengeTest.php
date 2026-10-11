@@ -3,9 +3,7 @@
 namespace Tests\Feature;
 
 use App\Constants\Permissions;
-use App\Models\CashMovement;
 use App\Models\CashShift;
-use App\Models\PaymentMethod;
 use App\Models\Product;
 use App\Models\ProductPriceTier;
 use App\Models\Sale;
@@ -50,7 +48,7 @@ class PermissionsV4SecurityChallengeTest extends TestCase
             ]);
         }
 
-        $token = 'test-token-' . uniqid();
+        $token = 'test-token-'.uniqid();
         DB::table('users')->where('id', $user->id)->update(['session_token' => $token]);
         $this->withHeader('X-Session-Token', $token);
 
@@ -63,8 +61,8 @@ class PermissionsV4SecurityChallengeTest extends TestCase
         $code++;
 
         return Product::create(array_merge([
-            'name' => 'Product ' . $code,
-            'internal_code' => 'P' . $code,
+            'name' => 'Product '.$code,
+            'internal_code' => 'P'.$code,
             'selling_price' => 100.00,
             'cost_price' => 50.00,
             'stock' => 50,

@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\BusinessSetting;
+use App\Models\CashMovement;
 use App\Models\Customer;
 use App\Models\Supplier;
 use App\Models\ThirdPartyCheck;
@@ -16,8 +17,11 @@ class CashMovementSupplierPaymentTest extends TestCase
     use RefreshDatabase;
 
     protected $admin;
+
     protected $shift;
+
     protected $supplier;
+
     protected $check;
 
     protected function setUp(): void
@@ -180,7 +184,7 @@ class CashMovementSupplierPaymentTest extends TestCase
     {
         // Simular condición de carrera donde otro proceso endosó el cheque
         // justo después de pasar la validación inicial
-        \App\Models\CashMovement::saving(function ($movement) {
+        CashMovement::saving(function ($movement) {
             if ($movement->payment_method === 'check') {
                 $this->check->update(['status' => 'endorsed']);
             }

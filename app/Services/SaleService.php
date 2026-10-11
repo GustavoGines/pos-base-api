@@ -6,6 +6,8 @@ use App\DTOs\PaySaleDTO;
 use App\DTOs\ProcessSaleDTO;
 use App\DTOs\SaleContextDTO;
 use App\Events\SaleCompleted;
+use App\Jobs\SyncProductStockToPlatformsJob;
+use App\Models\CashMovement;
 use App\Models\DeliveryNote;
 use App\Models\PaymentMethod;
 use App\Models\Quote;
@@ -98,6 +100,11 @@ class SaleService
                 $this->createDeliveryNote($sale, $dto->items, $dto->fulfillmentStatus);
             }
 
+            // Enqueue asynchronous stock synchronization to online platforms
+            foreach ($lockedProducts as $lockedProduct) {
+                SyncProductStockToPlatformsJob::dispatch($lockedProduct->id, (float) $lockedProduct->stock)->afterCommit();
+            }
+
             event(new SaleCompleted($sale));
 
             ReportCacheService::flush();
@@ -173,6 +180,20 @@ class SaleService
                 'cashier_id' => $context->userId ?? $lockedSale->cashier_id,
             ]);
 
+            // Enqueue asynchronous stock synchronization to online platforms
+            if (isset($lockedProducts) && $lockedProducts instanceof \Illuminate\Support\Collection) {
+                foreach ($lockedProducts as $lockedProduct) {
+                    SyncProductStockToPlatformsJob::dispatch($lockedProduct->id, (float) $lockedProduct->stock)->afterCommit();
+                }
+            } else {
+                $lockedSale->loadMissing('items.product');
+                foreach ($lockedSale->items as $saleItem) {
+                    if ($saleItem->product) {
+                        SyncProductStockToPlatformsJob::dispatch($saleItem->product->id, (float) $saleItem->product->stock)->afterCommit();
+                    }
+                }
+            }
+
             event(new SaleCompleted($lockedSale));
 
             ReportCacheService::flush();
@@ -236,7 +257,7 @@ class SaleService
                         'Nro' => $electronicInvoice->voucher_number,
                         // 'Cuit' lo completa AfipWsfeService con el CUIT emisor (comprobante propio)
                         'CbteFch' => $electronicInvoice->issued_at ? $electronicInvoice->issued_at->format('Ymd') : date('Ymd'),
-                    ]
+                    ],
                 ];
 
                 $options = [
@@ -261,7 +282,7 @@ class SaleService
                         'credit_note_qr_data' => $ncData['qr_data'] ?? null,
                     ]);
                 } catch (\Exception $e) {
-                    throw new \InvalidArgumentException("No se pudo emitir la Nota de Crédito en AFIP. Motivo: " . $e->getMessage());
+                    throw new \InvalidArgumentException('No se pudo emitir la Nota de Crédito en AFIP. Motivo: '.$e->getMessage());
                 }
             }
 
@@ -288,11 +309,11 @@ class SaleService
 
             if ($lockedSale->cash_shift_id !== $context->cashShiftId) {
                 $cashRefundAmount = $lockedSale->payments()
-                    ->whereHas('paymentMethod', fn($q) => $q->where('is_cash', true))
+                    ->whereHas('paymentMethod', fn ($q) => $q->where('is_cash', true))
                     ->sum('total_amount');
-                
+
                 if ($cashRefundAmount > 0) {
-                    \App\Models\CashMovement::create([
+                    CashMovement::create([
                         'cash_shift_id' => $context->cashShiftId,
                         'user_id' => $context->userId,
                         'amount' => $cashRefundAmount,

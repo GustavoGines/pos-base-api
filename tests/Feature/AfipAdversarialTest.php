@@ -10,7 +10,6 @@ use App\Models\ElectronicInvoice;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\User;
-use App\Services\Afip\AfipHelper;
 use App\Services\Afip\AfipWsaaService;
 use App\Services\Afip\AfipWsfeService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -26,8 +25,11 @@ class AfipAdversarialTest extends TestCase
     use RefreshDatabase;
 
     protected User $adminUser;
+
     protected string $testCuit = '30712345678';
+
     protected ?string $tempCertPath = null;
+
     protected ?string $tempKeyPath = null;
 
     protected function setUp(): void
@@ -64,19 +66,19 @@ class AfipAdversarialTest extends TestCase
      */
     protected function generateSelfSignedCertAndKey(): void
     {
-        $wsaa = new AfipWsaaService();
+        $wsaa = new AfipWsaaService;
         $wsaa->ensureOpenSslConfig();
 
-        $cnfPath = dirname(PHP_BINARY) . '/extras/ssl/openssl.cnf';
+        $cnfPath = dirname(PHP_BINARY).'/extras/ssl/openssl.cnf';
         $configArgs = file_exists($cnfPath) ? ['config' => $cnfPath] : [];
 
         $dn = [
-            'countryName'            => 'AR',
-            'stateOrProvinceName'    => 'Buenos Aires',
-            'localityName'           => 'CABA',
-            'organizationName'       => 'Sistema POS Test Org',
+            'countryName' => 'AR',
+            'stateOrProvinceName' => 'Buenos Aires',
+            'localityName' => 'CABA',
+            'organizationName' => 'Sistema POS Test Org',
             'organizationalUnitName' => 'QA Adversarial',
-            'commonName'             => 'test-afip-pos',
+            'commonName' => 'test-afip-pos',
         ];
 
         $privKeyArgs = array_merge($configArgs, [
@@ -86,26 +88,26 @@ class AfipAdversarialTest extends TestCase
 
         $privKey = openssl_pkey_new($privKeyArgs);
         if ($privKey === false) {
-            throw new RuntimeException('Error generating private key: ' . openssl_error_string());
+            throw new RuntimeException('Error generating private key: '.openssl_error_string());
         }
 
         $csrArgs = array_merge($configArgs, ['digest_alg' => 'sha256']);
         $csr = openssl_csr_new($dn, $privKey, $csrArgs);
         if ($csr === false) {
-            throw new RuntimeException('Error generating CSR: ' . openssl_error_string());
+            throw new RuntimeException('Error generating CSR: '.openssl_error_string());
         }
 
         $x509 = openssl_csr_sign($csr, null, $privKey, 365, $csrArgs);
         if ($x509 === false) {
-            throw new RuntimeException('Error signing CSR: ' . openssl_error_string());
+            throw new RuntimeException('Error signing CSR: '.openssl_error_string());
         }
 
         openssl_x509_export($x509, $certOut);
         openssl_pkey_export($privKey, $keyOut, null, $configArgs);
 
         $tempDir = sys_get_temp_dir();
-        $this->tempCertPath = tempnam($tempDir, 'afip_cert_') . '.crt';
-        $this->tempKeyPath = tempnam($tempDir, 'afip_key_') . '.key';
+        $this->tempCertPath = tempnam($tempDir, 'afip_cert_').'.crt';
+        $this->tempKeyPath = tempnam($tempDir, 'afip_key_').'.key';
 
         file_put_contents($this->tempCertPath, $certOut);
         file_put_contents($this->tempKeyPath, $keyOut);
@@ -128,38 +130,38 @@ class AfipAdversarialTest extends TestCase
         $shift = $this->crearTurnoAbierto(user: $this->adminUser);
 
         $product = Product::create([
-            'name'          => 'Producto Adversarial Test',
+            'name' => 'Producto Adversarial Test',
             'internal_code' => 'ADV-01',
-            'cost_price'    => 500.00,
+            'cost_price' => 500.00,
             'selling_price' => $total,
-            'iva_rate'      => 21.00,
-            'stock'         => 100,
-            'active'        => true,
+            'iva_rate' => 21.00,
+            'stock' => 100,
+            'active' => true,
         ]);
 
         $sale = Sale::create([
-            'total'           => $total,
+            'total' => $total,
             'total_surcharge' => 0.00,
-            'payment_status'  => 'paid',
-            'amount_due'      => 0.00,
-            'status'          => 'completed',
-            'invoice_status'  => 'none',
-            'cash_shift_id'   => $shift->id,
-            'user_id'         => $this->adminUser->id,
-            'cashier_id'      => $this->adminUser->id,
-            'customer_id'     => $customer?->id,
+            'payment_status' => 'paid',
+            'amount_due' => 0.00,
+            'status' => 'completed',
+            'invoice_status' => 'none',
+            'cash_shift_id' => $shift->id,
+            'user_id' => $this->adminUser->id,
+            'cashier_id' => $this->adminUser->id,
+            'customer_id' => $customer?->id,
         ]);
 
         $sale->items()->create([
-            'product_id'      => $product->id,
-            'product_name'    => $product->name,
-            'quantity'        => 1,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
             'unit_cost_price' => 500.00,
-            'unit_price'      => $total,
-            'subtotal'        => $total,
-            'iva_rate'        => 21.00,
-            'net_amount'      => round($total / 1.21, 2),
-            'iva_amount'      => round($total - ($total / 1.21), 2),
+            'unit_price' => $total,
+            'subtotal' => $total,
+            'iva_rate' => 21.00,
+            'net_amount' => round($total / 1.21, 2),
+            'iva_amount' => round($total - ($total / 1.21), 2),
         ]);
 
         return $sale;
@@ -174,7 +176,7 @@ class AfipAdversarialTest extends TestCase
      */
     public function test_wsaa_caching_subsequent_calls_hit_cache_without_reinvoking_logincms(): void
     {
-        $wsaaService = new AfipWsaaService();
+        $wsaaService = new AfipWsaaService;
         $cacheKey = "afip_ta_{$this->testCuit}_wsfe_testing";
         Cache::forget($cacheKey);
 
@@ -233,13 +235,13 @@ class AfipAdversarialTest extends TestCase
      */
     public function test_wsaa_clear_cache_forces_reauthentication(): void
     {
-        $wsaaService = new AfipWsaaService();
+        $wsaaService = new AfipWsaaService;
         $cacheKey = "afip_ta_{$this->testCuit}_wsfe_testing";
 
         // Pre-cargar caché
         Cache::put($cacheKey, [
             'token' => 'OLD_TOKEN',
-            'sign'  => 'OLD_SIGN',
+            'sign' => 'OLD_SIGN',
         ], 36000);
 
         $this->assertTrue(Cache::has($cacheKey));
@@ -254,13 +256,13 @@ class AfipAdversarialTest extends TestCase
      */
     public function test_wsaa_corrupted_or_partial_cache_triggers_fresh_authentication(): void
     {
-        $wsaaService = new AfipWsaaService();
+        $wsaaService = new AfipWsaaService;
         $cacheKey = "afip_ta_{$this->testCuit}_wsfe_testing";
 
         // Simular caché corrupta
         Cache::put($cacheKey, [
             'token' => '',
-            'sign'  => null,
+            'sign' => null,
         ], 36000);
 
         Http::fake([
@@ -294,7 +296,7 @@ class AfipAdversarialTest extends TestCase
      */
     public function test_openssl_cms_signing_der_inspection_and_absence_of_mime_multipart_boundaries(): void
     {
-        $wsaaService = new AfipWsaaService();
+        $wsaaService = new AfipWsaaService;
         $traXml = $wsaaService->createTraXml('wsfe');
 
         $this->assertNotEmpty($traXml);
@@ -333,7 +335,7 @@ class AfipAdversarialTest extends TestCase
      */
     public function test_openssl_cms_signing_fails_if_cert_or_key_missing(): void
     {
-        $wsaaService = new AfipWsaaService();
+        $wsaaService = new AfipWsaaService;
         $traXml = $wsaaService->createTraXml('wsfe');
 
         $this->expectException(RuntimeException::class);
@@ -350,18 +352,18 @@ class AfipAdversarialTest extends TestCase
      */
     public function test_rg_4892_qr_generation_decodes_base64_and_verifies_all_13_canonical_fields_match_input_exactly(): void
     {
-        $wsfeService = new AfipWsfeService();
+        $wsfeService = new AfipWsfeService;
 
         $inputParams = [
-            'fecha'      => '2026-10-07',
-            'cuit'       => 30712345678,
-            'ptoVta'     => 5,
-            'tipoCmp'    => 1, // Factura A
-            'nroCmp'     => 9988,
-            'importe'    => 24680.75,
+            'fecha' => '2026-10-07',
+            'cuit' => 30712345678,
+            'ptoVta' => 5,
+            'tipoCmp' => 1, // Factura A
+            'nroCmp' => 9988,
+            'importe' => 24680.75,
             'tipoDocRec' => 80, // CUIT
-            'nroDocRec'  => 30500010912,
-            'codAut'     => 74382910492819, // CAE 14 dígitos
+            'nroDocRec' => 30500010912,
+            'codAut' => 74382910492819, // CAE 14 dígitos
         ];
 
         $qrUrl = $wsfeService->buildQrUrl($inputParams);
@@ -403,19 +405,19 @@ class AfipAdversarialTest extends TestCase
      */
     public function test_rg_4892_qr_boundary_conditions(): void
     {
-        $wsfeService = new AfipWsfeService();
+        $wsfeService = new AfipWsfeService;
 
         // Escenario: Consumidor final sin documento (doc 0) e importe millonario con 2 decimales
         $qrUrl = $wsfeService->buildQrUrl([
-            'fecha'      => '2026-12-31',
-            'cuit'       => 30712345678,
-            'ptoVta'     => 1,
-            'tipoCmp'    => 6, // Factura B
-            'nroCmp'     => 1,
-            'importe'    => 150000.50,
+            'fecha' => '2026-12-31',
+            'cuit' => 30712345678,
+            'ptoVta' => 1,
+            'tipoCmp' => 6, // Factura B
+            'nroCmp' => 1,
+            'importe' => 150000.50,
             'tipoDocRec' => 99, // Consumidor Final
-            'nroDocRec'  => 0,
-            'codAut'     => '98765432101234', // Entregado como string numérico
+            'nroDocRec' => 0,
+            'codAut' => '98765432101234', // Entregado como string numérico
         ]);
 
         $base64 = str_replace('https://www.afip.gob.ar/fe/qr/?p=', '', $qrUrl);
@@ -438,13 +440,14 @@ class AfipAdversarialTest extends TestCase
     {
         Cache::put("afip_ta_{$this->testCuit}_wsfe_testing", [
             'token' => 'VALID_TOKEN',
-            'sign'  => 'VALID_SIGN',
+            'sign' => 'VALID_SIGN',
         ], 36000);
 
         Http::fake(function (HttpClientRequest $request) {
             if (str_contains($request->body(), 'FECompUltimoAutorizado')) {
                 throw new ConnectionException('cURL error 28: Connection timed out after 10002 milliseconds');
             }
+
             return Http::response('', 200);
         });
 
@@ -464,7 +467,7 @@ class AfipAdversarialTest extends TestCase
         $this->assertEquals('pending', $sale->fresh()->invoice_status);
         $this->assertDatabaseMissing('electronic_invoices', [
             'sale_id' => $sale->id,
-            'status'  => 'authorized',
+            'status' => 'authorized',
         ]);
     }
 
@@ -475,7 +478,7 @@ class AfipAdversarialTest extends TestCase
     {
         Cache::put("afip_ta_{$this->testCuit}_wsfe_testing", [
             'token' => 'VALID_TOKEN',
-            'sign'  => 'VALID_SIGN',
+            'sign' => 'VALID_SIGN',
         ], 36000);
 
         Http::fake(function (HttpClientRequest $request) {
@@ -519,7 +522,7 @@ class AfipAdversarialTest extends TestCase
     {
         Cache::put("afip_ta_{$this->testCuit}_wsfe_testing", [
             'token' => 'VALID_TOKEN',
-            'sign'  => 'VALID_SIGN',
+            'sign' => 'VALID_SIGN',
         ], 36000);
 
         Http::fake(function () {
@@ -548,21 +551,21 @@ class AfipAdversarialTest extends TestCase
 
         // Factura existente ya autorizada
         $existingInvoice = ElectronicInvoice::create([
-            'sale_id'         => $sale->id,
-            'voucher_type'    => 6,
-            'voucher_letter'  => 'B',
-            'point_of_sale'   => 1,
-            'voucher_number'  => 555,
-            'cae'             => '99887766554433',
-            'cae_expiration'  => '2026-10-25',
-            'doc_type'        => 99,
-            'doc_number'      => '0',
-            'net_amount'      => 2479.34,
-            'iva_amount'      => 520.66,
-            'total_amount'    => 3000.00,
-            'qr_data'         => 'https://www.afip.gob.ar/fe/qr/?p=EXISTING',
-            'status'          => 'authorized',
-            'issued_at'       => now(),
+            'sale_id' => $sale->id,
+            'voucher_type' => 6,
+            'voucher_letter' => 'B',
+            'point_of_sale' => 1,
+            'voucher_number' => 555,
+            'cae' => '99887766554433',
+            'cae_expiration' => '2026-10-25',
+            'doc_type' => 99,
+            'doc_number' => '0',
+            'net_amount' => 2479.34,
+            'iva_amount' => 520.66,
+            'total_amount' => 3000.00,
+            'qr_data' => 'https://www.afip.gob.ar/fe/qr/?p=EXISTING',
+            'status' => 'authorized',
+            'issued_at' => now(),
         ]);
 
         $sale->update(['invoice_status' => 'invoiced']);
@@ -614,7 +617,7 @@ class AfipAdversarialTest extends TestCase
     {
         Cache::put("afip_ta_{$this->testCuit}_wsfe_testing", [
             'token' => 'VALID_TOKEN',
-            'sign'  => 'VALID_SIGN',
+            'sign' => 'VALID_SIGN',
         ], 36000);
 
         Http::fake(function (HttpClientRequest $request) {
@@ -689,7 +692,7 @@ class AfipAdversarialTest extends TestCase
     {
         Cache::put("afip_ta_{$this->testCuit}_wsfe_testing", [
             'token' => 'VALID_TOKEN',
-            'sign'  => 'VALID_SIGN',
+            'sign' => 'VALID_SIGN',
         ], 36000);
 
         Http::fake(function (HttpClientRequest $request) {
@@ -760,7 +763,7 @@ class AfipAdversarialTest extends TestCase
     {
         Cache::put("afip_ta_{$this->testCuit}_wsfe_testing", [
             'token' => 'VALID_TOKEN',
-            'sign'  => 'VALID_SIGN',
+            'sign' => 'VALID_SIGN',
         ], 36000);
 
         Http::fake(function () {
@@ -772,7 +775,7 @@ class AfipAdversarialTest extends TestCase
         // Intento 1: Factura A con DocTipo 99 (Consumidor Final)
         $resp1 = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/invoice", [
             'voucher_type' => 1,
-            'doc_type'     => 99,
+            'doc_type' => 99,
         ]);
         $resp1->assertStatus(422)
             ->assertJsonPath('success', false)
@@ -781,8 +784,8 @@ class AfipAdversarialTest extends TestCase
         // Intento 2: Factura A con CUIT alterado (fallo Módulo 11)
         $resp2 = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/invoice", [
             'voucher_type' => 1,
-            'doc_type'     => 80,
-            'doc_number'   => '30500010915', // Dígito verificador adulterado
+            'doc_type' => 80,
+            'doc_number' => '30500010915', // Dígito verificador adulterado
         ]);
         $resp2->assertStatus(422)
             ->assertJsonPath('success', false)
@@ -796,7 +799,7 @@ class AfipAdversarialTest extends TestCase
     {
         Cache::put("afip_ta_{$this->testCuit}_wsfe_testing", [
             'token' => 'VALID_TOKEN',
-            'sign'  => 'VALID_SIGN',
+            'sign' => 'VALID_SIGN',
         ], 36000);
 
         Http::fake(function () {
@@ -808,8 +811,8 @@ class AfipAdversarialTest extends TestCase
 
         $response = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/invoice", [
             'voucher_type' => 6, // Factura B
-            'doc_type'     => 99, // Consumidor Final anónimo
-            'doc_number'   => '',
+            'doc_type' => 99, // Consumidor Final anónimo
+            'doc_number' => '',
         ]);
 
         $response->assertStatus(422)
@@ -825,7 +828,7 @@ class AfipAdversarialTest extends TestCase
     {
         Cache::put("afip_ta_{$this->testCuit}_wsfe_testing", [
             'token' => 'VALID_TOKEN',
-            'sign'  => 'VALID_SIGN',
+            'sign' => 'VALID_SIGN',
         ], 36000);
 
         Http::fake(function (HttpClientRequest $request) {

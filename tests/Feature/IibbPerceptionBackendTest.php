@@ -26,6 +26,7 @@ class IibbPerceptionBackendTest extends TestCase
     use RefreshDatabase;
 
     protected User $adminUser;
+
     protected string $testCuit = '30712345678';
 
     protected function setUp(): void
@@ -46,8 +47,8 @@ class IibbPerceptionBackendTest extends TestCase
         BusinessSetting::create(['key' => 'default_iibb_perception_rate', 'value' => '0.00']);
 
         Cache::put("afip_ta_{$this->testCuit}_wsfe_testing", [
-            'token'           => 'FAKE_TOKEN_WSAA_123456',
-            'sign'            => 'FAKE_SIGN_WSAA_789012',
+            'token' => 'FAKE_TOKEN_WSAA_123456',
+            'sign' => 'FAKE_SIGN_WSAA_789012',
             'expiration_time' => date('c', time() + 36000),
         ], 36000);
     }
@@ -86,7 +87,7 @@ class IibbPerceptionBackendTest extends TestCase
       <FECompUltimoAutorizadoResult>
         <PtoVta>1</PtoVta>
         <CbteTipo>6</CbteTipo>
-        <CbteNro>' . ($cbteNro - 1) . '</CbteNro>
+        <CbteNro>'.($cbteNro - 1).'</CbteNro>
       </FECompUltimoAutorizadoResult>
     </FECompUltimoAutorizadoResponse>
   </soap:Body>
@@ -100,7 +101,7 @@ class IibbPerceptionBackendTest extends TestCase
     <FECAESolicitarResponse xmlns="http://ar.gov.afip.dif.FEV1/">
       <FECAESolicitarResult>
         <FeCabResp>
-          <Cuit>' . $this->testCuit . '</Cuit>
+          <Cuit>'.$this->testCuit.'</Cuit>
           <PtoVta>1</PtoVta>
           <CbteTipo>6</CbteTipo>
           <Resultado>A</Resultado>
@@ -110,12 +111,12 @@ class IibbPerceptionBackendTest extends TestCase
             <Concepto>1</Concepto>
             <DocTipo>80</DocTipo>
             <DocNro>20301234567</DocNro>
-            <CbteDesde>' . $cbteNro . '</CbteDesde>
-            <CbteHasta>' . $cbteNro . '</CbteHasta>
-            <CbteFch>' . date('Ymd') . '</CbteFch>
+            <CbteDesde>'.$cbteNro.'</CbteDesde>
+            <CbteHasta>'.$cbteNro.'</CbteHasta>
+            <CbteFch>'.date('Ymd').'</CbteFch>
             <Resultado>A</Resultado>
-            <CAE>' . $cae . '</CAE>
-            <CAEFchVto>' . date('Ymd', strtotime('+10 days')) . '</CAEFchVto>
+            <CAE>'.$cae.'</CAE>
+            <CAEFchVto>'.date('Ymd', strtotime('+10 days')).'</CAEFchVto>
           </FECAEDetResponse>
         </FeDetResp>
       </FECAESolicitarResult>

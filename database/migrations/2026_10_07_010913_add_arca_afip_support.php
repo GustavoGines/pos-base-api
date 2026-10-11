@@ -36,9 +36,9 @@ return new class extends Migration
         // 4. Añadir estado de facturación a sales
         Schema::table('sales', function (Blueprint $table) {
             $table->enum('invoice_status', ['none', 'pending', 'invoiced', 'failed'])
-                  ->default('none')
-                  ->after('status')
-                  ->index();
+                ->default('none')
+                ->after('status')
+                ->index();
         });
 
         // 5. Crear tabla de comprobantes fiscales electrónicos (ARCA / AFIP WSFEv1)
@@ -46,44 +46,44 @@ return new class extends Migration
         Schema::create('electronic_invoices', function (Blueprint $table) {
             $table->id();
             $table->foreignId('sale_id')->unique()->constrained('sales')->restrictOnDelete();
-            
+
             // Datos del Comprobante
             $table->unsignedSmallInteger('voucher_type')
                 ->comment('AFIP Cbte: 1=Factura A, 6=Factura B, 11=Factura C, 3=NC A, 8=NC B, 13=NC C');
             $table->char('voucher_letter', 1); // 'A', 'B', 'C'
             $table->unsignedSmallInteger('point_of_sale')->comment('Punto de Venta AFIP (PtoVta)');
             $table->unsignedBigInteger('voucher_number')->comment('Número correlativo de comprobante');
-            
+
             // CAE y Vencimiento
             $table->string('cae', 14)->index();
             $table->date('cae_expiration');
-            
+
             // Receptor del comprobante
             $table->unsignedSmallInteger('doc_type');
             $table->string('doc_number', 20);
             $table->string('receiver_name', 150)->nullable();
             $table->string('receiver_address', 255)->nullable();
             $table->string('receiver_tax_condition', 50)->nullable();
-            
+
             // Importes monetarios desagregados (AFIP RG 1415 / RG 4291)
             $table->decimal('net_amount', 12, 2)->default(0.00);    // ImpNeto
             $table->decimal('iva_amount', 12, 2)->default(0.00);    // ImpIVA
             $table->decimal('exempt_amount', 12, 2)->default(0.00); // ImpOpEx
-            $table->decimal('untaxed_amount', 12, 2)->default(0.00);// ImpTotConc
+            $table->decimal('untaxed_amount', 12, 2)->default(0.00); // ImpTotConc
             $table->decimal('total_amount', 12, 2);                 // ImpTotal
-            
+
             // Array JSON con desglose de alícuotas (Id, BaseImp, Importe)
             $table->json('iva_breakdown')->nullable();
-            
+
             // URL y Payload Oficial del QR AFIP (RG 4892/2020)
             $table->text('qr_data')->nullable();
-            
+
             // Auditoría y trazabilidad del Web Service
             $table->enum('status', ['authorized', 'rejected', 'failed', 'cancelled'])->default('authorized');
             $table->json('afip_request')->nullable();
             $table->json('afip_response')->nullable();
             $table->text('error_message')->nullable();
-            
+
             $table->dateTime('issued_at');
             $table->timestamps();
 

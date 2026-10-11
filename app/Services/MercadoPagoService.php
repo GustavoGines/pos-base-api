@@ -7,12 +7,13 @@ use App\Models\BusinessSetting;
 use App\Models\MpTransaction;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Str;
 
 class MercadoPagoService
 {
     protected ?string $accessToken;
+
     protected ?string $webhookSecret;
+
     protected ?string $collectorId;
 
     public function __construct(
@@ -117,7 +118,7 @@ class MercadoPagoService
             ],
         ];
 
-        if (!empty($notificationUrl) && str_starts_with(strtolower($notificationUrl), 'https://')) {
+        if (! empty($notificationUrl) && str_starts_with(strtolower($notificationUrl), 'https://')) {
             $payload['notification_url'] = $notificationUrl;
         }
 
@@ -181,7 +182,7 @@ class MercadoPagoService
 
         // Mercado Pago strict requirement: Webhooks must be HTTPS and publicly accessible.
         // If we send a local http:// URL, MP throws preference_creation_error (400).
-        if (!empty($notificationUrl) && str_starts_with(strtolower($notificationUrl), 'https://')) {
+        if (! empty($notificationUrl) && str_starts_with(strtolower($notificationUrl), 'https://')) {
             $payload['notification_url'] = $notificationUrl;
         }
 
@@ -210,7 +211,7 @@ class MercadoPagoService
 
         if (! $response->successful()) {
             throw new \RuntimeException(
-                "Mercado Pago API error ({$response->status()}): " . $response->body()
+                "Mercado Pago API error ({$response->status()}): ".$response->body()
             );
         }
 
@@ -267,7 +268,7 @@ class MercadoPagoService
 
         if (! $response->successful()) {
             throw new \RuntimeException(
-                "Mercado Pago Point API error ({$response->status()}): " . $response->body()
+                "Mercado Pago Point API error ({$response->status()}): ".$response->body()
             );
         }
 
@@ -306,7 +307,7 @@ class MercadoPagoService
                 $q->where('external_reference', $externalRef);
             } else {
                 $q->where('external_reference', $orderOrIntentId)
-                  ->orWhere('mp_order_id', $orderOrIntentId);
+                    ->orWhere('mp_order_id', $orderOrIntentId);
             }
         })->first();
 
@@ -338,18 +339,18 @@ class MercadoPagoService
                         ->timeout(15)
                         ->get("https://api.mercadopago.com/merchant_orders/search?external_reference={$extRefToSearch}");
 
-                    if ($response->successful() && !empty($response->json()['elements'])) {
+                    if ($response->successful() && ! empty($response->json()['elements'])) {
                         $data = $response->json()['elements'][0];
                         $isSuccessful = true;
                     }
                 }
 
                 // 2. Try v1/orders (if order ID is numeric)
-                if (!$isSuccessful && is_numeric($orderOrIntentId)) {
+                if (! $isSuccessful && is_numeric($orderOrIntentId)) {
                     $response = Http::withToken($token)
                         ->timeout(15)
                         ->get("https://api.mercadopago.com/v1/orders/{$orderOrIntentId}");
-                    
+
                     if ($response->successful()) {
                         $data = $response->json();
                         $isSuccessful = true;
@@ -357,11 +358,11 @@ class MercadoPagoService
                 }
 
                 // 3. Try Point intents (if uuid)
-                if (!$isSuccessful && !is_numeric($orderOrIntentId)) {
+                if (! $isSuccessful && ! is_numeric($orderOrIntentId)) {
                     $response = Http::withToken($token)
                         ->timeout(15)
                         ->get("https://api.mercadopago.com/point/integration-api/payment-intents/{$orderOrIntentId}");
-                    
+
                     if ($response->successful()) {
                         $data = $response->json();
                         $isSuccessful = true;

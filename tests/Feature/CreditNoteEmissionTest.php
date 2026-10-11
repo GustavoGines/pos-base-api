@@ -25,7 +25,9 @@ class CreditNoteEmissionTest extends TestCase
     use RefreshDatabase;
 
     protected User $adminUser;
+
     protected string $issuerCuit = '30712345678';
+
     protected string $buyerCuit = '30500010912';
 
     /** @var array<int, string> Cuerpos SOAP enviados a FECAESolicitar */
@@ -44,7 +46,7 @@ class CreditNoteEmissionTest extends TestCase
 
         Cache::put("afip_ta_{$this->issuerCuit}_wsfe_testing", [
             'token' => 'VALID_TOKEN',
-            'sign'  => 'VALID_SIGN',
+            'sign' => 'VALID_SIGN',
         ], 36000);
     }
 
@@ -60,9 +62,9 @@ class CreditNoteEmissionTest extends TestCase
             if (str_contains($body, 'FECompUltimoAutorizado')) {
                 return Http::response(
                     '<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>'
-                    . '<FECompUltimoAutorizadoResponse xmlns="http://ar.gov.afip.dif.FEV1/"><FECompUltimoAutorizadoResult>'
-                    . "<CbteNro>{$lastNumber}</CbteNro></FECompUltimoAutorizadoResult></FECompUltimoAutorizadoResponse>"
-                    . '</soap:Body></soap:Envelope>',
+                    .'<FECompUltimoAutorizadoResponse xmlns="http://ar.gov.afip.dif.FEV1/"><FECompUltimoAutorizadoResult>'
+                    ."<CbteNro>{$lastNumber}</CbteNro></FECompUltimoAutorizadoResult></FECompUltimoAutorizadoResponse>"
+                    .'</soap:Body></soap:Envelope>',
                     200,
                     ['Content-Type' => 'text/xml']
                 );
@@ -77,10 +79,10 @@ class CreditNoteEmissionTest extends TestCase
 
                 return Http::response(
                     '<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>'
-                    . '<FECAESolicitarResponse xmlns="http://ar.gov.afip.dif.FEV1/"><FECAESolicitarResult>'
-                    . '<FeCabResp><Resultado>' . ($approve ? 'A' : 'R') . '</Resultado></FeCabResp>'
-                    . "<FeDetResp><FECAEDetResponse>{$detail}</FECAEDetResponse></FeDetResp>"
-                    . '</FECAESolicitarResult></FECAESolicitarResponse></soap:Body></soap:Envelope>',
+                    .'<FECAESolicitarResponse xmlns="http://ar.gov.afip.dif.FEV1/"><FECAESolicitarResult>'
+                    .'<FeCabResp><Resultado>'.($approve ? 'A' : 'R').'</Resultado></FeCabResp>'
+                    ."<FeDetResp><FECAEDetResponse>{$detail}</FECAEDetResponse></FeDetResp>"
+                    .'</FECAESolicitarResult></FECAESolicitarResponse></soap:Body></soap:Envelope>',
                     200,
                     ['Content-Type' => 'text/xml']
                 );
@@ -100,57 +102,57 @@ class CreditNoteEmissionTest extends TestCase
         $shift = $this->crearTurnoAbierto(user: $this->adminUser);
 
         $product = Product::create([
-            'name'          => 'Producto NC Test',
+            'name' => 'Producto NC Test',
             'internal_code' => 'NC-01',
-            'cost_price'    => 500.00,
+            'cost_price' => 500.00,
             'selling_price' => 1210.00,
-            'iva_rate'      => 21.00,
-            'stock'         => 100,
-            'active'        => true,
+            'iva_rate' => 21.00,
+            'stock' => 100,
+            'active' => true,
         ]);
 
         $sale = Sale::create([
-            'total'           => 1210.00,
+            'total' => 1210.00,
             'total_surcharge' => 0.00,
-            'payment_status'  => 'paid',
-            'amount_due'      => 0.00,
-            'status'          => 'completed',
-            'invoice_status'  => 'invoiced',
-            'cash_shift_id'   => $shift->id,
-            'user_id'         => $this->adminUser->id,
-            'cashier_id'      => $this->adminUser->id,
+            'payment_status' => 'paid',
+            'amount_due' => 0.00,
+            'status' => 'completed',
+            'invoice_status' => 'invoiced',
+            'cash_shift_id' => $shift->id,
+            'user_id' => $this->adminUser->id,
+            'cashier_id' => $this->adminUser->id,
         ]);
 
         $sale->items()->create([
-            'product_id'      => $product->id,
-            'product_name'    => $product->name,
-            'quantity'        => 1,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
             'unit_cost_price' => 500.00,
-            'unit_price'      => 1210.00,
-            'subtotal'        => 1210.00,
-            'iva_rate'        => 21.00,
-            'net_amount'      => 1000.00,
-            'iva_amount'      => 210.00,
+            'unit_price' => 1210.00,
+            'subtotal' => 1210.00,
+            'iva_rate' => 21.00,
+            'net_amount' => 1000.00,
+            'iva_amount' => 210.00,
         ]);
 
         $isC = AfipHelper::getVoucherLetter($voucherType) === 'C';
 
         ElectronicInvoice::create([
-            'sale_id'                => $sale->id,
-            'voucher_type'           => $voucherType,
-            'voucher_letter'         => AfipHelper::getVoucherLetter($voucherType),
-            'point_of_sale'          => 1,
-            'voucher_number'         => 77,
-            'cae'                    => '69999999999999',
-            'cae_expiration'         => '2026-10-15',
-            'doc_type'               => $docType,
-            'doc_number'             => $docNumber,
+            'sale_id' => $sale->id,
+            'voucher_type' => $voucherType,
+            'voucher_letter' => AfipHelper::getVoucherLetter($voucherType),
+            'point_of_sale' => 1,
+            'voucher_number' => 77,
+            'cae' => '69999999999999',
+            'cae_expiration' => '2026-10-15',
+            'doc_type' => $docType,
+            'doc_number' => $docNumber,
             'receiver_tax_condition' => $taxCondition,
-            'net_amount'             => $isC ? 1210.00 : 1000.00,
-            'iva_amount'             => $isC ? 0.00 : 210.00,
-            'total_amount'           => 1210.00,
-            'status'                 => 'authorized',
-            'issued_at'              => '2026-10-05 10:00:00',
+            'net_amount' => $isC ? 1210.00 : 1000.00,
+            'iva_amount' => $isC ? 0.00 : 210.00,
+            'total_amount' => 1210.00,
+            'status' => 'authorized',
+            'issued_at' => '2026-10-05 10:00:00',
         ]);
 
         return [$sale, $product, $shift->id];

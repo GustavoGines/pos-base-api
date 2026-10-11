@@ -3,25 +3,29 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Catalog\BulkDeleteProductsRequest;
+use App\Http\Requests\Catalog\BulkPriceUpdateRequest;
 use App\Http\Requests\Catalog\BulkUpdateProductsRequest;
+use App\Http\Requests\Catalog\ImportCatalogRequest;
+use App\Jobs\ImportCatalogJob;
 use App\Models\BulkPriceHistory;
 use App\Models\BulkPriceHistoryItem;
 use App\Models\Product;
+use App\Services\Catalog\CatalogExportService;
+use App\Services\Catalog\CatalogImportService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Validation\Rule;
 
 class CatalogController extends Controller
 {
-    public function bulkDelete(Request $request)
+    public function bulkDelete(BulkDeleteProductsRequest $request)
     {
-        $validated = $request->validate([
-            'product_ids' => 'required|array',
-            'product_ids.*' => 'integer|exists:products,id',
-        ]);
+        $validated = $request->validated();
 
-        $count = Product::whereIn('id', $validated['product_ids'])->delete();
+        $count = DB::transaction(function () use ($validated) {
+            return Product::whereIn('id', $validated['product_ids'])->delete();
+        });
 
         return response()->json([
             'message' => "Se eliminaron exitosamente {$count} productos.",
@@ -113,18 +117,9 @@ class CatalogController extends Controller
         }
     }
 
-    public function bulkPricePreview(Request $request)
+    public function bulkPricePreview(BulkPriceUpdateRequest $request)
     {
-        $validated = $request->validate([
-            'percentage' => 'required|numeric|min:-99.99',
-            'product_ids' => 'nullable|array',
-            'product_ids.*' => 'integer|exists:products,id',
-            'category_id' => 'nullable|exists:categories,id',
-            'brand_id' => 'nullable|exists:brands,id',
-            'supplier_id' => 'nullable|exists:suppliers,id',
-            'rounding_rule' => 'nullable|string|in:none,nearest_10,nearest_50,nearest_100,ends_99',
-            'target_field' => 'nullable|string|in:selling_price,cost_price,cost_and_selling_price',
-        ]);
+        $validated = $request->validated();
 
         $query = $this->_buildBulkPriceQuery($validated);
         $totalCount = $query->count();
@@ -151,18 +146,9 @@ class CatalogController extends Controller
         ]);
     }
 
-    public function bulkPriceUpdate(Request $request)
+    public function bulkPriceUpdate(BulkPriceUpdateRequest $request)
     {
-        $validated = $request->validate([
-            'percentage' => 'required|numeric|min:-99.99',
-            'product_ids' => 'nullable|array',
-            'product_ids.*' => 'integer|exists:products,id',
-            'category_id' => 'nullable|exists:categories,id',
-            'brand_id' => 'nullable|exists:brands,id',
-            'supplier_id' => 'nullable|exists:suppliers,id',
-            'rounding_rule' => 'nullable|string|in:none,nearest_10,nearest_50,nearest_100,ends_99',
-            'target_field' => 'nullable|string|in:selling_price,cost_price,cost_and_selling_price',
-        ]);
+        $validated = $request->validated();
 
         $query = $this->_buildBulkPriceQuery($validated);
 
@@ -319,177 +305,56 @@ class CatalogController extends Controller
 
         return response()->json(['message' => 'Aumento masivo revertido exitosamente.']);
     }
-    public function export(\Illuminate\Http\Request $request)
-    {
-        $categoryId = $request->query('category_id');
-        $brandId = $request->query('brand_id');
 
-        return \Maatwebsite\Excel\Facades\Excel::download(
-            new \App\Exports\PriceListExport($categoryId, $brandId), 
-            'lista_precios.xlsx'
-        );
+    public function export(Request $request, CatalogExportService $exportService)
+    {
+        $categoryId = $request->query('category_id') ? (int) $request->query('category_id') : null;
+        $brandId = $request->query('brand_id') ? (int) $request->query('brand_id') : null;
+
+        return $exportService->exportPriceList($categoryId, $brandId);
     }
 
-    public function import(Request $request)
+    public function import(ImportCatalogRequest $request, CatalogImportService $importService)
     {
-        $request->validate([
-            'file' => 'required|file|mimes:xlsx,csv,xls,txt',
-        ]);
-
-        ini_set('memory_limit', '1024M');
-        set_time_limit(600);
-
         try {
-            $createdCount = 0;
-            $updatedCount = 0;
-            $failedCount = 0;
-            $errors = [];
+            if ($request->boolean('async')) {
+                $file = $request->file('file');
+                $filename = 'import_'.uniqid().'.'.$file->getClientOriginalExtension();
+                $storedPath = $file->storeAs('catalog_imports', $filename);
+                $fullPath = storage_path('app/'.$storedPath);
+                $jobKey = 'import_'.uniqid();
 
-            $defaultRubro = \App\Models\Rubro::where('is_system', true)->first();
+                ImportCatalogJob::dispatch($fullPath, auth()->id(), $jobKey);
+
+                return response()->json([
+                    'message' => 'Importación iniciada en segundo plano.',
+                    'job_key' => $jobKey,
+                    'status' => 'processing',
+                ], 202);
+            }
+
             $path = $request->file('file')->getRealPath();
-
-            (new \Rap2hpoutre\FastExcel\FastExcel)->import($path, function ($row) use (&$createdCount, &$updatedCount, &$failedCount, &$errors, $defaultRubro) {
-                $rowLower = [];
-                foreach ($row as $k => $v) {
-                    $key = strtolower(trim($k));
-                    $key = str_replace(' ', '_', $key);
-                    $rowLower[$key] = $v;
-                }
-
-                $getVal = function($keys) use ($rowLower) {
-                    foreach ($keys as $k) {
-                        if (isset($rowLower[$k]) && $rowLower[$k] !== '') {
-                            return trim($rowLower[$k]);
-                        }
-                    }
-                    return null;
-                };
-
-                $nombre = $getVal(['nombre', 'descripcion', 'descripción', 'articulo', 'artículo', 'producto', 'detalle']);
-                $codInterno = $getVal(['codigo_interno', 'código_interno', 'codigo', 'cod', 'id']);
-                $codBarras = $getVal(['codigo_barras', 'código_barras', 'barra', 'ean']);
-                $costo = $getVal(['costo', 'precios_costos_g3', 'precio_costo', 'costo_unitario']);
-                $precio = $getVal(['precio', 'precios_pesos_g3_nomas', 'precio_venta', 'precio_publico', 'venta']);
-                $stock = $getVal(['stock', 'cantidad', 'cant', 'existencia']);
-                $categoria = $getVal(['categoria', 'categoría', 'rubro', 'familia']);
-                $marca = $getVal(['marca', 'laboratorio', 'fabricante']);
-                $iva = $getVal(['iva', 'impuesto', 'tasa']);
-                $activo = $getVal(['activo', 'estado']);
-
-                if (!$nombre && !$codInterno && !$codBarras) {
-                    return null;
-                }
-
-                try {
-                    $internalCode = $codInterno ?? ($codBarras ?? 'PROD-' . \Illuminate\Support\Str::random(8));
-
-                    $product = null;
-                    if ($codInterno) { $product = \App\Models\Product::where('internal_code', $codInterno)->first(); }
-                    if (!$product && $codBarras) { $product = \App\Models\Product::where('barcode', $codBarras)->first(); }
-                    if (!$product && $nombre) { $product = \App\Models\Product::where('name', $nombre)->first(); }
-
-                    $isNew = false;
-                    if (!$product) {
-                        if (!$nombre) {
-                            $failedCount++;
-                            return null;
-                        }
-                        $product = new \App\Models\Product();
-                        $product->internal_code = $internalCode;
-                        $isNew = true;
-                    }
-
-                    if ($categoria) {
-                        $cat = \App\Models\Category::firstOrCreate(
-                            ['name' => $categoria],
-                            ['rubro_id' => $defaultRubro ? $defaultRubro->id : null]
-                        );
-                        $product->category_id = $cat->id;
-                    }
-
-                    if ($marca) {
-                        $bnd = \App\Models\Brand::firstOrCreate(['name' => $marca]);
-                        $product->brand_id = $bnd->id;
-                    }
-
-                    $parseNumber = function($val) {
-                        if ($val === null || $val === '') return null;
-                        if (is_numeric($val)) return (float) $val;
-                        $val = (string) $val;
-                        // Remover todo excepto dígitos, coma, punto y signo menos
-                        $val = preg_replace('/[^\d\,\.\-]/', '', $val);
-                        
-                        $lastComma = strrpos($val, ',');
-                        $lastDot = strrpos($val, '.');
-                        
-                        if ($lastComma !== false && $lastDot !== false) {
-                            if ($lastComma > $lastDot) {
-                                // 1.234,56
-                                $val = str_replace('.', '', $val);
-                                $val = str_replace(',', '.', $val);
-                            } else {
-                                // 1,234.56
-                                $val = str_replace(',', '', $val);
-                            }
-                        } elseif ($lastComma !== false) {
-                            // Solo coma, asumimos decimal argentino: 1234,56
-                            $val = str_replace(',', '.', $val);
-                        }
-                        return (float) $val;
-                    };
-
-                    if ($nombre) { $product->name = $nombre; }
-                    if ($codBarras) { $product->barcode = $codBarras; }
-                    if ($costo !== null) { $product->cost_price = $parseNumber($costo); }
-                    if ($precio !== null) { $product->selling_price = $parseNumber($precio); }
-                    if ($stock !== null) { $product->stock = $parseNumber($stock); }
-                    if ($iva !== null) { $product->iva_rate = $parseNumber($iva); }
-                    if ($activo !== null) { $product->active = filter_var($activo, FILTER_VALIDATE_BOOLEAN); }
-
-                    $product->save();
-
-                    if ($isNew) {
-                        $createdCount++;
-                    } else {
-                        $updatedCount++;
-                    }
-                } catch (\Exception $e) {
-                    $failedCount++;
-                }
-                return null;
-            });
+            $result = $importService->import($path);
 
             return response()->json([
                 'message' => 'Importación completada',
-                'created_count' => $createdCount,
-                'updated_count' => $updatedCount,
-                'failed_count' => $failedCount,
-                'errors' => $errors,
+                'created_count' => $result['created_count'],
+                'updated_count' => $result['updated_count'],
+                'failed_count' => $result['failed_count'],
+                'errors' => $result['errors'],
             ]);
-        } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error("Error general en importación: " . $e->getMessage());
+        } catch (\Throwable $e) {
+            Log::error('Error general en importación: '.$e->getMessage(), ['exception' => $e]);
+
             return response()->json([
                 'message' => 'Error al procesar el archivo.',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
 
-    public function downloadImportTemplate()
+    public function downloadImportTemplate(CatalogExportService $exportService)
     {
-        $headers = ['codigo_interno', 'codigo_barras', 'nombre', 'costo', 'precio', 'stock', 'categoria', 'marca', 'iva', 'activo'];
-        $callback = function() use ($headers) {
-            $file = fopen('php://output', 'w');
-            // Necesario para que Excel abra el CSV UTF-8 correctamente sin romper acentos
-            fprintf($file, chr(0xEF).chr(0xBB).chr(0xBF));
-            fputcsv($file, $headers, ';');
-            fputcsv($file, ['PROD-001', '7791234567890', 'Ejemplo Arroz', '100.00', '150.00', '10', 'Almacen', 'Marolio', '21.00', 'true'], ';');
-            fclose($file);
-        };
-
-        return response()->stream($callback, 200, [
-            'Content-Type' => 'text/csv; charset=UTF-8',
-            'Content-Disposition' => 'attachment; filename="plantilla_productos.csv"',
-        ]);
+        return $exportService->downloadTemplate();
     }
 }

@@ -131,18 +131,18 @@ class AfipServiceTest extends TestCase
      */
     public function test_rg_4892_fiscal_qr_url_builder(): void
     {
-        $wsfeService = new AfipWsfeService();
+        $wsfeService = new AfipWsfeService;
 
         $qrData = [
-            'fecha'      => '2026-10-07',
-            'cuit'       => 30712345678,
-            'ptoVta'     => 1,
-            'tipoCmp'    => 1,
-            'nroCmp'     => 124,
-            'importe'    => 12100.50,
+            'fecha' => '2026-10-07',
+            'cuit' => 30712345678,
+            'ptoVta' => 1,
+            'tipoCmp' => 1,
+            'nroCmp' => 124,
+            'importe' => 12100.50,
             'tipoDocRec' => 80,
-            'nroDocRec'  => 20123456789,
-            'codAut'     => 74382910492819,
+            'nroDocRec' => 20123456789,
+            'codAut' => 74382910492819,
         ];
 
         $qrUrl = $wsfeService->buildQrUrl($qrData);

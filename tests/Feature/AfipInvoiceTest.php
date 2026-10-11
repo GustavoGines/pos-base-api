@@ -22,6 +22,7 @@ class AfipInvoiceTest extends TestCase
     use RefreshDatabase;
 
     protected User $adminUser;
+
     protected string $testCuit = '30712345678';
 
     protected function setUp(): void
@@ -39,8 +40,8 @@ class AfipInvoiceTest extends TestCase
 
         // Precargar en caché el Ticket de Acceso (TA) para aislar llamadas a WSAA
         Cache::put("afip_ta_{$this->testCuit}_wsfe_testing", [
-            'token'           => 'FAKE_TOKEN_WSAA_123456',
-            'sign'            => 'FAKE_SIGN_WSAA_789012',
+            'token' => 'FAKE_TOKEN_WSAA_123456',
+            'sign' => 'FAKE_SIGN_WSAA_789012',
             'expiration_time' => date('c', time() + 36000),
         ], 36000);
     }
@@ -53,38 +54,38 @@ class AfipInvoiceTest extends TestCase
         $shift = $this->crearTurnoAbierto(user: $this->adminUser);
 
         $product = Product::create([
-            'name'          => 'Taladro Percutor 750W',
+            'name' => 'Taladro Percutor 750W',
             'internal_code' => 'TAL-01',
-            'cost_price'    => 500.00,
+            'cost_price' => 500.00,
             'selling_price' => $total,
-            'iva_rate'      => 21.00,
-            'stock'         => 10,
-            'active'        => true,
+            'iva_rate' => 21.00,
+            'stock' => 10,
+            'active' => true,
         ]);
 
         $sale = Sale::create([
-            'total'           => $total,
+            'total' => $total,
             'total_surcharge' => 0.00,
-            'payment_status'  => 'paid',
-            'amount_due'      => 0.00,
-            'status'          => 'completed',
-            'invoice_status'  => 'none',
-            'cash_shift_id'   => $shift->id,
-            'user_id'         => $this->adminUser->id,
-            'cashier_id'      => $this->adminUser->id,
-            'customer_id'     => $customer?->id,
+            'payment_status' => 'paid',
+            'amount_due' => 0.00,
+            'status' => 'completed',
+            'invoice_status' => 'none',
+            'cash_shift_id' => $shift->id,
+            'user_id' => $this->adminUser->id,
+            'cashier_id' => $this->adminUser->id,
+            'customer_id' => $customer?->id,
         ]);
 
         $sale->items()->create([
-            'product_id'      => $product->id,
-            'product_name'    => $product->name,
-            'quantity'        => 1,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
             'unit_cost_price' => 500.00,
-            'unit_price'      => $total,
-            'subtotal'        => $total,
-            'iva_rate'        => 21.00,
-            'net_amount'      => 1000.00,
-            'iva_amount'      => 210.00,
+            'unit_price' => $total,
+            'subtotal' => $total,
+            'iva_rate' => 21.00,
+            'net_amount' => 1000.00,
+            'iva_amount' => 210.00,
         ]);
 
         return $sale;
@@ -151,7 +152,7 @@ class AfipInvoiceTest extends TestCase
 
         $response = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/invoice", [
             'voucher_type' => 6,
-            'doc_type'     => 99,
+            'doc_type' => 99,
         ]);
 
         $response->assertStatus(200)
@@ -167,11 +168,11 @@ class AfipInvoiceTest extends TestCase
 
         // Verificación en base de datos
         $this->assertDatabaseHas('electronic_invoices', [
-            'sale_id'        => $sale->id,
-            'voucher_type'   => 6,
+            'sale_id' => $sale->id,
+            'voucher_type' => 6,
             'voucher_number' => 124,
-            'cae'            => '74382910492819',
-            'status'         => 'authorized',
+            'cae' => '74382910492819',
+            'status' => 'authorized',
         ]);
 
         $this->assertEquals('invoiced', $sale->fresh()->invoice_status);
@@ -233,19 +234,19 @@ class AfipInvoiceTest extends TestCase
 
         // Cliente Responsable Inscripto con CUIT de Banco Nación (30-50001091-2)
         $customer = Customer::create([
-            'name'            => 'Banco de la Nación Argentina',
+            'name' => 'Banco de la Nación Argentina',
             'document_number' => '30500010912',
-            'document_type'   => 80,
-            'tax_condition'   => 'responsable_inscripto',
-            'fiscal_address'  => 'Bartolomé Mitre 326, CABA',
+            'document_type' => 80,
+            'tax_condition' => 'responsable_inscripto',
+            'fiscal_address' => 'Bartolomé Mitre 326, CABA',
         ]);
 
         $sale = $this->createTestSale(2420.00, $customer);
 
         $response = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/invoice", [
             'voucher_type' => 1,
-            'doc_type'     => 80,
-            'doc_number'   => '30500010912',
+            'doc_type' => 80,
+            'doc_number' => '30500010912',
         ]);
 
         $response->assertStatus(200)
@@ -340,8 +341,8 @@ class AfipInvoiceTest extends TestCase
 
         $response = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/invoice", [
             'voucher_type' => 1,
-            'doc_type'     => 80,
-            'doc_number'   => '30123456789', // CUIT inválido según Módulo 11
+            'doc_type' => 80,
+            'doc_number' => '30123456789', // CUIT inválido según Módulo 11
         ]);
 
         $response->assertStatus(422)
@@ -446,21 +447,21 @@ class AfipInvoiceTest extends TestCase
 
         // Con factura autorizada
         ElectronicInvoice::create([
-            'sale_id'         => $sale->id,
-            'voucher_type'    => 6,
-            'voucher_letter'  => 'B',
-            'point_of_sale'   => 1,
-            'voucher_number'  => 124,
-            'cae'             => '74382910492819',
-            'cae_expiration'  => '2026-10-17',
-            'doc_type'        => 99,
-            'doc_number'      => '0',
-            'net_amount'      => 1000.00,
-            'iva_amount'      => 210.00,
-            'total_amount'    => 1210.00,
-            'qr_data'         => 'https://www.afip.gob.ar/fe/qr/?p=TEST',
-            'status'          => 'authorized',
-            'issued_at'       => now(),
+            'sale_id' => $sale->id,
+            'voucher_type' => 6,
+            'voucher_letter' => 'B',
+            'point_of_sale' => 1,
+            'voucher_number' => 124,
+            'cae' => '74382910492819',
+            'cae_expiration' => '2026-10-17',
+            'doc_type' => 99,
+            'doc_number' => '0',
+            'net_amount' => 1000.00,
+            'iva_amount' => 210.00,
+            'total_amount' => 1210.00,
+            'qr_data' => 'https://www.afip.gob.ar/fe/qr/?p=TEST',
+            'status' => 'authorized',
+            'issued_at' => now(),
         ]);
 
         $response200 = $this->actingAsAdmin($this->adminUser)->getJson("/api/sales/{$sale->id}/electronic-invoice");

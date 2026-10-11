@@ -33,22 +33,22 @@ return new class extends Migration
 
         $mapping = [
             'hardware_store' => 'Ferretería',
-            'retail'         => 'Comercio General',
-            'kiosko'         => 'Kiosco',
-            'kiosk'          => 'Kiosco',
-            'grocery'        => 'Almacén',
-            'supermarket'    => 'Supermercado',
-            'clothing'       => 'Indumentaria',
-            'pharmacy'       => 'Farmacia',
-            'restaurant'     => 'Gastronomía',
+            'retail' => 'Comercio General',
+            'kiosko' => 'Kiosco',
+            'kiosk' => 'Kiosco',
+            'grocery' => 'Almacén',
+            'supermarket' => 'Supermercado',
+            'clothing' => 'Indumentaria',
+            'pharmacy' => 'Farmacia',
+            'restaurant' => 'Gastronomía',
         ];
 
         $rubroName = $mapping[$businessType] ?? (ucfirst(str_replace('_', ' ', $businessType)) ?: 'Comercio General');
 
         $now = now();
         $defaultRubroId = DB::table('rubros')->insertGetId([
-            'name'       => $rubroName,
-            'is_system'  => true,
+            'name' => $rubroName,
+            'is_system' => true,
             'created_at' => $now,
             'updated_at' => $now,
         ]);

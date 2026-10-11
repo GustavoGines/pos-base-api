@@ -109,7 +109,7 @@ class User extends Authenticatable
     /**
      * Determina si el usuario cuenta con al menos uno de los permisos provistos.
      *
-     * @param array<int, string> $permissions
+     * @param  array<int, string>  $permissions
      */
     public function hasAnyPermission(array $permissions): bool
     {

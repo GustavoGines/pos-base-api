@@ -52,9 +52,9 @@ class StoreCashMovementRequest extends FormRequest
                     $index = $segments[1] ?? null;
                     if ($index !== null) {
                         $payment = $this->input("payments.{$index}") ?? ($this->input('payments')[$index] ?? null);
-                        if (($payment['payment_method'] ?? null) === 'check' && !empty($payment['check_id'])) {
+                        if (($payment['payment_method'] ?? null) === 'check' && ! empty($payment['check_id'])) {
                             $check = ThirdPartyCheck::find($payment['check_id']);
-                            if ($check && abs((float)$check->amount - (float)$value) > 0.009) {
+                            if ($check && abs((float) $check->amount - (float) $value) > 0.009) {
                                 $fail("El monto (\${$value}) no coincide con el valor nominal del cheque (\${$check->amount}).");
                             }
                         }

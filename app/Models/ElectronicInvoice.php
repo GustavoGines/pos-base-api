@@ -94,6 +94,6 @@ class ElectronicInvoice extends Model
      */
     public function isAuthorized(): bool
     {
-        return $this->status === 'authorized' && !empty($this->cae);
+        return $this->status === 'authorized' && ! empty($this->cae);
     }
 }

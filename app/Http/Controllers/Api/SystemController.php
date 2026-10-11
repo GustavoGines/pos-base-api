@@ -36,4 +36,12 @@ class SystemController extends Controller
             ->header('Pragma', 'no-cache')
             ->header('Expires', '0');
     }
+
+    public function installPath()
+    {
+        return response()->json([
+            'install_path' => base_path(),
+            'backend_path' => base_path(),
+        ]);
+    }
 }

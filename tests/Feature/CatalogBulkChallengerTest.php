@@ -36,7 +36,7 @@ class CatalogBulkChallengerTest extends TestCase
 
     protected function actingAsCashierWithUser(?User $user = null, array $permissions = []): User
     {
-        $token = 'cashier-token-' . uniqid();
+        $token = 'cashier-token-'.uniqid();
         if ($user === null) {
             $user = User::factory()->create([
                 'role' => 'cashier',

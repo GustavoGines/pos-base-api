@@ -24,6 +24,7 @@ class AfipChallengerTest extends TestCase
     use RefreshDatabase;
 
     protected User $adminUser;
+
     protected string $testIssuerCuit = '30712345678';
 
     protected function setUp(): void
@@ -39,8 +40,8 @@ class AfipChallengerTest extends TestCase
         BusinessSetting::create(['key' => 'afip_cf_max_limit', 'value' => '340000.00']);
 
         Cache::put("afip_ta_{$this->testIssuerCuit}_wsfe_testing", [
-            'token'           => 'CHALLENGER_TOKEN_WSAA',
-            'sign'            => 'CHALLENGER_SIGN_WSAA',
+            'token' => 'CHALLENGER_TOKEN_WSAA',
+            'sign' => 'CHALLENGER_SIGN_WSAA',
             'expiration_time' => date('c', time() + 36000),
         ], 36000);
     }
@@ -59,6 +60,7 @@ class AfipChallengerTest extends TestCase
 
             if (str_contains($body, 'FECompUltimoAutorizado')) {
                 $last = $cbteNro - 1;
+
                 return Http::response("<?xml version=\"1.0\" encoding=\"utf-8\"?>
 <soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">
   <soap:Body>
@@ -110,16 +112,16 @@ class AfipChallengerTest extends TestCase
         $totalSale = round($totalSale, 2);
 
         $sale = Sale::create([
-            'total'           => $totalSale,
+            'total' => $totalSale,
             'total_surcharge' => 0.00,
-            'payment_status'  => 'paid',
-            'amount_due'      => 0.00,
-            'status'          => 'completed',
-            'invoice_status'  => 'none',
-            'cash_shift_id'   => $shift->id,
-            'user_id'         => $this->adminUser->id,
-            'cashier_id'      => $this->adminUser->id,
-            'customer_id'     => $customer?->id,
+            'payment_status' => 'paid',
+            'amount_due' => 0.00,
+            'status' => 'completed',
+            'invoice_status' => 'none',
+            'cash_shift_id' => $shift->id,
+            'user_id' => $this->adminUser->id,
+            'cashier_id' => $this->adminUser->id,
+            'customer_id' => $customer?->id,
         ]);
 
         foreach ($itemDefinitions as $idx => $def) {
@@ -131,25 +133,25 @@ class AfipChallengerTest extends TestCase
             $calc = AfipHelper::calculateNetAndIva($subtotal, $rate);
 
             $product = Product::create([
-                'name'          => 'Product Item ' . ($idx + 1),
-                'internal_code' => 'P-CHALLENGE-' . ($idx + 1) . '-' . uniqid(),
-                'cost_price'    => round($price * 0.5, 2),
+                'name' => 'Product Item '.($idx + 1),
+                'internal_code' => 'P-CHALLENGE-'.($idx + 1).'-'.uniqid(),
+                'cost_price' => round($price * 0.5, 2),
                 'selling_price' => $price,
-                'iva_rate'      => $rate,
-                'stock'         => 100,
-                'active'        => true,
+                'iva_rate' => $rate,
+                'stock' => 100,
+                'active' => true,
             ]);
 
             $sale->items()->create([
-                'product_id'      => $product->id,
-                'product_name'    => $product->name,
-                'quantity'        => $qty,
+                'product_id' => $product->id,
+                'product_name' => $product->name,
+                'quantity' => $qty,
                 'unit_cost_price' => round($price * 0.5, 2),
-                'unit_price'      => $price,
-                'subtotal'        => $subtotal,
-                'iva_rate'        => $rate,
-                'net_amount'      => $calc['net'],
-                'iva_amount'      => $calc['iva'],
+                'unit_price' => $price,
+                'subtotal' => $subtotal,
+                'iva_rate' => $rate,
+                'net_amount' => $calc['net'],
+                'iva_amount' => $calc['iva'],
             ]);
         }
 
@@ -172,14 +174,14 @@ class AfipChallengerTest extends TestCase
         // Search for 50 distinct 10-digit prefixes that yield sum % 11 == 0
         foreach (['20', '23', '24', '27', '30', '33', '34'] as $prefix) {
             for ($doc = 10000000; $doc <= 10000300; $doc++) {
-                $base = $prefix . (string) $doc;
+                $base = $prefix.(string) $doc;
                 $sum = 0;
                 for ($i = 0; $i < 10; $i++) {
                     $sum += ((int) $base[$i]) * $multipliers[$i];
                 }
 
                 if ($sum % 11 === 0) {
-                    $cuitWith0 = $base . '0';
+                    $cuitWith0 = $base.'0';
                     $this->assertTrue(
                         AfipHelper::validateCuit($cuitWith0),
                         "CUIT {$cuitWith0} should be valid with remainder 0 and check digit 0"
@@ -187,7 +189,7 @@ class AfipChallengerTest extends TestCase
 
                     // Adversarial attack: digits 1..9 with same base MUST be invalid
                     for ($badDigit = 1; $badDigit <= 9; $badDigit++) {
-                        $badCuit = $base . $badDigit;
+                        $badCuit = $base.$badDigit;
                         $this->assertFalse(
                             AfipHelper::validateCuit($badCuit),
                             "CUIT {$badCuit} with remainder 0 but check digit {$badDigit} must be invalid"
@@ -217,7 +219,7 @@ class AfipChallengerTest extends TestCase
 
         foreach (['20', '27', '30', '33'] as $prefix) {
             for ($doc = 20000000; $doc <= 20000300; $doc++) {
-                $base = $prefix . (string) $doc;
+                $base = $prefix.(string) $doc;
                 $sum = 0;
                 for ($i = 0; $i < 10; $i++) {
                     $sum += ((int) $base[$i]) * $multipliers[$i];
@@ -226,7 +228,7 @@ class AfipChallengerTest extends TestCase
                 if ($sum % 11 === 1) {
                     // Test all possible digits 0..9
                     for ($d = 0; $d <= 9; $d++) {
-                        $cuit = $base . $d;
+                        $cuit = $base.$d;
                         $this->assertFalse(
                             AfipHelper::validateCuit($cuit),
                             "CUIT {$cuit} with remainder 1 must be strictly invalid regardless of digit"
@@ -250,15 +252,15 @@ class AfipChallengerTest extends TestCase
     public function test_cuit_modulo_11_authoritative_corporate_and_commercial_cuits(): void
     {
         $corporateCuits = [
-            'AFIP'                   => '33-69345023-9',
-            'Banco de la Nación'     => '30-50001091-2',
-            'YPF S.A.'               => '30-54668997-9',
+            'AFIP' => '33-69345023-9',
+            'Banco de la Nación' => '30-50001091-2',
+            'YPF S.A.' => '30-54668997-9',
             'Telecom Argentina S.A.' => '30-63945373-8',
-            'MercadoLibre S.R.L.'    => '30-70308853-4',
-            'Coto C.I.C.S.A.'        => '30-54808315-6',
-            'Arcor S.A.I.C.'         => '30-50279317-5',
-            'Molinos Río de la Plata'=> '30-50085862-8',
-            'Pan American Energy'    => '30-57487054-9',
+            'MercadoLibre S.R.L.' => '30-70308853-4',
+            'Coto C.I.C.S.A.' => '30-54808315-6',
+            'Arcor S.A.I.C.' => '30-50279317-5',
+            'Molinos Río de la Plata' => '30-50085862-8',
+            'Pan American Energy' => '30-57487054-9',
         ];
 
         foreach ($corporateCuits as $entity => $cuit) {
@@ -287,14 +289,14 @@ class AfipChallengerTest extends TestCase
         $multipliers = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
 
         foreach ($invalidPrefixes as $badPrefix) {
-            $base = $badPrefix . '12345678';
+            $base = $badPrefix.'12345678';
             $sum = 0;
             for ($i = 0; $i < 10; $i++) {
                 $sum += ((int) $base[$i]) * $multipliers[$i];
             }
             $rem = $sum % 11;
             $digit = ($rem === 0) ? 0 : (($rem === 1) ? 9 : 11 - $rem);
-            $cuit = $base . $digit;
+            $cuit = $base.$digit;
 
             $this->assertFalse(
                 AfipHelper::validateCuit($cuit),
@@ -360,7 +362,7 @@ class AfipChallengerTest extends TestCase
 
             $this->assertFalse(
                 AfipHelper::validateCuit($swapped),
-                "Transposed CUIT at pos {$pos}-" . ($pos + 1) . " ({$swapped}) should be invalid"
+                "Transposed CUIT at pos {$pos}-".($pos + 1)." ({$swapped}) should be invalid"
             );
         }
     }
@@ -469,7 +471,7 @@ class AfipChallengerTest extends TestCase
      */
     public function test_monte_carlo_randomized_baskets_preserve_invariant(): void
     {
-        $wsfeService = new AfipWsfeService();
+        $wsfeService = new AfipWsfeService;
 
         for ($trial = 0; $trial < 200; $trial++) {
             $numItems = rand(1, 15);
@@ -482,8 +484,8 @@ class AfipChallengerTest extends TestCase
                 $rates = [21.00, 10.50, 0.00, 27.00, 5.00, 2.50];
                 $rate = $rates[array_rand($rates)];
                 $itemsData[] = [
-                    'price'    => $price,
-                    'qty'      => 1,
+                    'price' => $price,
+                    'qty' => 1,
                     'iva_rate' => $rate,
                     'subtotal' => $price,
                 ];
@@ -511,7 +513,7 @@ class AfipChallengerTest extends TestCase
                 $totalNet += $calc['net'];
                 $totalIva += $calc['iva'];
                 $aliquotResults[$id] = [
-                    'Id'      => $id,
+                    'Id' => $id,
                     'BaseImp' => $calc['net'],
                     'Importe' => $calc['iva'],
                 ];
@@ -652,8 +654,8 @@ class AfipChallengerTest extends TestCase
         // Attempt 1: Factura A without CUIT
         $res1 = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/invoice", [
             'voucher_type' => 1,
-            'doc_type'     => 99, // Consumidor Final
-            'doc_number'   => '0',
+            'doc_type' => 99, // Consumidor Final
+            'doc_number' => '0',
         ]);
 
         $res1->assertStatus(422)
@@ -663,8 +665,8 @@ class AfipChallengerTest extends TestCase
         // Attempt 2: Factura A with DNI instead of CUIT
         $res2 = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/invoice", [
             'voucher_type' => 1,
-            'doc_type'     => 96,
-            'doc_number'   => '35123456',
+            'doc_type' => 96,
+            'doc_number' => '35123456',
         ]);
 
         $res2->assertStatus(422)
@@ -680,8 +682,8 @@ class AfipChallengerTest extends TestCase
 
         $response = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/invoice", [
             'voucher_type' => 6,
-            'doc_type'     => 99,
-            'doc_number'   => '',
+            'doc_type' => 99,
+            'doc_number' => '',
         ]);
 
         $response->assertStatus(422)
@@ -848,18 +850,18 @@ class AfipChallengerTest extends TestCase
         $this->mockAfipSuccess(cbteNro: 77, cae: '98765432101234');
 
         $customer = Customer::create([
-            'name'            => 'Juan Pérez',
-            'document_type'   => 96, // DNI
+            'name' => 'Juan Pérez',
+            'document_type' => 96, // DNI
             'document_number' => '32123456',
-            'tax_condition'   => 'consumidor_final',
+            'tax_condition' => 'consumidor_final',
         ]);
 
         $sale = $this->createSaleWithItems([['price' => 500.00, 'iva_rate' => 21.00]], $customer);
 
         $response = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/invoice", [
             'voucher_type' => 6,
-            'doc_type'     => 96,
-            'doc_number'   => '32123456',
+            'doc_type' => 96,
+            'doc_number' => '32123456',
         ]);
 
         $response->assertStatus(200);

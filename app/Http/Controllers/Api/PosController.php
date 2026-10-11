@@ -10,6 +10,7 @@ use App\Http\Requests\ProcessSaleRequest;
 use App\Models\Product;
 use App\Models\User;
 use App\Services\SaleService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\RateLimiter;
@@ -76,7 +77,7 @@ class PosController extends Controller
      * Valida si algún ítem posee un precio menor al de su tramo correspondiente
      * y exige el permiso apply_discounts o PIN de supervisor con Compound Rate Limiting.
      */
-    protected function validateItemDiscounts(Request $request, array $items): ?\Illuminate\Http\JsonResponse
+    protected function validateItemDiscounts(Request $request, array $items): ?JsonResponse
     {
         $user = $request->user() ?? $request->attributes->get('authenticated_user');
         if (! $user && $request->header('X-Session-Token')) {
@@ -92,11 +93,11 @@ class PosController extends Controller
             return null;
         }
 
-        $throttleKey = 'pin_attempts:' . ($user ? $user->id : 'guest') . ':' . $request->ip();
+        $throttleKey = 'pin_attempts:'.($user ? $user->id : 'guest').':'.$request->ip();
         $authorizedAdmin = null;
 
         foreach ($items as $item) {
-            /** @var \App\Models\Product|null $product */
+            /** @var Product|null $product */
             $product = Product::with('priceTiers')->find($item['product_id']);
             if (! $product) {
                 continue;
@@ -151,6 +152,7 @@ class PosController extends Controller
                         RateLimiter::clear($throttleKey);
                         $request->attributes->set('authorized_by_admin_id', $authorizedAdmin->id);
                         $request->attributes->set('authorized_by_admin', $authorizedAdmin);
+
                         continue;
                     }
 

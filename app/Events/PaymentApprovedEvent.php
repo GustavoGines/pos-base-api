@@ -22,8 +22,7 @@ class PaymentApprovedEvent implements ShouldBroadcastNow
         public float $amount,
         public ?string $posId = null,
         public ?MpTransaction $transaction = null
-    ) {
-    }
+    ) {}
 
     /**
      * Get the channels the event should broadcast on.

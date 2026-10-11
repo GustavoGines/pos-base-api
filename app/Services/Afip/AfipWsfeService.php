@@ -13,13 +13,14 @@ use RuntimeException;
 class AfipWsfeService
 {
     public const URL_WSFE_HOMO = 'https://wswhomo.afip.gov.ar/wsfev1/service.asmx';
+
     public const URL_WSFE_PROD = 'https://servicios1.afip.gov.ar/wsfev1/service.asmx';
 
     protected AfipWsaaService $wsaaService;
 
     public function __construct(?AfipWsaaService $wsaaService = null)
     {
-        $this->wsaaService = $wsaaService ?? new AfipWsaaService();
+        $this->wsaaService = $wsaaService ?? new AfipWsaaService;
     }
 
     /**
@@ -33,24 +34,24 @@ class AfipWsfeService
 
         $endpoint = $this->getWsfeEndpoint();
 
-        $soapEnvelope = '<?xml version="1.0" encoding="utf-8"?>' .
-            '<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">' .
-            '<soap:Body>' .
-            '<FECompUltimoAutorizado xmlns="http://ar.gov.afip.dif.FEV1/">' .
-            '<Auth>' .
-            '<Token>' . htmlspecialchars($ticket['token'], ENT_XML1) . '</Token>' .
-            '<Sign>' . htmlspecialchars($ticket['sign'], ENT_XML1) . '</Sign>' .
-            '<Cuit>' . $cuit . '</Cuit>' .
-            '</Auth>' .
-            '<PtoVta>' . $pointOfSale . '</PtoVta>' .
-            '<CbteTipo>' . $voucherType . '</CbteTipo>' .
-            '</FECompUltimoAutorizado>' .
-            '</soap:Body>' .
+        $soapEnvelope = '<?xml version="1.0" encoding="utf-8"?>'.
+            '<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'.
+            '<soap:Body>'.
+            '<FECompUltimoAutorizado xmlns="http://ar.gov.afip.dif.FEV1/">'.
+            '<Auth>'.
+            '<Token>'.htmlspecialchars($ticket['token'], ENT_XML1).'</Token>'.
+            '<Sign>'.htmlspecialchars($ticket['sign'], ENT_XML1).'</Sign>'.
+            '<Cuit>'.$cuit.'</Cuit>'.
+            '</Auth>'.
+            '<PtoVta>'.$pointOfSale.'</PtoVta>'.
+            '<CbteTipo>'.$voucherType.'</CbteTipo>'.
+            '</FECompUltimoAutorizado>'.
+            '</soap:Body>'.
             '</soap:Envelope>';
 
         $response = Http::withHeaders([
             'Content-Type' => 'text/xml; charset=utf-8',
-            'SOAPAction'   => '"http://ar.gov.afip.dif.FEV1/FECompUltimoAutorizado"',
+            'SOAPAction' => '"http://ar.gov.afip.dif.FEV1/FECompUltimoAutorizado"',
         ])->timeout(10)->send('POST', $endpoint, [
             'body' => $soapEnvelope,
         ]);
@@ -63,7 +64,7 @@ class AfipWsfeService
 
         if (str_contains($xml, '<faultstring>')) {
             preg_match('/<faultstring>(.*?)<\/faultstring>/s', $xml, $m);
-            throw new RuntimeException("AFIP WSFE Fault: " . ($m[1] ?? 'Error desconocido'));
+            throw new RuntimeException('AFIP WSFE Fault: '.($m[1] ?? 'Error desconocido'));
         }
 
         if (preg_match('/<Errors>(.*?)<\/Errors>/s', $xml, $errMatch)) {
@@ -82,8 +83,8 @@ class AfipWsfeService
     /**
      * Solicita autorización fiscal (CAE) a WSFEv1 para una venta del sistema POS.
      *
-     * @param Sale $sale Venta a facturar
-     * @param array $options Opciones adicionales (voucher_type, doc_type, doc_number, etc.)
+     * @param  Sale  $sale  Venta a facturar
+     * @param  array  $options  Opciones adicionales (voucher_type, doc_type, doc_number, etc.)
      * @return array Datos de la factura electrónica autorizada
      */
     public function authorizeInvoice(Sale $sale, array $options = []): array
@@ -132,7 +133,7 @@ class AfipWsfeService
             $anonymousLimit = (float) (BusinessSetting::where('key', 'afip_cf_max_limit')->value('value') ?? 340000.00);
             if ((float) $sale->total >= $anonymousLimit && empty($docNumber)) {
                 throw new InvalidArgumentException(
-                    "El importe total supera el límite de consumidor final anónimo ($" . number_format($anonymousLimit, 2) . "). Debe identificar al cliente con DNI o CUIT."
+                    'El importe total supera el límite de consumidor final anónimo ($'.number_format($anonymousLimit, 2).'). Debe identificar al cliente con DNI o CUIT.'
                 );
             }
             if (empty($docNumber)) {
@@ -290,10 +291,10 @@ class AfipWsfeService
             // Construir nodo XML <Iva>
             $ivaXml = '<Iva>';
             foreach ($ivaBreakdown as $al) {
-                $ivaXml .= '<AlicIva>' .
-                    '<Id>' . $al['Id'] . '</Id>' .
-                    '<BaseImp>' . number_format($al['BaseImp'], 2, '.', '') . '</BaseImp>' .
-                    '<Importe>' . number_format($al['Importe'], 2, '.', '') . '</Importe>' .
+                $ivaXml .= '<AlicIva>'.
+                    '<Id>'.$al['Id'].'</Id>'.
+                    '<BaseImp>'.number_format($al['BaseImp'], 2, '.', '').'</BaseImp>'.
+                    '<Importe>'.number_format($al['Importe'], 2, '.', '').'</Importe>'.
                     '</AlicIva>';
             }
             $ivaXml .= '</Iva>';
@@ -317,14 +318,14 @@ class AfipWsfeService
                 ],
             ];
 
-            $tributosXml = '<Tributos>' .
-                '<Tributo>' .
-                '<Id>2</Id>' .
-                '<Desc>Percepcion de Ingresos Brutos</Desc>' .
-                '<BaseImp>' . number_format($netAmount, 2, '.', '') . '</BaseImp>' .
-                '<Alic>' . number_format($perceptionRate, 2, '.', '') . '</Alic>' .
-                '<Importe>' . number_format($perceptionAmount, 2, '.', '') . '</Importe>' .
-                '</Tributo>' .
+            $tributosXml = '<Tributos>'.
+                '<Tributo>'.
+                '<Id>2</Id>'.
+                '<Desc>Percepcion de Ingresos Brutos</Desc>'.
+                '<BaseImp>'.number_format($netAmount, 2, '.', '').'</BaseImp>'.
+                '<Alic>'.number_format($perceptionRate, 2, '.', '').'</Alic>'.
+                '<Importe>'.number_format($perceptionAmount, 2, '.', '').'</Importe>'.
+                '</Tributo>'.
                 '</Tributos>';
         }
 
@@ -335,67 +336,67 @@ class AfipWsfeService
         // <Cuit> = CUIT del EMISOR del comprobante asociado. En este sistema el comprobante
         // asociado siempre es propio, por lo que se usa el CUIT emisor (Auth), nunca el del receptor.
         $cbtesAsocXml = '';
-        if (!empty($options['cbtes_asoc']) && is_array($options['cbtes_asoc'])) {
+        if (! empty($options['cbtes_asoc']) && is_array($options['cbtes_asoc'])) {
             $cbtesAsocXml .= '<CbtesAsoc>';
             foreach ($options['cbtes_asoc'] as $asoc) {
                 $asocFch = preg_replace('/\D/', '', (string) ($asoc['CbteFch'] ?? ''));
-                $cbtesAsocXml .= '<CbteAsoc>' .
-                    '<Tipo>' . (int) ($asoc['Tipo'] ?? 0) . '</Tipo>' .
-                    '<PtoVta>' . (int) ($asoc['PtoVta'] ?? 0) . '</PtoVta>' .
-                    '<Nro>' . (int) ($asoc['Nro'] ?? 0) . '</Nro>' .
-                    '<Cuit>' . $issuerCuit . '</Cuit>' .
-                    (strlen($asocFch) === 8 ? '<CbteFch>' . $asocFch . '</CbteFch>' : '') .
+                $cbtesAsocXml .= '<CbteAsoc>'.
+                    '<Tipo>'.(int) ($asoc['Tipo'] ?? 0).'</Tipo>'.
+                    '<PtoVta>'.(int) ($asoc['PtoVta'] ?? 0).'</PtoVta>'.
+                    '<Nro>'.(int) ($asoc['Nro'] ?? 0).'</Nro>'.
+                    '<Cuit>'.$issuerCuit.'</Cuit>'.
+                    (strlen($asocFch) === 8 ? '<CbteFch>'.$asocFch.'</CbteFch>' : '').
                     '</CbteAsoc>';
             }
             $cbtesAsocXml .= '</CbtesAsoc>';
         }
 
         // Armado del Envelope SOAP FECAESolicitar
-        $soapEnvelope = '<?xml version="1.0" encoding="utf-8"?>' .
-            '<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">' .
-            '<soap:Body>' .
-            '<FECAESolicitar xmlns="http://ar.gov.afip.dif.FEV1/">' .
-            '<Auth>' .
-            '<Token>' . htmlspecialchars($ticket['token'], ENT_XML1) . '</Token>' .
-            '<Sign>' . htmlspecialchars($ticket['sign'], ENT_XML1) . '</Sign>' .
-            '<Cuit>' . $issuerCuit . '</Cuit>' .
-            '</Auth>' .
-            '<FeCAEReq>' .
-            '<FeCabReq>' .
-            '<CantReg>1</CantReg>' .
-            '<PtoVta>' . $ptoVta . '</PtoVta>' .
-            '<CbteTipo>' . $voucherType . '</CbteTipo>' .
-            '</FeCabReq>' .
-            '<FeDetReq>' .
-            '<FECAEDetRequest>' .
-            '<Concepto>1</Concepto>' .
-            '<DocTipo>' . $docType . '</DocTipo>' .
-            '<DocNro>' . $numericDocNro . '</DocNro>' .
-            '<CbteDesde>' . $cbteNro . '</CbteDesde>' .
-            '<CbteHasta>' . $cbteNro . '</CbteHasta>' .
-            '<CbteFch>' . $cbteFch . '</CbteFch>' .
-            '<ImpTotal>' . number_format($totalAmount, 2, '.', '') . '</ImpTotal>' .
-            '<ImpTotConc>0.00</ImpTotConc>' .
-            '<ImpNeto>' . number_format($netAmount, 2, '.', '') . '</ImpNeto>' .
-            '<ImpOpEx>0.00</ImpOpEx>' .
-            '<ImpTrib>' . number_format($perceptionAmount, 2, '.', '') . '</ImpTrib>' .
-            '<ImpIVA>' . number_format($ivaAmount, 2, '.', '') . '</ImpIVA>' .
-            '<MonId>PES</MonId>' .
-            '<MonCotiz>1</MonCotiz>' .
-            '<CondicionIVAReceptorId>' . AfipHelper::getCondicionIvaReceptorId($receiverTaxCondition) . '</CondicionIVAReceptorId>' .
-            $cbtesAsocXml .
-            $tributosXml .
-            $ivaXml .
-            '</FECAEDetRequest>' .
-            '</FeDetReq>' .
-            '</FeCAEReq>' .
-            '</FECAESolicitar>' .
-            '</soap:Body>' .
+        $soapEnvelope = '<?xml version="1.0" encoding="utf-8"?>'.
+            '<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'.
+            '<soap:Body>'.
+            '<FECAESolicitar xmlns="http://ar.gov.afip.dif.FEV1/">'.
+            '<Auth>'.
+            '<Token>'.htmlspecialchars($ticket['token'], ENT_XML1).'</Token>'.
+            '<Sign>'.htmlspecialchars($ticket['sign'], ENT_XML1).'</Sign>'.
+            '<Cuit>'.$issuerCuit.'</Cuit>'.
+            '</Auth>'.
+            '<FeCAEReq>'.
+            '<FeCabReq>'.
+            '<CantReg>1</CantReg>'.
+            '<PtoVta>'.$ptoVta.'</PtoVta>'.
+            '<CbteTipo>'.$voucherType.'</CbteTipo>'.
+            '</FeCabReq>'.
+            '<FeDetReq>'.
+            '<FECAEDetRequest>'.
+            '<Concepto>1</Concepto>'.
+            '<DocTipo>'.$docType.'</DocTipo>'.
+            '<DocNro>'.$numericDocNro.'</DocNro>'.
+            '<CbteDesde>'.$cbteNro.'</CbteDesde>'.
+            '<CbteHasta>'.$cbteNro.'</CbteHasta>'.
+            '<CbteFch>'.$cbteFch.'</CbteFch>'.
+            '<ImpTotal>'.number_format($totalAmount, 2, '.', '').'</ImpTotal>'.
+            '<ImpTotConc>0.00</ImpTotConc>'.
+            '<ImpNeto>'.number_format($netAmount, 2, '.', '').'</ImpNeto>'.
+            '<ImpOpEx>0.00</ImpOpEx>'.
+            '<ImpTrib>'.number_format($perceptionAmount, 2, '.', '').'</ImpTrib>'.
+            '<ImpIVA>'.number_format($ivaAmount, 2, '.', '').'</ImpIVA>'.
+            '<MonId>PES</MonId>'.
+            '<MonCotiz>1</MonCotiz>'.
+            '<CondicionIVAReceptorId>'.AfipHelper::getCondicionIvaReceptorId($receiverTaxCondition).'</CondicionIVAReceptorId>'.
+            $cbtesAsocXml.
+            $tributosXml.
+            $ivaXml.
+            '</FECAEDetRequest>'.
+            '</FeDetReq>'.
+            '</FeCAEReq>'.
+            '</FECAESolicitar>'.
+            '</soap:Body>'.
             '</soap:Envelope>';
 
         $response = Http::withHeaders([
             'Content-Type' => 'text/xml; charset=utf-8',
-            'SOAPAction'   => '"http://ar.gov.afip.dif.FEV1/FECAESolicitar"',
+            'SOAPAction' => '"http://ar.gov.afip.dif.FEV1/FECAESolicitar"',
         ])->timeout(12)->send('POST', $endpoint, [
             'body' => $soapEnvelope,
         ]);
@@ -409,7 +410,7 @@ class AfipWsfeService
         // 1. Error a nivel Envelope
         if (str_contains($xml, '<faultstring>')) {
             preg_match('/<faultstring>(.*?)<\/faultstring>/s', $xml, $m);
-            throw new RuntimeException("AFIP WSFE Fault: " . ($m[1] ?? 'Error desconocido'));
+            throw new RuntimeException('AFIP WSFE Fault: '.($m[1] ?? 'Error desconocido'));
         }
 
         // 2. Errores a nivel Cabecera
@@ -427,7 +428,7 @@ class AfipWsfeService
             $obsMsg = 'Comprobante rechazado por AFIP';
             if (preg_match('/<Observaciones>(.*?)<\/Observaciones>/s', $xml, $obsMatch)) {
                 preg_match_all('/<Msg>(.*?)<\/Msg>/s', $obsMatch[1], $obsMsgs);
-                $obsMsg .= ': ' . implode('; ', $obsMsgs[1] ?? []);
+                $obsMsg .= ': '.implode('; ', $obsMsgs[1] ?? []);
             }
             throw new RuntimeException($obsMsg);
         }
@@ -440,60 +441,60 @@ class AfipWsfeService
         $rawVto = $vtoMatch[1] ?? '';
 
         if (empty($cae)) {
-            throw new RuntimeException("La respuesta de AFIP no contiene un CAE válido.");
+            throw new RuntimeException('La respuesta de AFIP no contiene un CAE válido.');
         }
 
         $caeExpiration = ! empty($rawVto)
-            ? substr($rawVto, 0, 4) . '-' . substr($rawVto, 4, 2) . '-' . substr($rawVto, 6, 2)
+            ? substr($rawVto, 0, 4).'-'.substr($rawVto, 4, 2).'-'.substr($rawVto, 6, 2)
             : date('Y-m-d', strtotime('+10 days'));
 
         // Generar URL del Código QR Fiscal Oficial RG 4892
         $qrUrl = $this->buildQrUrl([
-            'fecha'      => date('Y-m-d'),
-            'cuit'       => $issuerCuit,
-            'ptoVta'     => $ptoVta,
-            'tipoCmp'    => $voucherType,
-            'nroCmp'     => $cbteNro,
-            'importe'    => $totalAmount,
+            'fecha' => date('Y-m-d'),
+            'cuit' => $issuerCuit,
+            'ptoVta' => $ptoVta,
+            'tipoCmp' => $voucherType,
+            'nroCmp' => $cbteNro,
+            'importe' => $totalAmount,
             'tipoDocRec' => $docType,
-            'nroDocRec'  => $numericDocNro,
-            'codAut'     => (int) $cae,
+            'nroDocRec' => $numericDocNro,
+            'codAut' => (int) $cae,
         ]);
 
         return [
-            'voucher_type'            => $voucherType,
-            'voucher_letter'          => $voucherLetter,
-            'point_of_sale'           => $ptoVta,
-            'voucher_number'          => $cbteNro,
-            'formatted_number'        => sprintf('%05d-%08d', $ptoVta, $cbteNro),
-            'cae'                     => $cae,
-            'cae_expiration'          => $caeExpiration,
-            'doc_type'                => $docType,
-            'doc_number'              => (string) $docNumber,
-            'receiver_name'           => $receiverName,
-            'receiver_address'        => $receiverAddress,
-            'receiver_tax_condition'  => $receiverTaxCondition,
-            'net_amount'              => $netAmount,
-            'iva_amount'              => $ivaAmount,
-            'tribute_amount'          => $perceptionAmount,
-            'tributes_breakdown'      => $tributesBreakdown,
-            'exempt_amount'           => 0.00,
-            'untaxed_amount'          => 0.00,
-            'total_amount'            => $totalAmount,
-            'iva_breakdown'           => $ivaBreakdown,
-            'qr_data'                 => $qrUrl,
-            'status'                  => 'authorized',
-            'afip_request'            => [
-                'ptoVta'   => $ptoVta,
+            'voucher_type' => $voucherType,
+            'voucher_letter' => $voucherLetter,
+            'point_of_sale' => $ptoVta,
+            'voucher_number' => $cbteNro,
+            'formatted_number' => sprintf('%05d-%08d', $ptoVta, $cbteNro),
+            'cae' => $cae,
+            'cae_expiration' => $caeExpiration,
+            'doc_type' => $docType,
+            'doc_number' => (string) $docNumber,
+            'receiver_name' => $receiverName,
+            'receiver_address' => $receiverAddress,
+            'receiver_tax_condition' => $receiverTaxCondition,
+            'net_amount' => $netAmount,
+            'iva_amount' => $ivaAmount,
+            'tribute_amount' => $perceptionAmount,
+            'tributes_breakdown' => $tributesBreakdown,
+            'exempt_amount' => 0.00,
+            'untaxed_amount' => 0.00,
+            'total_amount' => $totalAmount,
+            'iva_breakdown' => $ivaBreakdown,
+            'qr_data' => $qrUrl,
+            'status' => 'authorized',
+            'afip_request' => [
+                'ptoVta' => $ptoVta,
                 'cbteTipo' => $voucherType,
-                'cbteNro'  => $cbteNro,
-                'docTipo'  => $docType,
-                'docNro'   => $numericDocNro,
+                'cbteNro' => $cbteNro,
+                'docTipo' => $docType,
+                'docNro' => $numericDocNro,
             ],
-            'afip_response'           => [
-                'Resultado'  => $resultado,
-                'CAE'        => $cae,
-                'CAEFchVto'  => $caeExpiration,
+            'afip_response' => [
+                'Resultado' => $resultado,
+                'CAE' => $cae,
+                'CAEFchVto' => $caeExpiration,
             ],
         ];
     }
@@ -504,19 +505,19 @@ class AfipWsfeService
     public function buildQrUrl(array $params): string
     {
         $qrData = [
-            'ver'        => 1,
-            'fecha'      => (string) ($params['fecha'] ?? date('Y-m-d')),
-            'cuit'       => (int) ($params['cuit'] ?? 0),
-            'ptoVta'     => (int) ($params['ptoVta'] ?? 1),
-            'tipoCmp'    => (int) ($params['tipoCmp'] ?? 6),
-            'nroCmp'     => (int) ($params['nroCmp'] ?? 1),
-            'importe'    => (float) round((float) ($params['importe'] ?? 0.0), 2),
-            'moneda'     => 'PES',
-            'ctz'        => 1,
+            'ver' => 1,
+            'fecha' => (string) ($params['fecha'] ?? date('Y-m-d')),
+            'cuit' => (int) ($params['cuit'] ?? 0),
+            'ptoVta' => (int) ($params['ptoVta'] ?? 1),
+            'tipoCmp' => (int) ($params['tipoCmp'] ?? 6),
+            'nroCmp' => (int) ($params['nroCmp'] ?? 1),
+            'importe' => (float) round((float) ($params['importe'] ?? 0.0), 2),
+            'moneda' => 'PES',
+            'ctz' => 1,
             'tipoDocRec' => (int) ($params['tipoDocRec'] ?? 99),
-            'nroDocRec'  => (int) ($params['nroDocRec'] ?? 0),
+            'nroDocRec' => (int) ($params['nroDocRec'] ?? 0),
             'tipoCodAut' => 'E',
-            'codAut'     => (int) ($params['codAut'] ?? 0),
+            'codAut' => (int) ($params['codAut'] ?? 0),
         ];
 
         $json = json_encode($qrData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -531,6 +532,7 @@ class AfipWsfeService
     protected function getWsfeEndpoint(): string
     {
         $environment = BusinessSetting::where('key', 'afip_environment')->value('value') ?? 'testing';
+
         return $environment === 'production' ? self::URL_WSFE_PROD : self::URL_WSFE_HOMO;
     }
 }

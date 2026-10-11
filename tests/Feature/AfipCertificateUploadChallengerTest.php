@@ -20,16 +20,22 @@ class AfipCertificateUploadChallengerTest extends TestCase
     use RefreshDatabase;
 
     protected User $adminUser;
+
     protected User $cashierUser;
+
     protected string $validCertPem = '';
+
     protected string $validKeyPem = '';
+
     protected string $encryptedKeyPem = '';
+
     protected string $encryptedKeyPassphrase = 'SuperSecretPassphrase123!';
+
     protected string $mismatchedKeyPem = '';
 
     protected function actingAsCashierWithUser(?User $user = null, array $permissions = []): User
     {
-        $token = 'cashier-token-' . uniqid();
+        $token = 'cashier-token-'.uniqid();
         if ($user === null) {
             $user = User::factory()->create([
                 'role' => 'cashier',
@@ -69,10 +75,10 @@ class AfipCertificateUploadChallengerTest extends TestCase
      */
     protected function generateCryptographicTestPairs(): void
     {
-        $wsaa = new AfipWsaaService();
+        $wsaa = new AfipWsaaService;
         $wsaa->ensureOpenSslConfig();
 
-        $cnfPath = dirname(PHP_BINARY) . '/extras/ssl/openssl.cnf';
+        $cnfPath = dirname(PHP_BINARY).'/extras/ssl/openssl.cnf';
         $configArgs = file_exists($cnfPath) ? ['config' => $cnfPath] : [];
 
         $privKeyArgs = array_merge($configArgs, [
@@ -87,11 +93,11 @@ class AfipCertificateUploadChallengerTest extends TestCase
         }
 
         $dn = [
-            'countryName'            => 'AR',
-            'stateOrProvinceName'    => 'Buenos Aires',
-            'localityName'           => 'CABA',
-            'organizationName'       => 'Empresa Testing AFIP',
-            'commonName'             => 'cert-test-afip',
+            'countryName' => 'AR',
+            'stateOrProvinceName' => 'Buenos Aires',
+            'localityName' => 'CABA',
+            'organizationName' => 'Empresa Testing AFIP',
+            'commonName' => 'cert-test-afip',
         ];
 
         $csr = openssl_csr_new($dn, $privKey, array_merge($configArgs, ['digest_alg' => 'sha256']));

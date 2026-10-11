@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Services\Ecommerce\Adapters;
 
+use App\Models\EcommerceIntegration;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class MercadoLibreAdapter extends AbstractEcommerceAdapter
 {
@@ -21,12 +23,57 @@ class MercadoLibreAdapter extends AbstractEcommerceAdapter
     }
 
     /**
+     * Proactively refresh OAuth2 token if close to expiration (< 10 minutes) with distributed lock.
+     */
+    public function refreshTokenIfNeeded(?EcommerceIntegration $integration = null): void
+    {
+        $integration ??= $this->integration;
+        if (! $integration || ! $integration->refresh_token) {
+            return;
+        }
+
+        // Si faltan más de 10 minutos para expirar, el token aún es válido
+        if ($integration->token_expires_at && $integration->token_expires_at->isAfter(now()->addMinutes(10))) {
+            return;
+        }
+
+        Cache::lock("oauth_refresh:{$integration->id}", 20)->block(10, function () use ($integration) {
+            $fresh = $integration->fresh();
+            if (! $fresh || ! $fresh->refresh_token) {
+                return;
+            }
+
+            if ($fresh->token_expires_at && $fresh->token_expires_at->isAfter(now()->addMinutes(10))) {
+                return;
+            }
+
+            $response = $this->http()->asForm()->post(self::API_BASE_URL.'/oauth/token', [
+                'grant_type' => 'refresh_token',
+                'client_id' => $this->getClientId(),
+                'client_secret' => $this->getClientSecret(),
+                'refresh_token' => $fresh->decrypted_refresh_token ?? $fresh->refresh_token,
+            ]);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                $fresh->update([
+                    'access_token' => $data['access_token'] ?? $fresh->access_token,
+                    'refresh_token' => $data['refresh_token'] ?? $fresh->refresh_token,
+                    'token_expires_at' => now()->addSeconds((int) ($data['expires_in'] ?? 21600)),
+                ]);
+            }
+        });
+    }
+
+    /**
      * Test API connectivity and credentials validity against Mercado Libre.
      *
      * @return array{success: bool, message: string, store_info?: array, error?: string}
      */
     public function testConnection(): array
     {
+        $this->refreshTokenIfNeeded();
+
         $token = $this->getAccessToken();
 
         if (empty($token)) {
@@ -78,32 +125,47 @@ class MercadoLibreAdapter extends AbstractEcommerceAdapter
      */
     public function updateStock(string $externalProductId, float $quantity, ?string $externalVariantId = null): bool
     {
+        $this->refreshTokenIfNeeded();
+
         $token = $this->getAccessToken();
         if (empty($token)) {
             return false;
         }
 
         try {
-            $qty = (int) $quantity;
+            $qty = (int) floor($quantity);
             $client = $this->http()->withToken($token);
 
             if ($externalVariantId !== null && $externalVariantId !== '' && $externalVariantId !== '0') {
                 $url = self::API_BASE_URL."/items/{$externalProductId}/variations/{$externalVariantId}";
                 $response = $client->put($url, ['available_quantity' => $qty]);
-            } else {
-                $url = self::API_BASE_URL."/items/{$externalProductId}";
-                $response = $client->put($url, ['available_quantity' => $qty]);
-            }
 
-            if ($response->successful()) {
-                if ($qty === 0 && $this->isAutoPauseOnZeroStock()) {
-                    $client->put(self::API_BASE_URL."/items/{$externalProductId}", ['status' => 'paused']);
+                if ($response->successful()) {
+                    if ($qty > 0) {
+                        $client->put(self::API_BASE_URL."/items/{$externalProductId}", [
+                            'status' => 'active',
+                        ]);
+                    } elseif ($qty === 0 && $this->isAutoPauseOnZeroStock()) {
+                        $client->put(self::API_BASE_URL."/items/{$externalProductId}", [
+                            'status' => 'paused',
+                            'available_quantity' => 0,
+                        ]);
+                    }
+
+                    return true;
                 }
 
-                return true;
+                return false;
             }
 
-            return false;
+            $url = self::API_BASE_URL."/items/{$externalProductId}";
+            $payload = $qty > 0
+                ? ['status' => 'active', 'available_quantity' => $qty]
+                : ['status' => 'paused', 'available_quantity' => 0];
+
+            $response = $client->put($url, $payload);
+
+            return $response->successful();
         } catch (\Throwable) {
             return false;
         }

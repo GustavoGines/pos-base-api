@@ -3,7 +3,6 @@
 namespace Tests\Unit;
 
 use App\Events\PaymentApprovedEvent;
-use App\Models\BusinessSetting;
 use App\Models\MpTransaction;
 use App\Services\MercadoPagoService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -18,7 +17,9 @@ class MercadoPagoServiceTest extends TestCase
     protected MercadoPagoService $service;
 
     protected string $testAccessToken = 'TEST-access-token-12345';
+
     protected string $testWebhookSecret = 'test_webhook_secret_67890';
+
     protected string $testCollectorId = '999888777';
 
     protected function setUp(): void
@@ -229,21 +230,21 @@ class MercadoPagoServiceTest extends TestCase
 
         Http::fake([
             'https://api.mercadopago.com/merchant_orders/search*' => Http::response([
-        'elements' => [
-            [
-                'id' => 'ord_check_300',
-                'status' => 'closed',
-                'payments' => [
+                'elements' => [
                     [
-                        'id' => 99887766,
-                        'status' => 'approved',
-                        'amount' => 1200.00,
+                        'id' => 'ord_check_300',
+                        'status' => 'closed',
+                        'payments' => [
+                            [
+                                'id' => 99887766,
+                                'status' => 'approved',
+                                'amount' => 1200.00,
+                            ],
+                        ],
                     ],
                 ],
-            ]
-        ]
-    ], 200),
-    'ignore' => Http::response([
+            ], 200),
+            'ignore' => Http::response([
                 'id' => 'ord_check_300',
                 'status' => 'closed',
                 'payments' => [

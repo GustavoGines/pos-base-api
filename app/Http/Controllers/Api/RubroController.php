@@ -53,6 +53,7 @@ class RubroController extends Controller
 
         if ($rubro->categories()->exists()) {
             $count = $rubro->categories()->count();
+
             return response()->json([
                 'message' => "No se puede eliminar el rubro '{$rubro->name}' porque tiene {$count} categoría(s) asociada(s). Reasigne las categorías antes de continuar.",
             ], 422);

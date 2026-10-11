@@ -3,10 +3,17 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Settings\UpdateBusinessSettingsRequest;
+use App\Http\Requests\Settings\UpdateIntegrationsRequest;
+use App\Http\Requests\Settings\UploadAfipCertificatesRequest;
+use App\Http\Requests\Settings\UploadLogoRequest;
 use App\Models\BusinessSetting;
+use App\Services\Afip\AfipCertificateService;
 use App\Services\LicenseSyncService;
+use DomainException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 use Throwable;
 
 class SettingController extends Controller
@@ -26,8 +33,8 @@ class SettingController extends Controller
             unset($settings[$sensitiveKey]);
         }
 
-        if (!empty($settings['logo_path'])) {
-            $settings['logo_url'] = asset('storage/' . $settings['logo_path']);
+        if (! empty($settings['logo_path'])) {
+            $settings['logo_url'] = asset('storage/'.$settings['logo_path']);
         }
 
         // Agregar metadata dinámica para el DRM Heartbeat
@@ -41,14 +48,8 @@ class SettingController extends Controller
      * Actualiza o crea múltiples configuraciones.
      * Encripta claves sensibles y previene la sobreescritura destructiva de tokens enmascarados.
      */
-    public function update(Request $request)
+    public function update(UpdateBusinessSettingsRequest $request)
     {
-        // Validación explícita para los campos de porcentaje del motor global de precios.
-        // El resto de claves son libres (arquitectura genérica key-value).
-        $request->validate([
-            'card_percentage' => 'sometimes|numeric|between:-100,100',
-            'wholesale_percentage' => 'sometimes|numeric|between:-100,100',
-        ]);
 
         // ── Guard SaaS: enable_advanced_price_tiers ───────────────────────────────
         if ($request->has('enable_advanced_price_tiers')) {
@@ -102,6 +103,7 @@ class SettingController extends Controller
                 } else {
                     BusinessSetting::setSecret($key, (string) $value);
                 }
+
                 continue;
             }
 
@@ -142,52 +144,52 @@ class SettingController extends Controller
 
         $storedCertPath = BusinessSetting::where('key', 'afip_cert_path')->value('value');
         $storedKeyPath = BusinessSetting::where('key', 'afip_key_path')->value('value');
-        $cleanCuit = !empty($afipCuit) ? preg_replace('/\D/', '', (string) $afipCuit) : null;
+        $cleanCuit = ! empty($afipCuit) ? preg_replace('/\D/', '', (string) $afipCuit) : null;
 
         $certPath = null;
         $keyPath = null;
         $certExpiresAt = null;
 
-        if (!empty($cleanCuit)) {
+        if (! empty($cleanCuit)) {
             $defaultCert = storage_path("app/private/afip/{$cleanCuit}/cert.crt");
             $defaultKey = storage_path("app/private/afip/{$cleanCuit}/cert.key");
 
             if (file_exists($defaultCert)) {
                 $certPath = $defaultCert;
-            } elseif (!empty($storedCertPath) && str_contains($storedCertPath, $cleanCuit) && file_exists(storage_path('app/private/' . $storedCertPath))) {
-                $certPath = storage_path('app/private/' . $storedCertPath);
+            } elseif (! empty($storedCertPath) && str_contains($storedCertPath, $cleanCuit) && file_exists(storage_path('app/private/'.$storedCertPath))) {
+                $certPath = storage_path('app/private/'.$storedCertPath);
             }
 
             if (file_exists($defaultKey)) {
                 $keyPath = $defaultKey;
-            } elseif (!empty($storedKeyPath) && str_contains($storedKeyPath, $cleanCuit) && file_exists(storage_path('app/private/' . $storedKeyPath))) {
-                $keyPath = storage_path('app/private/' . $storedKeyPath);
+            } elseif (! empty($storedKeyPath) && str_contains($storedKeyPath, $cleanCuit) && file_exists(storage_path('app/private/'.$storedKeyPath))) {
+                $keyPath = storage_path('app/private/'.$storedKeyPath);
             }
         }
 
-        $hasCert = !empty($certPath);
-        $hasKey = !empty($keyPath);
+        $hasCert = ! empty($certPath);
+        $hasKey = ! empty($keyPath);
 
         if ($hasCert) {
             $certExpiresAt = BusinessSetting::where('key', 'afip_cert_expires_at')->value('value');
-            if (empty($certExpiresAt) && !empty($certPath)) {
+            if (empty($certExpiresAt) && ! empty($certPath)) {
                 $certContent = @file_get_contents($certPath);
                 if ($certContent) {
                     $parsed = @openssl_x509_parse($certContent);
-                    if (!empty($parsed['validTo_time_t'])) {
+                    if (! empty($parsed['validTo_time_t'])) {
                         $certExpiresAt = date('Y-m-d H:i:s', $parsed['validTo_time_t']);
                     }
                 }
             }
         }
 
-        $hasMpToken = !empty($rawMpToken) && trim($rawMpToken) !== '';
-        $hasMpSecret = !empty($rawMpSecret) && trim($rawMpSecret) !== '';
+        $hasMpToken = ! empty($rawMpToken) && trim($rawMpToken) !== '';
+        $hasMpSecret = ! empty($rawMpSecret) && trim($rawMpSecret) !== '';
 
         $maskedMpToken = $hasMpToken ? $this->maskToken(trim($rawMpToken)) : null;
         $maskedMpSecret = $hasMpSecret ? $this->maskToken(trim($rawMpSecret)) : null;
 
-        $parsedPtoVta = (!empty($afipPtoVta) && is_numeric($afipPtoVta) && (int) $afipPtoVta > 0)
+        $parsedPtoVta = (! empty($afipPtoVta) && is_numeric($afipPtoVta) && (int) $afipPtoVta > 0)
             ? (int) $afipPtoVta
             : null;
 
@@ -232,18 +234,8 @@ class SettingController extends Controller
     /**
      * Guarda la configuración de integraciones, encriptando secretos y preservando tokens enmascarados.
      */
-    public function updateIntegrations(Request $request)
+    public function updateIntegrations(UpdateIntegrationsRequest $request)
     {
-        $request->validate([
-            'mp_qr_enabled' => 'sometimes',
-            'mp_point_device_id' => 'nullable|string|max:100',
-            'mp_access_token' => 'nullable|string',
-            'mp_webhook_secret' => 'nullable|string',
-            'afip_enabled' => 'sometimes',
-            'afip_cuit' => 'nullable|string|max:20',
-            'afip_pto_vta' => 'nullable|integer|min:1|max:99999',
-            'afip_environment' => 'nullable|in:testing,production',
-        ]);
 
         if ($request->has('mp_access_token')) {
             $token = $request->input('mp_access_token');
@@ -301,7 +293,7 @@ class SettingController extends Controller
                     BusinessSetting::updateOrCreate(['key' => 'afip_cert_path'], ['value' => "afip/{$cleanCuit}/cert.crt"]);
                     BusinessSetting::updateOrCreate(['key' => 'afip_key_path'], ['value' => "afip/{$cleanCuit}/cert.key"]);
                     $certContent = @file_get_contents(storage_path("app/private/afip/{$cleanCuit}/cert.crt"));
-                    if ($certContent && ($parsed = @openssl_x509_parse($certContent)) && !empty($parsed['validTo_time_t'])) {
+                    if ($certContent && ($parsed = @openssl_x509_parse($certContent)) && ! empty($parsed['validTo_time_t'])) {
                         BusinessSetting::updateOrCreate(['key' => 'afip_cert_expires_at'], ['value' => date('Y-m-d H:i:s', $parsed['validTo_time_t'])]);
                     }
                 } else {
@@ -347,7 +339,7 @@ class SettingController extends Controller
         // - Si contiene máscara de asteriscos, preservar y usar el secreto guardado en BD.
         // - Si no está enmascarado, usar el token del request (limpiando espacios).
         // - Si no se incluyó en el request (omitido), usar el secreto guardado en BD.
-        if ($request->has('mp_access_token') && !str_contains((string) $inputToken, '****')) {
+        if ($request->has('mp_access_token') && ! str_contains((string) $inputToken, '****')) {
             $token = trim((string) $inputToken);
         } else {
             $token = BusinessSetting::getSecret('mp_access_token');
@@ -369,6 +361,7 @@ class SettingController extends Controller
 
             if ($response->successful()) {
                 $userData = $response->json();
+
                 return response()->json([
                     'success' => true,
                     'message' => 'Conexión con Mercado Pago exitosa.',
@@ -386,7 +379,7 @@ class SettingController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Mercado Pago respondió con error (Código: ' . $response->status() . ').',
+                'message' => 'Mercado Pago respondió con error (Código: '.$response->status().').',
             ], 400);
         } catch (Throwable $e) {
             return response()->json([
@@ -400,27 +393,8 @@ class SettingController extends Controller
      * Valida y almacena los certificados X.509 y claves privadas para ARCA (AFIP).
      * Verifica criptográficamente que la clave privada coincida con el certificado.
      */
-    public function uploadAfipCertificates(Request $request)
+    public function uploadAfipCertificates(UploadAfipCertificatesRequest $request, AfipCertificateService $certService)
     {
-        $request->validate([
-            'cuit' => 'required|string',
-            'cert_file' => 'nullable|file',
-            'key_file' => 'nullable|file',
-            'cert_content' => 'nullable|string',
-            'key_content' => 'nullable|string',
-            'cert' => 'nullable',
-            'key' => 'nullable',
-            'key_passphrase' => 'nullable|string',
-        ]);
-
-        $cuit = preg_replace('/\D/', '', $request->input('cuit') ?? '');
-        if (empty($cuit)) {
-            return response()->json([
-                'message' => 'El CUIT es obligatorio y debe contener dígitos numéricos.',
-                'error_code' => 'INVALID_CUIT',
-            ], 422);
-        }
-
         $certContent = null;
         if ($request->hasFile('cert_file')) {
             $certContent = file_get_contents($request->file('cert_file')->getRealPath());
@@ -443,85 +417,43 @@ class SettingController extends Controller
             $keyContent = $request->input('key');
         }
 
-        if (empty($certContent) || empty($keyContent)) {
-            return response()->json([
-                'message' => 'Debe adjuntar tanto el certificado (.crt) como la clave privada (.key).',
-                'error_code' => 'MISSING_CERT_OR_KEY',
-            ], 422);
-        }
-
-        $x509 = @openssl_x509_read($certContent);
-        if (! $x509) {
-            return response()->json([
-                'message' => 'El certificado X.509 es inválido o no pudo ser interpretado.',
-                'error_code' => 'INVALID_CERTIFICATE',
-            ], 422);
-        }
-
-        $certData = @openssl_x509_parse($x509);
         $passphrase = $request->input('key_passphrase', '') ?? '';
-        $pkey = @openssl_pkey_get_private($keyContent, $passphrase);
-        if (! $pkey) {
+
+        try {
+            $result = $certService->validateAndStore(
+                $request->input('cuit'),
+                $certContent,
+                $keyContent,
+                $passphrase
+            );
+
+            return response()->json(array_merge([
+                'message' => 'Certificados de AFIP guardados y validados correctamente.',
+            ], $result));
+        } catch (DomainException $e) {
+            [$code, $message] = explode(':', $e->getMessage(), 2);
+
             return response()->json([
-                'message' => 'La clave privada es inválida o la contraseña de desbloqueo es incorrecta.',
-                'error_code' => 'INVALID_PRIVATE_KEY',
+                'message' => $message,
+                'error_code' => $code,
             ], 422);
         }
-
-        if (! @openssl_x509_check_private_key($x509, $pkey)) {
-            return response()->json([
-                'message' => 'El par criptográfico no coincide: el certificado no corresponde a la clave privada.',
-                'error_code' => 'CERT_KEY_MISMATCH',
-            ], 422);
-        }
-
-        $targetDir = storage_path('app/private/afip/' . $cuit);
-        if (! file_exists($targetDir)) {
-            mkdir($targetDir, 0700, true);
-        }
-
-        $certPath = $targetDir . DIRECTORY_SEPARATOR . 'cert.crt';
-        $keyPath = $targetDir . DIRECTORY_SEPARATOR . 'cert.key';
-
-        file_put_contents($certPath, $certContent);
-        file_put_contents($keyPath, $keyContent);
-
-        @chmod($certPath, 0600);
-        @chmod($keyPath, 0600);
-
-        $expiresAt = null;
-        if (! empty($certData['validTo_time_t'])) {
-            $expiresAt = date('Y-m-d H:i:s', $certData['validTo_time_t']);
-        }
-
-        BusinessSetting::updateOrCreate(['key' => 'afip_cuit'], ['value' => $cuit]);
-        BusinessSetting::updateOrCreate(['key' => 'afip_cert_path'], ['value' => "afip/{$cuit}/cert.crt"]);
-        BusinessSetting::updateOrCreate(['key' => 'afip_key_path'], ['value' => "afip/{$cuit}/cert.key"]);
-        if ($expiresAt) {
-            BusinessSetting::updateOrCreate(['key' => 'afip_cert_expires_at'], ['value' => $expiresAt]);
-        }
-
-        return response()->json([
-            'message' => 'Certificados de AFIP guardados y validados correctamente.',
-            'afip_cuit' => $cuit,
-            'afip_has_cert' => true,
-            'afip_has_key' => true,
-            'afip_cert_expires_at' => $expiresAt,
-        ]);
     }
 
     /**
      * Sube y almacena el logotipo del negocio.
      */
-    public function uploadLogo(Request $request)
+    public function uploadLogo(UploadLogoRequest $request)
     {
-        $request->validate([
-            'logo' => 'required|image|mimes:jpeg,png,webp|max:2048',
-        ]);
-
         $file = $request->file('logo');
-        $filename = 'logo_' . time() . '.' . $file->getClientOriginalExtension();
+        $filename = 'logo_'.time().'.'.$file->getClientOriginalExtension();
         $path = $file->storeAs('business', $filename, 'public');
+
+        // Eliminar logo previo huérfano si existía (F2-H01)
+        $oldLogo = BusinessSetting::where('key', 'logo_path')->value('value');
+        if ($oldLogo && Storage::disk('public')->exists($oldLogo)) {
+            Storage::disk('public')->delete($oldLogo);
+        }
 
         BusinessSetting::updateOrCreate(
             ['key' => 'logo_path'],
@@ -530,7 +462,7 @@ class SettingController extends Controller
 
         return response()->json([
             'message' => 'Logotipo guardado correctamente.',
-            'logo_path' => asset('storage/' . $path)
+            'logo_path' => asset('storage/'.$path),
         ]);
     }
 
@@ -594,12 +526,13 @@ class SettingController extends Controller
         if (str_starts_with($token, 'APP_USR-')) {
             $prefix = 'APP_USR-';
             $suffix = substr($token, -4);
-            return $prefix . '****' . $suffix;
+
+            return $prefix.'****'.$suffix;
         }
 
         $prefix = substr($token, 0, 4);
         $suffix = substr($token, -4);
-        return $prefix . '****' . $suffix;
+
+        return $prefix.'****'.$suffix;
     }
 }
-

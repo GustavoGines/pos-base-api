@@ -4,13 +4,10 @@ namespace Tests\Feature;
 
 use App\Events\PaymentApprovedEvent;
 use App\Models\BusinessSetting;
-use App\Models\MpTransaction;
-use App\Models\MpWebhook;
 use App\Services\MercadoPagoService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Event;
-use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 /**
@@ -22,6 +19,7 @@ class MercadoPagoSecurityChallengerTest extends TestCase
     use RefreshDatabase;
 
     protected string $validSecret = 'whsec_empirical_adversarial_test_secret_2026';
+
     protected string $attackerSecret = 'whsec_attacker_evil_secret_666';
 
     protected function setUp(): void
@@ -125,7 +123,7 @@ class MercadoPagoSecurityChallengerTest extends TestCase
         $validHash = hash_hmac('sha256', $manifest, $this->validSecret);
 
         // Flip the last character
-        $tamperedHash = substr($validHash, 0, -1) . ($validHash[-1] === 'a' ? 'b' : 'a');
+        $tamperedHash = substr($validHash, 0, -1).($validHash[-1] === 'a' ? 'b' : 'a');
 
         $response = $this->postJson('/api/webhooks/mercadopago', [
             'action' => 'payment.updated',
@@ -452,4 +450,3 @@ class MercadoPagoSecurityChallengerTest extends TestCase
         $this->assertStringNotContainsString('HTTP_INTEGRATION_SECRET', $data['mp_webhook_secret']);
     }
 }
-

@@ -17,8 +17,7 @@ class MercadoPagoController extends Controller
 {
     public function __construct(
         protected MercadoPagoService $mpService
-    ) {
-    }
+    ) {}
 
     /**
      * Create an in-store QR order in Mercado Pago.
@@ -33,7 +32,7 @@ class MercadoPagoController extends Controller
             'external_reference' => 'nullable|string',
         ]);
 
-        $externalRef = $validated['external_reference'] ?? ('POS-' . strtoupper(Str::random(12)));
+        $externalRef = $validated['external_reference'] ?? ('POS-'.strtoupper(Str::random(12)));
         $items = $validated['items'] ?? [];
 
         try {
@@ -54,7 +53,7 @@ class MercadoPagoController extends Controller
         } catch (\Throwable $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error al crear orden en Mercado Pago: ' . $e->getMessage(),
+                'message' => 'Error al crear orden en Mercado Pago: '.$e->getMessage(),
             ], 400);
         }
     }
@@ -83,7 +82,7 @@ class MercadoPagoController extends Controller
             ], 422);
         }
 
-        $externalRef = $validated['external_reference'] ?? ('POS-' . strtoupper(Str::random(12)));
+        $externalRef = $validated['external_reference'] ?? ('POS-'.strtoupper(Str::random(12)));
         $description = $validated['description'] ?? "Venta POS #{$externalRef}";
 
         try {
@@ -104,7 +103,7 @@ class MercadoPagoController extends Controller
         } catch (\Throwable $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error al enviar pago al Posnet: ' . $e->getMessage(),
+                'message' => 'Error al enviar pago al Posnet: '.$e->getMessage(),
             ], 400);
         }
     }
@@ -207,6 +206,7 @@ class MercadoPagoController extends Controller
 
         if (! $this->mpService->verifyWebhookSignature($sigHeader, $reqIdHeader, $dataId)) {
             $webhookLog->update(['processing_error' => 'Invalid signature']);
+
             return response()->json(['error' => 'Invalid webhook signature'], 403);
         }
 

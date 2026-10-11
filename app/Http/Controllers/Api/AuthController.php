@@ -83,7 +83,7 @@ class AuthController extends Controller
                 ->first();
         }
 
-        $throttleKey = 'pin_attempts:' . ($user ? $user->id : 'guest') . ':' . $request->ip();
+        $throttleKey = 'pin_attempts:'.($user ? $user->id : 'guest').':'.$request->ip();
         if (RateLimiter::tooManyAttempts($throttleKey, 5)) {
             $seconds = RateLimiter::availableIn($throttleKey);
 

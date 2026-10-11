@@ -8,9 +8,9 @@ use App\Http\Controllers\Controller;
 use App\Models\ElectronicInvoice;
 use App\Models\Sale;
 use App\Services\Afip\AfipWsfeService;
-use Exception;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -39,9 +39,9 @@ class ElectronicInvoiceController extends Controller
             'iibb_perception_rate' => 'nullable|numeric|min:0|max:100',
         ]);
 
-        return \Illuminate\Support\Facades\DB::transaction(function () use ($sale, $validated) {
+        return DB::transaction(function () use ($sale, $validated) {
             $lockedSale = Sale::with('electronicInvoice')->lockForUpdate()->find($sale->id);
-            
+
             if ($lockedSale->isVoided()) {
                 return response()->json([
                     'success' => false,

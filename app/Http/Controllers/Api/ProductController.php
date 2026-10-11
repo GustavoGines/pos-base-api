@@ -10,6 +10,7 @@ use App\Models\ProductPriceTier;
 use App\Services\BarcodeService;
 use App\Services\InventoryAlertService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class ProductController extends Controller
 {
@@ -275,6 +276,7 @@ class ProductController extends Controller
         // Insertamos en bulk
         ProductPriceTier::insert($recordsToInsert);
     }
+
     /**
      * Sube y asocia una imagen fotográfica al catálogo para el producto dado.
      */
@@ -285,20 +287,20 @@ class ProductController extends Controller
         ]);
 
         // Si ya tenía imagen, la eliminamos para no dejar basura
-        if ($product->image_path && \Illuminate\Support\Facades\Storage::disk('public')->exists($product->image_path)) {
-            \Illuminate\Support\Facades\Storage::disk('public')->delete($product->image_path);
+        if ($product->image_path && Storage::disk('public')->exists($product->image_path)) {
+            Storage::disk('public')->delete($product->image_path);
         }
 
         $file = $request->file('image');
         $hash = substr(md5(uniqid()), 0, 8);
-        $filename = "{$product->id}_{$hash}." . $file->getClientOriginalExtension();
+        $filename = "{$product->id}_{$hash}.".$file->getClientOriginalExtension();
         $path = $file->storeAs('products', $filename, 'public');
 
         $product->update(['image_path' => $path]);
 
         return response()->json([
             'message' => 'Imagen de producto cargada correctamente.',
-            'image_url' => asset('storage/' . $path)
+            'image_url' => asset('storage/'.$path),
         ]);
     }
 
@@ -307,8 +309,8 @@ class ProductController extends Controller
      */
     public function deleteImage(Product $product)
     {
-        if ($product->image_path && \Illuminate\Support\Facades\Storage::disk('public')->exists($product->image_path)) {
-            \Illuminate\Support\Facades\Storage::disk('public')->delete($product->image_path);
+        if ($product->image_path && Storage::disk('public')->exists($product->image_path)) {
+            Storage::disk('public')->delete($product->image_path);
         }
 
         $product->update(['image_path' => null]);

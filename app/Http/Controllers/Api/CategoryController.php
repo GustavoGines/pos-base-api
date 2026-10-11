@@ -3,11 +3,11 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Category\StoreCategoryRequest;
+use App\Http\Requests\Category\UpdateCategoryRequest;
 use App\Models\Category;
 use App\Models\Rubro;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\Rule;
 
 class CategoryController extends Controller
 {
@@ -16,7 +16,7 @@ class CategoryController extends Controller
         return response()->json(Category::with('rubro')->get());
     }
 
-    public function store(Request $request)
+    public function store(StoreCategoryRequest $request)
     {
         $featuresJson = DB::table('business_settings')
             ->where('key', 'license_features_dict')
@@ -24,16 +24,7 @@ class CategoryController extends Controller
         $features = $featuresJson ? json_decode($featuresJson, true) : [];
         $isPremium = ! empty($features['multi_rubro']);
 
-        $rules = [
-            'name' => ['required', 'string', 'max:255', Rule::unique('categories')],
-            'description' => 'nullable|string',
-        ];
-
-        if ($isPremium) {
-            $rules['rubro_id'] = ['nullable', 'integer', 'min:1', 'exists:rubros,id'];
-        }
-
-        $validated = $request->validate($rules);
+        $validated = $request->validated();
 
         $defaultRubroId = Rubro::where('is_system', true)->value('id') ?? Rubro::value('id');
 
@@ -53,7 +44,7 @@ class CategoryController extends Controller
         return response()->json($category->load('rubro'));
     }
 
-    public function update(Request $request, Category $category)
+    public function update(UpdateCategoryRequest $request, Category $category)
     {
         $featuresJson = DB::table('business_settings')
             ->where('key', 'license_features_dict')
@@ -61,16 +52,7 @@ class CategoryController extends Controller
         $features = $featuresJson ? json_decode($featuresJson, true) : [];
         $isPremium = ! empty($features['multi_rubro']);
 
-        $rules = [
-            'name' => ['sometimes', 'string', 'max:255', Rule::unique('categories')->ignore($category->id)],
-            'description' => 'nullable|string',
-        ];
-
-        if ($isPremium) {
-            $rules['rubro_id'] = ['sometimes', 'nullable', 'integer', 'min:1', 'exists:rubros,id'];
-        }
-
-        $validated = $request->validate($rules);
+        $validated = $request->validated();
 
         $defaultRubroId = Rubro::where('is_system', true)->value('id') ?? Rubro::value('id');
 

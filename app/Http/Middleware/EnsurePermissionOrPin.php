@@ -15,14 +15,13 @@ class EnsurePermissionOrPin
     /**
      * Handle an incoming request.
      *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  \Closure(\Illuminate\Http\Request): (\Symfony\Component\HttpFoundation\Response)  $next
+     * @param  Closure(Request): (Response)  $next
      * @param  string  ...$permissions  Uno o más permisos requeridos (condición OR) o 'admin_only'
      */
     public function handle(Request $request, Closure $next, ...$permissions): Response
     {
         // 1. Obtener usuario previamente autenticado por ValidateSessionToken o Sanctum
-        /** @var \App\Models\User|null $user */
+        /** @var User|null $user */
         $user = $request->user() ?? $request->attributes->get('authenticated_user');
 
         if (! $user && ($request->header('X-Session-Token') ?? $request->query('token'))) {
@@ -70,7 +69,7 @@ class EnsurePermissionOrPin
             // Se aísla el throttle por ID de usuario autenticado e IP.
             // Si múltiples terminales POS operan tras la misma red NAT/router,
             // 5 intentos fallidos en Terminal 1 NO bloquean la Terminal 2 ni al resto del local.
-            $throttleKey = 'pin_attempts:' . ($user ? $user->id : 'guest') . ':' . $request->ip();
+            $throttleKey = 'pin_attempts:'.($user ? $user->id : 'guest').':'.$request->ip();
             if (RateLimiter::tooManyAttempts($throttleKey, 5)) {
                 $seconds = RateLimiter::availableIn($throttleKey);
 

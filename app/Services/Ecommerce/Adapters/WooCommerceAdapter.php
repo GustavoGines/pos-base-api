@@ -116,10 +116,12 @@ class WooCommerceAdapter extends AbstractEcommerceAdapter
         }
 
         try {
-            $qty = (int) $quantity;
+            $qty = (int) floor($quantity);
             $payload = [
                 'manage_stock' => true,
                 'stock_quantity' => $qty,
+                'stock_status' => $qty > 0 ? 'instock' : 'outofstock',
+                'backorders' => 'no',
             ];
 
             if ($externalVariantId !== null && $externalVariantId !== '' && $externalVariantId !== '0') {
@@ -162,10 +164,13 @@ class WooCommerceAdapter extends AbstractEcommerceAdapter
             try {
                 $updatePayload = [];
                 foreach ($items as $item) {
+                    $qty = (int) floor($item['quantity']);
                     $updatePayload[] = [
                         'id' => (int) $item['external_product_id'],
                         'manage_stock' => true,
-                        'stock_quantity' => (int) $item['quantity'],
+                        'stock_quantity' => $qty,
+                        'stock_status' => $qty > 0 ? 'instock' : 'outofstock',
+                        'backorders' => 'no',
                     ];
                 }
 

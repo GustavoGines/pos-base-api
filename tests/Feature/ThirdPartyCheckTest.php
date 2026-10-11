@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\BusinessSetting;
 use App\Models\Customer;
+use App\Models\Supplier;
 use App\Models\ThirdPartyCheck;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -116,7 +117,7 @@ class ThirdPartyCheckTest extends TestCase
 
     public function test_ch04_cannot_update_check_linked_to_supplier()
     {
-        $supplier = \App\Models\Supplier::create(['name' => 'Proveedor Test', 'cuit' => '20123456789']);
+        $supplier = Supplier::create(['name' => 'Proveedor Test', 'cuit' => '20123456789']);
         $customer = Customer::create(['name' => 'Test4', 'document_number' => '1234567']);
         $check = ThirdPartyCheck::create([
             'customer_id' => $customer->id,

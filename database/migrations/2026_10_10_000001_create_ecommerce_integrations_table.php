@@ -15,8 +15,8 @@ return new class extends Migration
             Schema::create('ecommerce_integrations', function (Blueprint $table) {
                 $table->id();
                 $table->enum('platform', ['mercadolibre', 'tiendanube', 'woocommerce', 'ecommerce_platform'])
-                      ->index()
-                      ->comment('Identificador del canal integrado');
+                    ->index()
+                    ->comment('Identificador del canal integrado');
                 $table->string('name', 100)->comment('Nombre descriptivo, ej: MercadoLibre Oficial');
 
                 // Parámetros de direccionamiento

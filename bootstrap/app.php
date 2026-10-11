@@ -3,7 +3,6 @@
 use App\Http\Middleware\CheckAddonPermission;
 use App\Http\Middleware\CheckFeatureAccess;
 use App\Http\Middleware\EnsurePermissionOrPin;
-use App\Http\Middleware\EnsureRoleOrPin;
 use App\Http\Middleware\EnsureUserIsAdmin;
 use App\Http\Middleware\ValidateSessionToken;
 use Illuminate\Foundation\Application;

@@ -5,7 +5,6 @@ namespace Tests\Feature;
 use App\Events\PaymentApprovedEvent;
 use App\Models\BusinessSetting;
 use App\Models\MpTransaction;
-use App\Models\MpWebhook;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
@@ -103,21 +102,21 @@ class MercadoPagoFeatureTest extends TestCase
 
         Http::fake([
             'https://api.mercadopago.com/merchant_orders/search*' => Http::response([
-        'elements' => [
-            [
-                'id' => 'ord_poll_123',
-                'status' => 'closed',
-                'payments' => [
+                'elements' => [
                     [
-                        'id' => 55443322,
-                        'status' => 'approved',
-                        'amount' => 4500.00,
+                        'id' => 'ord_poll_123',
+                        'status' => 'closed',
+                        'payments' => [
+                            [
+                                'id' => 55443322,
+                                'status' => 'approved',
+                                'amount' => 4500.00,
+                            ],
+                        ],
                     ],
                 ],
-            ]
-        ]
-    ], 200),
-    'ignore' => Http::response([
+            ], 200),
+            'ignore' => Http::response([
                 'id' => 'ord_poll_123',
                 'status' => 'closed',
                 'payments' => [

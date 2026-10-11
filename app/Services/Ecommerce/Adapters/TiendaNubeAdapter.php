@@ -107,18 +107,30 @@ class TiendaNubeAdapter extends AbstractEcommerceAdapter
         }
 
         try {
-            $qty = (int) $quantity;
+            $qty = (int) floor($quantity);
 
-            if ($externalVariantId !== null && $externalVariantId !== '' && $externalVariantId !== '0') {
+            $isVariant = $externalVariantId !== null && $externalVariantId !== '' && $externalVariantId !== '0';
+            if ($isVariant) {
                 $url = self::API_BASE_URL."/{$storeId}/products/{$externalProductId}/variants/{$externalVariantId}";
-                $response = $this->http()->put($url, ['stock' => $qty]);
+                $payload = ['stock' => $qty];
             } else {
                 $url = self::API_BASE_URL."/{$storeId}/products/{$externalProductId}";
-                $response = $this->http()->put($url, [
+                $payload = [
                     'variants' => [
                         ['stock' => $qty],
                     ],
-                ]);
+                ];
+            }
+
+            $response = $this->http()->put($url, $payload);
+
+            // Handle Leaky-Bucket 429 rate limit with Retry-After
+            if ($response->status() === 429) {
+                $retryAfter = (int) ($response->header('Retry-After') ?? 1);
+                if ($retryAfter > 0 && $retryAfter <= 3) {
+                    sleep($retryAfter);
+                    $response = $this->http()->put($url, $payload);
+                }
             }
 
             return $response->successful();

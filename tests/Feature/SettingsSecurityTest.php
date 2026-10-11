@@ -20,7 +20,7 @@ class SettingsSecurityTest extends TestCase
         // Limpieza de cualquier archivo o carpeta generada en storage/app/private/afip
         $testAfipDir = storage_path('app/private/afip/20123456789');
         if (is_dir($testAfipDir)) {
-            $files = glob($testAfipDir . DIRECTORY_SEPARATOR . '*');
+            $files = glob($testAfipDir.DIRECTORY_SEPARATOR.'*');
             foreach ($files as $file) {
                 if (is_file($file)) {
                     @unlink($file);
@@ -47,14 +47,14 @@ class SettingsSecurityTest extends TestCase
             'private_key_type' => OPENSSL_KEYTYPE_RSA,
         ];
 
-        $candidateConf = dirname(PHP_BINARY) . '/extras/ssl/openssl.cnf';
+        $candidateConf = dirname(PHP_BINARY).'/extras/ssl/openssl.cnf';
         if (file_exists($candidateConf)) {
             $config['config'] = $candidateConf;
         }
 
         $privkey = openssl_pkey_new($config);
-        if (!$privkey) {
-            throw new \RuntimeException('Error al generar clave privada RSA: ' . openssl_error_string());
+        if (! $privkey) {
+            throw new \RuntimeException('Error al generar clave privada RSA: '.openssl_error_string());
         }
 
         $dn = [
@@ -71,13 +71,13 @@ class SettingsSecurityTest extends TestCase
         }
 
         $csr = openssl_csr_new($dn, $privkey, $csrConfig);
-        if (!$csr) {
-            throw new \RuntimeException('Error al generar CSR: ' . openssl_error_string());
+        if (! $csr) {
+            throw new \RuntimeException('Error al generar CSR: '.openssl_error_string());
         }
 
         $x509 = openssl_csr_sign($csr, null, $privkey, 365, $csrConfig);
-        if (!$x509) {
-            throw new \RuntimeException('Error al firmar certificado X.509: ' . openssl_error_string());
+        if (! $x509) {
+            throw new \RuntimeException('Error al firmar certificado X.509: '.openssl_error_string());
         }
 
         openssl_x509_export($x509, $certOut);
@@ -138,7 +138,7 @@ class SettingsSecurityTest extends TestCase
             'role' => 'cashier',
             'permissions' => ['pos'],
         ]);
-        $cashierToken = 'test-cashier-token-' . uniqid();
+        $cashierToken = 'test-cashier-token-'.uniqid();
         DB::table('users')->where('id', $cashier->id)->update(['session_token' => $cashierToken]);
 
         // Crear administrador con PIN conocido
@@ -268,7 +268,7 @@ class SettingsSecurityTest extends TestCase
     public function test_upload_afip_certificates_saves_valid_pair_to_private_storage(): void
     {
         $cuit = '20123456789';
-        $validPair = $this->generateSelfSignedCert('cuit_' . $cuit);
+        $validPair = $this->generateSelfSignedCert('cuit_'.$cuit);
 
         $admin = User::factory()->create(['role' => 'admin']);
 
@@ -405,7 +405,7 @@ class SettingsSecurityTest extends TestCase
 
         // 2. Cajero sin permiso ni PIN -> 403
         $cashier = User::factory()->create(['role' => 'cashier', 'permissions' => ['pos']]);
-        $cashierToken = 'session-cashier-' . uniqid();
+        $cashierToken = 'session-cashier-'.uniqid();
         DB::table('users')->where('id', $cashier->id)->update(['session_token' => $cashierToken]);
 
         $forbiddenResponse = $this->withHeader('X-Session-Token', $cashierToken)
@@ -504,7 +504,7 @@ class SettingsSecurityTest extends TestCase
     public function test_integrations_detects_cert_with_formatted_cuit_and_stored_paths(): void
     {
         $cuit = '20123456789';
-        $validPair = $this->generateSelfSignedCert('cuit_' . $cuit);
+        $validPair = $this->generateSelfSignedCert('cuit_'.$cuit);
 
         $admin = User::factory()->create(['role' => 'admin']);
 
@@ -563,7 +563,7 @@ class SettingsSecurityTest extends TestCase
     public function test_changing_afip_cuit_to_unconfigured_cuit_resets_cert_status_and_clears_expiration(): void
     {
         $cuitA = '20123456789';
-        $validPair = $this->generateSelfSignedCert('cuit_' . $cuitA);
+        $validPair = $this->generateSelfSignedCert('cuit_'.$cuitA);
 
         $admin = User::factory()->create(['role' => 'admin']);
 
@@ -603,7 +603,7 @@ class SettingsSecurityTest extends TestCase
     public function test_clearing_afip_cuit_resets_cert_status_and_expires_at(): void
     {
         $cuit = '20123456789';
-        $validPair = $this->generateSelfSignedCert('cuit_' . $cuit);
+        $validPair = $this->generateSelfSignedCert('cuit_'.$cuit);
 
         $admin = User::factory()->create(['role' => 'admin']);
 
@@ -678,5 +678,3 @@ class SettingsSecurityTest extends TestCase
         $this->assertEquals('Comercio Auditado', BusinessSetting::where('key', 'company_name')->value('value'));
     }
 }
-
-

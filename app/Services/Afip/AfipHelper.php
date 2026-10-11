@@ -10,31 +10,47 @@ class AfipHelper
      * CÃ³digos de alÃ­cuotas de IVA oficiales de AFIP / ARCA (Tabla WSFEv1).
      */
     public const ALIQUOT_0_PERCENT = 3;    // 0.00% (Exento / No gravado)
+
     public const ALIQUOT_10_5_PERCENT = 4; // 10.50%
+
     public const ALIQUOT_21_PERCENT = 5;   // 21.00%
+
     public const ALIQUOT_27_PERCENT = 6;   // 27.00%
+
     public const ALIQUOT_5_PERCENT = 8;    // 5.00%
+
     public const ALIQUOT_2_5_PERCENT = 9;  // 2.50%
 
     /**
      * Tipos de Comprobante AFIP (CbteTipo).
      */
     public const VOUCHER_FACTURA_A = 1;
+
     public const VOUCHER_NOTA_DEBITO_A = 2;
+
     public const VOUCHER_NOTA_CREDITO_A = 3;
+
     public const VOUCHER_FACTURA_B = 6;
+
     public const VOUCHER_NOTA_DEBITO_B = 7;
+
     public const VOUCHER_NOTA_CREDITO_B = 8;
+
     public const VOUCHER_FACTURA_C = 11;
+
     public const VOUCHER_NOTA_DEBITO_C = 12;
+
     public const VOUCHER_NOTA_CREDITO_C = 13;
 
     /**
      * Tipos de Documento AFIP (DocTipo).
      */
     public const DOC_CUIT = 80;
+
     public const DOC_CUIL = 86;
+
     public const DOC_DNI = 96;
+
     public const DOC_CONSUMIDOR_FINAL = 99;
 
     /**
@@ -98,6 +114,7 @@ class AfipHelper
         }
 
         $num = (int) $clean;
+
         return $num >= 1000000 && $num <= 99999999;
     }
 
@@ -181,12 +198,12 @@ class AfipHelper
             default => self::VOUCHER_FACTURA_B,
         };
     }
+
     /**
      * Resuelve el ID de la Condición Frente al IVA del Receptor
      * según la Resolución General Nro 5616.
      *
-     * @param string 
-     * @return int
+     * @param string
      */
     public static function getCondicionIvaReceptorId(string $taxCondition): int
     {

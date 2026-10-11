@@ -4,7 +4,6 @@ namespace Tests\Feature;
 
 use App\Models\BusinessSetting;
 use App\Models\Product;
-use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
@@ -19,7 +18,6 @@ class ImageUploadTest extends TestCase
         parent::setUp();
         Storage::fake('public');
     }
-
 
     public function test_it_can_upload_business_logo()
     {
@@ -44,7 +42,7 @@ class ImageUploadTest extends TestCase
             'internal_code' => 'IMG-001',
             'cost_price' => 10,
             'selling_price' => 20,
-            'stock' => 5
+            'stock' => 5,
         ]);
         $file = UploadedFile::fake()->image('product.jpg');
 
@@ -54,7 +52,7 @@ class ImageUploadTest extends TestCase
         ]);
 
         $response->assertStatus(200);
-        
+
         $product->refresh();
         $this->assertNotNull($product->image_path);
         Storage::disk('public')->assertExists($product->image_path);

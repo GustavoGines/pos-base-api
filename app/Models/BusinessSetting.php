@@ -84,6 +84,7 @@ class BusinessSetting extends Model
     {
         if ($value === null || $value === '') {
             static::where('key', $key)->delete();
+
             return;
         }
 

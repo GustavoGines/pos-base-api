@@ -10,12 +10,12 @@ use App\Models\MpTransaction;
 use App\Models\MpWebhook;
 use App\Models\PaymentMethod;
 use App\Models\Sale;
-use App\Models\SaleItem;
 use App\Models\SalePayment;
 use App\Models\User;
 use App\Services\CashShiftService;
 use App\Services\PaymentService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Validator;
 use Tests\TestCase;
 
@@ -24,7 +24,9 @@ class MercadoPagoDatabaseTest extends TestCase
     use RefreshDatabase;
 
     protected User $user;
+
     protected CashRegister $cashRegister;
+
     protected CashShift $cashShift;
 
     protected function setUp(): void
@@ -149,7 +151,7 @@ class MercadoPagoDatabaseTest extends TestCase
         $this->assertIsArray($pendingWebhook->payload);
         $this->assertFalse($pendingWebhook->is_processed);
         $this->assertTrue($processedWebhook->is_processed);
-        $this->assertInstanceOf(\Illuminate\Support\Carbon::class, $processedWebhook->processed_at);
+        $this->assertInstanceOf(Carbon::class, $processedWebhook->processed_at);
     }
 
     /**
@@ -372,7 +374,7 @@ class MercadoPagoDatabaseTest extends TestCase
             ],
         ];
 
-        $request = new ProcessSaleRequest();
+        $request = new ProcessSaleRequest;
         $validator = Validator::make($data, $request->rules());
 
         // Verificar que no haya errores de validación en los campos de MP
