@@ -137,7 +137,7 @@ class LicenseSyncService
                     $features['advanced_reports'] = true;
                     $features['multi_rubro'] = true;
 
-                    $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store' || ! empty($features['quotes']);
+                    $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store';
                     if ($isHardwareStore) {
                         $features['multiple_prices'] = true;
                         $features['logistics'] = true;
@@ -256,10 +256,13 @@ class LicenseSyncService
                         $features['quotes'] = true;
                         $features['logistics'] = true;
                     } else {
-                        // Si se cambió a Retail, forzamos a desactivar los módulos exclusivos de Ferretería
-                        // para que no queden "pegados" en caso de que el JSON del servidor remoto no esté limpio.
-                        $features['quotes'] = false;
-                        $features['logistics'] = false;
+                        // Si es Retail, solo desactivar si el servidor remoto no los habilitó explícitamente vía allowed_addons
+                        if (!isset($data['features']['quotes']) || $data['features']['quotes'] !== true) {
+                            $features['quotes'] = false;
+                        }
+                        if (!isset($data['features']['logistics']) || $data['features']['logistics'] !== true) {
+                            $features['logistics'] = false;
+                        }
                     }
                 }
                 $this->setSetting('license_features_dict', json_encode($features));
@@ -308,10 +311,11 @@ class LicenseSyncService
                 $planLower = strtolower($data['plan'] ?? $data['plan_type'] ?? 'basic');
                 if (in_array($planLower, ['premium', 'pro'])) {
                     $features['multi_caja'] = $features['multi_caja'] ?? true;
+                    $features['current_accounts'] = $features['current_accounts'] ?? true;
                     $features['advanced_reports'] = $features['advanced_reports'] ?? true;
                     $features['multi_rubro'] = $features['multi_rubro'] ?? true;
 
-                    $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store' || ! empty($features['quotes']);
+                    $isHardwareStore = ($data['business_type'] ?? 'retail') === 'hardware_store';
                     if ($isHardwareStore) {
                         $features['multiple_prices'] = $features['multiple_prices'] ?? true;
                         $features['logistics'] = $features['logistics'] ?? true;

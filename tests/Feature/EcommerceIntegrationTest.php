@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Models\BusinessSetting;
 use App\Models\EcommerceIntegration;
 use App\Models\EcommerceSyncLog;
 use App\Models\User;
@@ -17,6 +18,16 @@ use Tests\TestCase;
 class EcommerceIntegrationTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['ecommerce_sync' => true])]
+        );
+    }
 
     /**
      * Helper to create a valid base integration in database.
@@ -724,5 +735,18 @@ class EcommerceIntegrationTest extends TestCase
         $resMeli->assertStatus(200);
         $resMeli->assertJsonPath('total', 1);
         $resMeli->assertJsonPath('data.0.integration_id', $integration1->id);
+    }
+
+    public function test_ecommerce_routes_blocked_when_feature_not_licensed(): void
+    {
+        BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['ecommerce_sync' => false])]
+        );
+
+        $response = $this->actingAsAdmin()->getJson('/api/ecommerce/integrations');
+        $response->assertStatus(403);
+        $response->assertJsonPath('error_code', 'FEATURE_NOT_LICENSED');
+        $response->assertJsonPath('required', 'ecommerce_sync');
     }
 }

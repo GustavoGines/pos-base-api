@@ -17,6 +17,7 @@ use App\Services\Afip\AfipHelper;
 use App\Services\Afip\AfipWsfeService;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class SaleService
 {
@@ -45,6 +46,16 @@ class SaleService
                 })->sum('total_amount');
 
                 $isCuentaCorriente = $ccPaymentTotal > 0;
+
+                if ($isCuentaCorriente) {
+                    $featuresJson = DB::table('business_settings')->where('key', 'license_features_dict')->value('value');
+                    $features = !empty($featuresJson) ? json_decode($featuresJson, true) : [];
+                    if (!empty($features) && (!isset($features['current_accounts']) || $features['current_accounts'] !== true)) {
+                        throw ValidationException::withMessages([
+                            'payment_methods' => 'El cobro con Cuenta Corriente (Fiado) requiere el módulo de Cuentas Corrientes habilitado en su licencia.',
+                        ]);
+                    }
+                }
             }
 
             $total = $dto->total;
@@ -158,6 +169,14 @@ class SaleService
             }
 
             if ($isCuentaCorriente) {
+                $featuresJson = DB::table('business_settings')->where('key', 'license_features_dict')->value('value');
+                $features = !empty($featuresJson) ? json_decode($featuresJson, true) : [];
+                if (!empty($features) && (!isset($features['current_accounts']) || $features['current_accounts'] !== true)) {
+                    throw ValidationException::withMessages([
+                        'payment_methods' => 'El cobro con Cuenta Corriente (Fiado) requiere el módulo de Cuentas Corrientes habilitado en su licencia.',
+                    ]);
+                }
+
                 $context->customerId = $context->customerId ?? $lockedSale->customer_id;
                 if (! $context->customerId) {
                     throw new \InvalidArgumentException('Debe asociar un cliente a la venta para pagar con Cuenta Corriente.');

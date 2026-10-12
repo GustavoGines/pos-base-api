@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature;
 
 use App\Jobs\ProcessInboundEcommerceWebhookJob;
+use App\Models\BusinessSetting;
 use App\Models\Category;
 use App\Models\EcommerceIntegration;
 use App\Models\EcommerceWebhook;
@@ -24,6 +25,11 @@ class OmnichannelCatalogSyncAndAutoMappingTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['ecommerce_sync' => true])]
+        );
 
         $this->integration = EcommerceIntegration::create([
             'platform' => EcommerceIntegration::PLATFORM_INTERNAL,
@@ -195,6 +201,51 @@ class OmnichannelCatalogSyncAndAutoMappingTest extends TestCase
             'external_product_id' => '101',
             'external_sku' => 'PROD-101',
         ]);
+    }
+
+    public function test_import_catalog_updates_existing_product_name_prices_and_stock(): void
+    {
+        $existing = Product::create([
+            'name' => 'Nombre Viejo Del Producto',
+            'internal_code' => 'SKU-UPDATE-1',
+            'cost_price' => 5000,
+            'selling_price' => 10000,
+            'stock' => 2.0,
+            'active' => true,
+        ]);
+
+        Http::fake([
+            'http://test-web.localhost/api/v1/catalog/export' => Http::response([
+                'success' => true,
+                'total' => 1,
+                'products' => [
+                    [
+                        'id' => 999,
+                        'sku' => 'SKU-UPDATE-1',
+                        'name' => 'Nombre Nuevo Actualizado',
+                        'price' => 18000.0,
+                        'cost_price' => 9000.0,
+                        'stock' => 99.0,
+                        'category' => 'Hardware',
+                    ],
+                ],
+            ], 200),
+        ]);
+
+        $response = $this->actingAsAdmin()
+            ->postJson("/api/ecommerce/integrations/{$this->integration->id}/import-catalog");
+
+        $response->assertStatus(200);
+        $response->assertJson([
+            'success' => true,
+            'updated' => 1,
+        ]);
+
+        $fresh = $existing->fresh();
+        $this->assertEquals('Nombre Nuevo Actualizado', $fresh->name);
+        $this->assertEquals(18000.0, (float) $fresh->selling_price);
+        $this->assertEquals(9000.0, (float) $fresh->cost_price);
+        $this->assertEquals(99.0, (float) $fresh->stock);
     }
 
     public function test_export_catalog_to_remote_seeds_store(): void

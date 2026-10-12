@@ -122,20 +122,22 @@ Route::middleware(['session.validate'])->group(function () {
         ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     Route::post('/settings/logo', [SettingController::class, 'uploadLogo'])
         ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
-    Route::apiResource('ecommerce/integrations', EcommerceIntegrationController::class)
-        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
-    Route::post('/ecommerce/integrations/{integration}/test-connection', [EcommerceIntegrationController::class, 'testConnection'])
-        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
-    Route::post('/ecommerce/integrations/{integration}/toggle-active', [EcommerceIntegrationController::class, 'toggleActive'])
-        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
-    Route::post('/ecommerce/integrations/{integration}/import-catalog', [EcommerceIntegrationController::class, 'importCatalog'])
-        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
-    Route::post('/ecommerce/integrations/{integration}/export-catalog', [EcommerceIntegrationController::class, 'exportCatalog'])
-        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
-    Route::get('/ecommerce/logs', [EcommerceIntegrationController::class, 'logs'])
-        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
-    Route::get('/settings/ecommerce/logs', [EcommerceIntegrationController::class, 'logs'])
-        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
+    Route::middleware(['feature:ecommerce_sync'])->group(function () {
+        Route::apiResource('ecommerce/integrations', EcommerceIntegrationController::class)
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
+        Route::post('/ecommerce/integrations/{integration}/test-connection', [EcommerceIntegrationController::class, 'testConnection'])
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
+        Route::post('/ecommerce/integrations/{integration}/toggle-active', [EcommerceIntegrationController::class, 'toggleActive'])
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
+        Route::post('/ecommerce/integrations/{integration}/import-catalog', [EcommerceIntegrationController::class, 'importCatalog'])
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
+        Route::post('/ecommerce/integrations/{integration}/export-catalog', [EcommerceIntegrationController::class, 'exportCatalog'])
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
+        Route::get('/ecommerce/logs', [EcommerceIntegrationController::class, 'logs'])
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
+        Route::get('/settings/ecommerce/logs', [EcommerceIntegrationController::class, 'logs'])
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
+    });
 
     // ── POS: Procesar venta (CRÍTICO) ────────────────────────────────
     Route::post('/pos/sales', [PosController::class, 'processSale']);
@@ -172,10 +174,12 @@ Route::middleware(['session.validate'])->group(function () {
     Route::apiResource('customers', CustomerController::class)
         ->except(['index', 'show'])
         ->middleware('permission.or.pin:'.Permissions::MANAGE_CUSTOMERS);
-    Route::get('/customers/{customer}/pending-sales', [CustomerController::class, 'getPendingSales'])
-        ->middleware('permission.or.pin:'.Permissions::VIEW_CUSTOMERS_ACCOUNT);
-    Route::post('/customers/{customer}/payments', [CustomerController::class, 'registerPayment'])
-        ->middleware('permission.or.pin:'.Permissions::COLLECT_CUSTOMER_DEBT);
+    Route::middleware(['feature:current_accounts'])->group(function () {
+        Route::get('/customers/{customer}/pending-sales', [CustomerController::class, 'getPendingSales'])
+            ->middleware('permission.or.pin:'.Permissions::VIEW_CUSTOMERS_ACCOUNT);
+        Route::post('/customers/{customer}/payments', [CustomerController::class, 'registerPayment'])
+            ->middleware('permission.or.pin:'.Permissions::COLLECT_CUSTOMER_DEBT);
+    });
 
     // 💸 Módulo Movimientos de Caja y Gastos 💸
     Route::get('/cash-movements', [CashMovementController::class, 'index'])
@@ -326,7 +330,9 @@ Route::middleware(['session.validate'])->group(function () {
             Route::get('/sales-by-rubro/pdf', [ReportController::class, 'exportPdfByRubro']);
             Route::get('/sales-by-rubro', [ReportController::class, 'profitByRubro']);
         });
-        Route::get('/internal-consumption', [ReportController::class, 'internalConsumption']);
+        Route::middleware(['feature:current_accounts'])->group(function () {
+            Route::get('/internal-consumption', [ReportController::class, 'internalConsumption']);
+        });
         Route::get('/monthly-balance/export', [ReportController::class, 'exportMonthlyBalanceExcel']);
         Route::get('/monthly-balance/pdf', [ReportController::class, 'exportMonthlyBalancePdf']);
         Route::get('/monthly-balance', [ReportController::class, 'monthlyBalance']);

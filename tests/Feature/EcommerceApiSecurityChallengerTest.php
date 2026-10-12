@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Models\BusinessSetting;
 use App\Models\EcommerceIntegration;
 use App\Models\User;
 use App\Services\Ecommerce\EcommerceManager;
@@ -18,6 +19,16 @@ use Tests\TestCase;
 class EcommerceApiSecurityChallengerTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['ecommerce_sync' => true])]
+        );
+    }
 
     protected function createSampleIntegration(array $overrides = []): EcommerceIntegration
     {

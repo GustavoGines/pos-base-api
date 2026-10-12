@@ -132,9 +132,10 @@ class LicenseSyncServiceTest extends TestCase
     }
 
     /**
-     * Test: syncManualForce ante respuesta exitosa de retail limpia las llaves exclusivas de ferretería.
+     * Test: syncManualForce ante respuesta estándar de retail mantiene desactivadas las llaves de ferretería,
+     * pero respeta si el servidor explícitamente las habilita vía allowed_addons.
      */
-    public function test_sync_manual_force_disables_hardware_features_when_retail(): void
+    public function test_sync_manual_force_disables_hardware_features_when_retail_default(): void
     {
         BusinessSetting::updateOrCreate(['key' => 'license_key'], ['value' => 'VALID-RETAIL-KEY']);
 
@@ -143,8 +144,8 @@ class LicenseSyncServiceTest extends TestCase
                 'plan' => 'pro',
                 'business_type' => 'retail',
                 'features' => [
-                    'quotes' => true, // Servidor envía llaves que deben desactivarse en retail
-                    'logistics' => true,
+                    'quotes' => false,
+                    'logistics' => false,
                 ],
             ], 200),
         ]);
@@ -154,8 +155,33 @@ class LicenseSyncServiceTest extends TestCase
         $featuresJson = BusinessSetting::where('key', 'license_features_dict')->value('value');
         $features = json_decode($featuresJson, true);
 
-        // En retail, syncManualForce desactiva explícitamente quotes y logistics
+        // En retail por defecto, quotes y logistics son false
         $this->assertFalse($features['quotes']);
+        $this->assertFalse($features['logistics']);
+    }
+
+    public function test_sync_manual_force_preserves_hardware_features_when_granted_as_addon_to_retail(): void
+    {
+        BusinessSetting::updateOrCreate(['key' => 'license_key'], ['value' => 'VALID-RETAIL-ADDON-KEY']);
+
+        Http::fake([
+            '*/api/validate' => Http::response([
+                'plan' => 'pro',
+                'business_type' => 'retail',
+                'features' => [
+                    'quotes' => true,
+                    'logistics' => false,
+                ],
+            ], 200),
+        ]);
+
+        $this->service->syncManualForce();
+
+        $featuresJson = BusinessSetting::where('key', 'license_features_dict')->value('value');
+        $features = json_decode($featuresJson, true);
+
+        // Si el admin otorgó quotes como addon en Retail, se preserva como true
+        $this->assertTrue($features['quotes']);
         $this->assertFalse($features['logistics']);
     }
 

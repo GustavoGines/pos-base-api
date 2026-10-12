@@ -130,24 +130,25 @@ class CatalogSyncService
                         if (! $localProduct && ! empty($name)) {
                             $localProduct = Product::whereRaw('LOWER(TRIM(name)) = ?', [mb_strtolower(trim($name))])->first();
                         }
-
-                        if (! $localProduct && $extId !== '' && ctype_digit($extId)) {
-                            $localProduct = Product::find((int) $extId);
-                        }
                     }
 
                     // 4. Actualizar existente o crear nuevo producto en POS
                     if ($localProduct) {
                         $updateData = [
+                            'name' => ! empty($name) ? $name : $localProduct->name,
                             'selling_price' => $price > 0 ? $price : $localProduct->selling_price,
                             'cost_price' => $costPrice > 0 ? $costPrice : $localProduct->cost_price,
                         ];
+
+                        if ($integration->sync_stock_enabled) {
+                            $updateData['stock'] = $stock;
+                        }
 
                         if (empty($localProduct->barcode) && ! empty($barcode)) {
                             $updateData['barcode'] = $barcode;
                         }
 
-                        if (empty($localProduct->category_id) && $categoryId !== null) {
+                        if ($categoryId !== null) {
                             $updateData['category_id'] = $categoryId;
                         }
 
@@ -188,6 +189,7 @@ class CatalogSyncService
                     } else {
                         $mapping->update([
                             'product_id' => $localProduct->id,
+                            'external_product_id' => $extId !== '' ? $extId : $mapping->external_product_id,
                             'external_sku' => $sku ?? $localProduct->internal_code,
                             'external_title' => $name,
                             'last_known_local_stock' => (float) $localProduct->stock,
