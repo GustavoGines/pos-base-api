@@ -69,17 +69,26 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
 
         try {
             $adapter = $ecommerceManager->forIntegration($integration);
+            $payload = is_array($webhook->payload) ? $webhook->payload : (json_decode((string) $webhook->payload, true) ?: []);
             $parsed = $adapter->parseWebhook(new Request(
                 query: [],
-                request: $webhook->payload,
+                request: $payload,
                 attributes: [],
                 cookies: [],
                 files: [],
-                server: [],
-                content: json_encode($webhook->payload)
+                server: [
+                    'REQUEST_METHOD' => 'POST',
+                    'CONTENT_TYPE' => 'application/json',
+                ],
+                content: json_encode($payload)
             ));
 
-            $externalOrderId = $parsed['external_order_id'] ?? $webhook->payload['id'] ?? null;
+            $externalOrderId = $parsed['external_order_id'] 
+                ?? $payload['order_id'] 
+                ?? $payload['order_number'] 
+                ?? $payload['id'] 
+                ?? null;
+
             if ($externalOrderId !== null) {
                 $externalOrderId = (string) $externalOrderId;
             }
@@ -119,11 +128,12 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
 
             foreach ($orderItems as $item) {
                 $extProdId = (string) ($item['external_product_id'] ?? '');
-                $extVarId = isset($item['external_variant_id']) ? (string) $item['external_variant_id'] : '0';
+                $extVarId = ! empty($item['external_variant_id']) ? (string) $item['external_variant_id'] : '0';
                 $sku = isset($item['sku']) ? (string) $item['sku'] : null;
+                $name = isset($item['name']) ? (string) $item['name'] : null;
                 $quantity = (float) ($item['quantity'] ?? 1);
 
-                if ($extProdId === '' && empty($sku)) {
+                if ($extProdId === '' && empty($sku) && empty($name)) {
                     continue;
                 }
 
@@ -140,6 +150,51 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
                     $mapping = EcommerceProductMapping::where('integration_id', $integration->id)
                         ->where('external_sku', $sku)
                         ->first();
+                }
+
+                // Auto-mapping inteligente en cascada si no existe vinculación previa
+                if (! $mapping) {
+                    $localProduct = null;
+
+                    // 1. Coincidencia por SKU local (internal_code)
+                    if (! empty($sku)) {
+                        $localProduct = Product::where('internal_code', $sku)->first();
+                    }
+
+                    // 2. Coincidencia por Código de barras
+                    if (! $localProduct && ! empty($sku)) {
+                        $localProduct = Product::where('barcode', $sku)->first();
+                    }
+                    if (! $localProduct && $extProdId !== '') {
+                        $localProduct = Product::where('barcode', $extProdId)->first();
+                    }
+
+                    // 3. Coincidencia por Nombre exacto (case-insensitive)
+                    if (! $localProduct && ! empty($name)) {
+                        $cleanName = mb_strtolower(trim($name));
+                        $localProduct = Product::whereRaw('LOWER(TRIM(name)) = ?', [$cleanName])->first();
+                    }
+
+                    // 4. Coincidencia por ID numérico directo si external_product_id es entero
+                    if (! $localProduct && $extProdId !== '' && ctype_digit($extProdId)) {
+                        $localProduct = Product::find((int) $extProdId);
+                    }
+
+                    if ($localProduct) {
+                        $mapping = EcommerceProductMapping::create([
+                            'integration_id' => $integration->id,
+                            'product_id' => $localProduct->id,
+                            'platform' => $integration->platform,
+                            'external_product_id' => $extProdId !== '' ? $extProdId : (string) $localProduct->id,
+                            'external_variant_id' => $extVarId,
+                            'external_sku' => $sku ?? $localProduct->internal_code,
+                            'external_title' => $name ?? $localProduct->name,
+                            'sync_stock' => true,
+                            'last_known_local_stock' => (float) $localProduct->stock,
+                            'sync_status' => 'synced',
+                            'last_synced_at' => now(),
+                        ]);
+                    }
                 }
 
                 if ($mapping && $mapping->product_id) {
@@ -275,7 +330,7 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
     /**
      * Helper to extract standardized order items from webhook payload or remote API.
      *
-     * @return array<int, array{external_product_id: string, external_variant_id: string, quantity: float, sku?: string|null}>
+     * @return array<int, array{external_product_id: string, external_variant_id: string, quantity: float, sku?: string|null, name?: string|null}>
      */
     protected function extractOrderItems(EcommerceWebhook $webhook, mixed $adapter, ?string $externalOrderId): array
     {
@@ -290,6 +345,7 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
                     'external_variant_id' => (string) ($li['variation_id'] ?? '0'),
                     'quantity' => (float) ($li['quantity'] ?? 1),
                     'sku' => $li['sku'] ?? null,
+                    'name' => $li['name'] ?? $li['title'] ?? null,
                 ];
             }
 
@@ -304,6 +360,7 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
                     'external_variant_id' => (string) ($p['variant_id'] ?? '0'),
                     'quantity' => (float) ($p['quantity'] ?? 1),
                     'sku' => $p['sku'] ?? null,
+                    'name' => $p['name'] ?? $p['title'] ?? null,
                 ];
             }
 
@@ -318,6 +375,7 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
                     'external_variant_id' => (string) ($oi['item']['variation_id'] ?? $oi['variation_id'] ?? '0'),
                     'quantity' => (float) ($oi['quantity'] ?? 1),
                     'sku' => $oi['item']['seller_custom_field'] ?? $oi['sku'] ?? null,
+                    'name' => $oi['item']['title'] ?? $oi['name'] ?? null,
                 ];
             }
 
@@ -332,6 +390,7 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
                     'external_variant_id' => (string) ($item['external_variant_id'] ?? $item['variant_id'] ?? '0'),
                     'quantity' => (float) ($item['quantity'] ?? 1),
                     'sku' => $item['sku'] ?? null,
+                    'name' => $item['name'] ?? $item['title'] ?? null,
                 ];
             }
 
@@ -357,6 +416,7 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
                                 'external_variant_id' => (string) ($oi['item']['variation_id'] ?? $oi['variation_id'] ?? '0'),
                                 'quantity' => (float) ($oi['quantity'] ?? 1),
                                 'sku' => $oi['item']['seller_custom_field'] ?? $oi['sku'] ?? null,
+                                'name' => $oi['item']['title'] ?? $oi['name'] ?? null,
                             ];
                         }
 
@@ -371,6 +431,7 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
                                 'external_variant_id' => (string) ($li['variation_id'] ?? '0'),
                                 'quantity' => (float) ($li['quantity'] ?? 1),
                                 'sku' => $li['sku'] ?? null,
+                                'name' => $li['name'] ?? $li['title'] ?? null,
                             ];
                         }
 
@@ -385,6 +446,7 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
                                 'external_variant_id' => (string) ($p['variant_id'] ?? '0'),
                                 'quantity' => (float) ($p['quantity'] ?? 1),
                                 'sku' => $p['sku'] ?? null,
+                                'name' => $p['name'] ?? $p['title'] ?? null,
                             ];
                         }
 
