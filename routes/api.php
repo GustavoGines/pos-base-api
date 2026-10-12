@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\EcommerceIntegrationController;
 use App\Http\Controllers\Api\EcommerceWebhookController;
 use App\Http\Controllers\Api\ElectronicInvoiceController;
 use App\Http\Controllers\Api\MercadoPagoController;
+use App\Http\Controllers\Api\OfferController;
 use App\Http\Controllers\Api\PosController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\QuoteController;
@@ -356,4 +357,13 @@ Route::middleware(['session.validate'])->group(function () {
     // Mobile Scanner Module
     Route::post('/mobile/scan', [MobileScannerController::class, 'scan']);
     Route::post('/mobile/print-label', [MobileScannerController::class, 'printLabel']);
+
+    // ── Módulo Ofertas y Promociones ─────────────────────────────────
+    Route::prefix('offers')->group(function () {
+        Route::get('/', [OfferController::class, 'index']);
+        Route::get('/active', [OfferController::class, 'active']);
+        Route::post('/', [OfferController::class, 'store']);
+        Route::delete('/{offer}', [OfferController::class, 'destroy']);
+    });
 });
+

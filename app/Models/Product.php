@@ -128,4 +128,14 @@ class Product extends Model
     {
         return $this->hasMany(EcommerceProductMapping::class);
     }
+
+    /**
+     * Ofertas y promociones temporales asociadas.
+     */
+    public function offers(): BelongsToMany
+    {
+        return $this->belongsToMany(Offer::class, 'offer_products')
+            ->withPivot('special_price')
+            ->withTimestamps();
+    }
 }
