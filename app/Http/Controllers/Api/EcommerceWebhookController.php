@@ -142,6 +142,10 @@ class EcommerceWebhookController extends Controller
     protected function extractTimestamp(Request $request): ?int
     {
         // Check platform specific headers
+        if ($request->hasHeader('x-timestamp')) {
+            return (int) $request->header('x-timestamp');
+        }
+
         if ($request->hasHeader('x-wc-webhook-timestamp')) {
             return (int) $request->header('x-wc-webhook-timestamp');
         }
