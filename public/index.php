@@ -3,6 +3,26 @@
 use Illuminate\Foundation\Application;
 use Illuminate\Http\Request;
 
+// ── BLINDAJE DE ENTORNO EN SERVIDORES COMPARTIDOS (Laragon / Apache mod_php) ──
+// Evita que otras aplicaciones web (ej. ecommerce-platform) que ejecutan putenv()
+// en el mismo proceso de Apache contaminen las variables de entorno de este backend.
+if (file_exists(__DIR__.'/../.env')) {
+    foreach (file(__DIR__.'/../.env', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+        $line = trim($line);
+        if ($line === '' || str_starts_with($line, '#')) {
+            continue;
+        }
+        if (str_contains($line, '=')) {
+            [$k, $v] = explode('=', $line, 2);
+            $k = trim($k);
+            $v = trim($v, " \t\n\r\0\x0B\"'");
+            putenv("{$k}={$v}");
+            $_ENV[$k] = $v;
+            $_SERVER[$k] = $v;
+        }
+    }
+}
+
 // ── DESTRUCTOR DE CACHÉ OTA ──────────────────────────────────────────
 // Parche de arranque para limpiar la caché de Laravel si existen archivos
 // en bootstrap/cache tras una actualización. Evita errores fantasma.

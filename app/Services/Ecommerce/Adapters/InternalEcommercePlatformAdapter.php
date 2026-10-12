@@ -222,4 +222,97 @@ class InternalEcommercePlatformAdapter extends AbstractEcommerceAdapter
             'payload' => $request->all(),
         ];
     }
+
+    /**
+     * Fetch the complete catalog from the internal ecommerce platform.
+     *
+     * @return array{success: bool, message: string, products: array, total: int}
+     */
+    public function fetchCatalog(): array
+    {
+        if (empty($this->getBaseUrl()) || empty($this->getAccessToken())) {
+            return [
+                'success' => false,
+                'message' => 'No se ha configurado la URL o el Token de la plataforma web',
+                'products' => [],
+                'total' => 0,
+            ];
+        }
+
+        try {
+            $response = $this->http()->get($this->endpoint('catalog/export'));
+
+            if ($response->successful()) {
+                $data = $response->json();
+                $products = $data['products'] ?? [];
+
+                return [
+                    'success' => true,
+                    'message' => 'Catálogo obtenido exitosamente',
+                    'products' => $products,
+                    'total' => (int) ($data['total'] ?? count($products)),
+                ];
+            }
+
+            return [
+                'success' => false,
+                'message' => (string) ($response->json('message') ?? 'Error al obtener catálogo web (HTTP '.$response->status().')'),
+                'products' => [],
+                'total' => 0,
+            ];
+        } catch (\Throwable $e) {
+            return [
+                'success' => false,
+                'message' => 'Error al conectar con la plataforma web: '.$e->getMessage(),
+                'products' => [],
+                'total' => 0,
+            ];
+        }
+    }
+
+    /**
+     * Bulk synchronize products from the POS to the internal ecommerce platform.
+     *
+     * @param  array<int, array<string, mixed>>  $products
+     * @return array{success: bool, message: string, synced_count: int, data?: array}
+     */
+    public function bulkSyncCatalog(array $products): array
+    {
+        if (empty($this->getBaseUrl()) || empty($this->getAccessToken())) {
+            return [
+                'success' => false,
+                'message' => 'No se ha configurado la URL o el Token de la plataforma web',
+                'synced_count' => 0,
+            ];
+        }
+
+        try {
+            $response = $this->http()->post($this->endpoint('catalog/bulk-sync'), [
+                'products' => $products,
+            ]);
+
+            if ($response->successful()) {
+                $data = $response->json();
+
+                return [
+                    'success' => true,
+                    'message' => (string) ($data['message'] ?? 'Catálogo sembrado exitosamente en la tienda web'),
+                    'synced_count' => (int) ($data['synced_count'] ?? count($products)),
+                    'data' => $data,
+                ];
+            }
+
+            return [
+                'success' => false,
+                'message' => (string) ($response->json('message') ?? 'Error al sincronizar catálogo con la tienda web (HTTP '.$response->status().')'),
+                'synced_count' => 0,
+            ];
+        } catch (\Throwable $e) {
+            return [
+                'success' => false,
+                'message' => 'Error al enviar catálogo a la tienda web: '.$e->getMessage(),
+                'synced_count' => 0,
+            ];
+        }
+    }
 }

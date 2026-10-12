@@ -9,6 +9,7 @@ use App\Http\Requests\StoreEcommerceIntegrationRequest;
 use App\Http\Requests\UpdateEcommerceIntegrationRequest;
 use App\Models\EcommerceIntegration;
 use App\Models\EcommerceSyncLog;
+use App\Services\Ecommerce\CatalogSyncService;
 use App\Services\Ecommerce\EcommerceManager;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -145,6 +146,26 @@ class EcommerceIntegrationController extends Controller
             'message' => 'Estado de la integración actualizado correctamente.',
             'integration' => $this->transformIntegration($integration->fresh()),
         ]);
+    }
+
+    /**
+     * Import entire remote catalog from ecommerce platform into local POS.
+     */
+    public function importCatalog(EcommerceIntegration $integration, CatalogSyncService $catalogSyncService): JsonResponse
+    {
+        $result = $catalogSyncService->importFromRemote($integration);
+
+        return response()->json($result, $result['success'] ? 200 : 400);
+    }
+
+    /**
+     * Export active local POS catalog to remote ecommerce platform.
+     */
+    public function exportCatalog(EcommerceIntegration $integration, CatalogSyncService $catalogSyncService): JsonResponse
+    {
+        $result = $catalogSyncService->exportToRemote($integration);
+
+        return response()->json($result, $result['success'] ? 200 : 400);
     }
 
     /**

@@ -128,6 +128,10 @@ Route::middleware(['session.validate'])->group(function () {
         ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     Route::post('/ecommerce/integrations/{integration}/toggle-active', [EcommerceIntegrationController::class, 'toggleActive'])
         ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
+    Route::post('/ecommerce/integrations/{integration}/import-catalog', [EcommerceIntegrationController::class, 'importCatalog'])
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
+    Route::post('/ecommerce/integrations/{integration}/export-catalog', [EcommerceIntegrationController::class, 'exportCatalog'])
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     Route::get('/ecommerce/logs', [EcommerceIntegrationController::class, 'logs'])
         ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     Route::get('/settings/ecommerce/logs', [EcommerceIntegrationController::class, 'logs'])
