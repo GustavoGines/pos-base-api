@@ -2,6 +2,10 @@
 Todos los cambios notables del servidor base están documentados aquí.
 
 
+## [2.0.1] - 2026-10-12
+### Parches y Compatibilidad
+- Nivelación de paridad de versión 2.0.1 con los clientes de frontend (Desktop y Mobile).
+
 ## [2.0.0] - 2026-10-12
 ### Novedades y E-commerce
 - Sincronización omnicanal de catálogo e integración bidireccional con Mercado Libre, WooCommerce, Tiendanube y plataforma web propia.
