@@ -129,6 +129,88 @@ class OfferController extends Controller
     }
 
     /**
+     * Actualizar una oferta existente.
+     */
+    public function update(Request $request, Offer $offer): JsonResponse
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:150',
+            'description' => 'nullable|string|max:255',
+            'type' => 'required|in:percentage,fixed_price',
+            'discount_percentage' => 'nullable|numeric|min:0|max:100',
+            'discount_amount' => 'nullable|numeric|min:0',
+            'period_type' => 'required|in:daily,weekly,monthly,custom',
+            'days_of_week' => 'nullable|array',
+            'start_date' => 'nullable|date',
+            'end_date' => 'nullable|date',
+            'products' => 'required|array|min:1',
+            'products.*.product_id' => 'required|exists:products,id',
+            'products.*.special_price' => 'nullable|numeric|min:0',
+        ]);
+
+        $now = Carbon::now();
+        $startDate = ! empty($validated['start_date']) ? Carbon::parse($validated['start_date']) : $now->copy();
+        $endDate = ! empty($validated['end_date']) ? Carbon::parse($validated['end_date']) : null;
+
+        if (! $endDate) {
+            switch ($validated['period_type']) {
+                case 'daily':
+                    $startDate = $now->copy()->startOfDay();
+                    $endDate = $now->copy()->endOfDay();
+                    break;
+                case 'weekly':
+                    $endDate = $now->copy()->addDays(7)->endOfDay();
+                    break;
+                case 'monthly':
+                    $endDate = $now->copy()->addDays(30)->endOfDay();
+                    break;
+                default:
+                    $endDate = $now->copy()->addDay()->endOfDay();
+                    break;
+            }
+        }
+
+        DB::beginTransaction();
+        try {
+            $offer->update([
+                'name' => $validated['name'],
+                'description' => $validated['description'] ?? null,
+                'type' => $validated['type'],
+                'discount_percentage' => $validated['discount_percentage'] ?? null,
+                'discount_amount' => $validated['discount_amount'] ?? null,
+                'period_type' => $validated['period_type'],
+                'days_of_week' => $validated['days_of_week'] ?? null,
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'is_active' => true,
+            ]);
+
+            $syncData = [];
+            foreach ($validated['products'] as $p) {
+                $syncData[$p['product_id']] = [
+                    'special_price' => $p['special_price'] ?? null,
+                ];
+            }
+            $offer->products()->sync($syncData);
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Oferta actualizada correctamente',
+                'data' => $offer->load('products:id,name,barcode,internal_code,selling_price'),
+            ]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al actualizar la oferta: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Eliminar o desactivar una oferta.
      */
     public function destroy(Offer $offer): JsonResponse

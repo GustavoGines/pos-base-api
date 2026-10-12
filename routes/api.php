@@ -363,6 +363,7 @@ Route::middleware(['session.validate'])->group(function () {
         Route::get('/', [OfferController::class, 'index']);
         Route::get('/active', [OfferController::class, 'active']);
         Route::post('/', [OfferController::class, 'store']);
+        Route::put('/{offer}', [OfferController::class, 'update']);
         Route::delete('/{offer}', [OfferController::class, 'destroy']);
     });
 });
