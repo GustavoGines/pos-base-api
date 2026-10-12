@@ -90,7 +90,7 @@ class SalesController extends Controller
     public function pending()
     {
         $sales = Sale::with([
-            'items.product:id,name,internal_code,stock,is_sold_by_weight',
+            'items.product:id,name,internal_code,stock,is_sold_by_weight,selling_price,cost_price,price_wholesale,price_card',
             'user:id,name',
             'cashier:id,name',
             'payments.paymentMethod:id,name,code,is_cash',
