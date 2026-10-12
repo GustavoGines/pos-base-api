@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\BusinessSetting;
 use App\Models\Customer;
 use App\Models\PaymentMethod;
 use App\Models\Sale;
@@ -25,6 +26,19 @@ use Tests\TestCase;
 class CustomerPaymentTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode([
+                'current_accounts' => true,
+                'checks' => true,
+            ])]
+        );
+    }
 
     // ── Helpers locales ────────────────────────────────────────────────────────
 

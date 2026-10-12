@@ -30,6 +30,15 @@ class ReportTest extends TestCase
         parent::setUp();
         $this->admin = User::factory()->create(['role' => 'admin']);
         $this->actingAsAdmin($this->admin);
+
+        BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode([
+                'current_accounts' => true,
+                'expenses' => true,
+                'multi_rubro' => true,
+            ])]
+        );
     }
 
     public function test_r01_stock_kardex_report()
