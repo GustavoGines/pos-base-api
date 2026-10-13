@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -84,6 +85,33 @@ class Product extends Model
     public function priceTiers(): HasMany
     {
         return $this->hasMany(ProductPriceTier::class)->orderBy('min_quantity', 'asc');
+    }
+
+    /**
+     * Búsqueda por palabras sueltas, sin importar el orden.
+     *
+     * Cada palabra debe aparecer (AND) en alguna de las columnas indicadas (OR).
+     * Ej: "stanley verde" encuentra "STANLEY Termo 1L Verde" y "verde stanley" también.
+     * Los comodines LIKE (% _) escritos por el usuario se tratan como texto literal.
+     *
+     * @param  array<int, string>  $columns  Columnas (pueden venir calificadas: products.name)
+     */
+    public function scopeMatchingSearch(Builder $query, ?string $search, array $columns = ['products.name', 'products.barcode', 'products.internal_code']): Builder
+    {
+        $terms = preg_split('/\s+/u', trim((string) $search), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $terms = array_slice($terms, 0, 6); // Tope de seguridad: máx 6 palabras
+
+        foreach ($terms as $term) {
+            $like = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $term).'%';
+            $query->where(function (Builder $q) use ($columns, $like) {
+                $grammar = $q->getQuery()->getGrammar();
+                foreach ($columns as $column) {
+                    $q->orWhereRaw($grammar->wrap($column)." LIKE ? ESCAPE '!'", [$like]);
+                }
+            });
+        }
+
+        return $query;
     }
 
     /**

@@ -31,7 +31,9 @@ class PosController extends Controller
                 $q->where('barcode', $query)
                     ->orWhere('internal_code', $query)
                     ->orWhere('internal_code', $plu)
-                    ->orWhere('name', 'like', "%{$query}%");
+                    ->orWhere(function ($n) use ($query) {
+                        $n->matchingSearch($query, ['name']);
+                    });
 
                 if (is_numeric($query)) {
                     $q->orWhere('id', $query);

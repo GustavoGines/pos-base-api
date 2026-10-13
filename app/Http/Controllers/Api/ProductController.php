@@ -19,12 +19,7 @@ class ProductController extends Controller
         $query = Product::with(['category.rubro', 'brand', 'supplier', 'children', 'priceTiers']);
 
         if ($search = $request->query('search')) {
-            $like = '%'.$search.'%';
-            $query->where(function ($q) use ($like) {
-                $q->where('products.name', 'like', $like)
-                    ->orWhere('products.barcode', 'like', $like)
-                    ->orWhere('products.internal_code', 'like', $like);
-            });
+            $query->matchingSearch($search);
         }
 
         $allowedSorts = [
