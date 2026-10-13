@@ -415,4 +415,159 @@ class StockServiceTest extends TestCase
 
         $this->assertEquals($expectedOrder, $keys);
     }
+
+    // ── Popularidad (sales_count) ────────────────────────────────────────
+
+    private function contextoMostrador(int $shiftId): SaleContextDTO
+    {
+        return new SaleContextDTO(
+            userId: $this->user->id,
+            cashShiftId: $shiftId,
+            customerId: null,
+            quoteId: null,
+            priceList: null,
+            deliveryAddress: null,
+            isInternalAccount: false
+        );
+    }
+
+    private function crearPesable(int $salesCount = 0): Product
+    {
+        return Product::create([
+            'name' => 'Queso Cremoso',
+            'internal_code' => 'QSO01',
+            'cost_price' => 500.00,
+            'selling_price' => 1000.00,
+            'stock' => 20.0,
+            'sales_count' => $salesCount,
+            'is_sold_by_weight' => true,
+            'active' => true,
+        ]);
+    }
+
+    /**
+     * Una venta fraccionaria por peso (0.250 kg) suma 1 punto y su anulación lo revierte exactamente.
+     */
+    public function test_popularidad_venta_fraccionaria_suma_un_punto_y_anulacion_lo_revierte(): void
+    {
+        $shift = $this->crearTurnoAbierto(user: $this->user);
+        $product = $this->crearPesable();
+        $context = $this->contextoMostrador($shift->id);
+
+        $sale = Sale::create([
+            'total' => 250.00, 'status' => 'completed', 'payment_status' => 'paid',
+            'cash_shift_id' => $shift->id, 'user_id' => $this->user->id,
+        ]);
+        $sale->items()->create([
+            'product_id' => $product->id, 'product_name' => $product->name, 'quantity' => 0.25,
+            'unit_price' => 1000.00, 'unit_cost_price' => 500.00, 'subtotal' => 250.00,
+        ]);
+
+        $this->stockService->processCartStock(
+            [['product_id' => $product->id, 'quantity' => 0.25]],
+            new Collection([$product->id => $product]), $sale, $context, false, 'delivered'
+        );
+        $this->assertEquals(1, $product->fresh()->sales_count, '0.250 kg debe sumar 1 punto, no truncarse a 0');
+
+        DB::transaction(fn () => $this->stockService->restoreStockForVoid($sale->fresh('items'), $context, null));
+        $this->assertEquals(0, $product->fresh()->sales_count, 'La anulación debe revertir exactamente lo sumado');
+    }
+
+    /**
+     * Order Recall: cambiar 0.300 kg → 0.500 kg no debe inflar la popularidad (sigue siendo 1 línea = 1 punto).
+     */
+    public function test_popularidad_recall_pesable_no_infla_contador(): void
+    {
+        $shift = $this->crearTurnoAbierto(user: $this->user);
+        // Al guardar la orden en espera con 0.300 kg ya se sumó 1 punto.
+        $product = $this->crearPesable(salesCount: 1);
+        $context = $this->contextoMostrador($shift->id);
+
+        $sale = Sale::create([
+            'total' => 300.00, 'status' => 'pending', 'payment_status' => 'pending',
+            'cash_shift_id' => $shift->id, 'user_id' => $this->user->id,
+        ]);
+        $sale->items()->create([
+            'product_id' => $product->id, 'product_name' => $product->name, 'quantity' => 0.3,
+            'unit_price' => 1000.00, 'unit_cost_price' => 500.00, 'subtotal' => 300.00,
+        ]);
+
+        DB::transaction(fn () => $this->stockService->reconcileStockDiff(
+            [['product_id' => $product->id, 'quantity' => 0.5]], $sale->fresh('items'), $context
+        ));
+
+        $this->assertEquals(1, $product->fresh()->sales_count, '0.3 kg → 0.5 kg sigue siendo 1 punto');
+        $this->assertEquals(19.8, (float) $product->fresh()->stock, 'El stock sí debe ajustar la diferencia (0.2 kg)');
+    }
+
+    /**
+     * Order Recall: quitar por completo una línea pesable (0.3 kg → 0) resta su punto y
+     * volver a agregarla (0 → 0.4 kg) lo suma de nuevo: el contador queda coherente con la orden final.
+     */
+    public function test_popularidad_recall_quitar_y_reagregar_pesable_es_simetrico(): void
+    {
+        $shift = $this->crearTurnoAbierto(user: $this->user);
+        $product = $this->crearPesable(salesCount: 3);
+        $context = $this->contextoMostrador($shift->id);
+
+        $sale = Sale::create([
+            'total' => 300.00, 'status' => 'pending', 'payment_status' => 'pending',
+            'cash_shift_id' => $shift->id, 'user_id' => $this->user->id,
+        ]);
+        $sale->items()->create([
+            'product_id' => $product->id, 'product_name' => $product->name, 'quantity' => 0.3,
+            'unit_price' => 1000.00, 'unit_cost_price' => 500.00, 'subtotal' => 300.00,
+        ]);
+
+        // Se quita la línea: 0.3 kg → 0 (ítem inexistente en el nuevo carrito).
+        $otro = Product::create([
+            'name' => 'Otro', 'internal_code' => 'OTR01', 'cost_price' => 1, 'selling_price' => 2,
+            'stock' => 10, 'active' => true,
+        ]);
+        DB::transaction(fn () => $this->stockService->reconcileStockDiff(
+            [['product_id' => $otro->id, 'quantity' => 1.0]], $sale->fresh('items'), $context
+        ));
+        $this->assertEquals(2, $product->fresh()->sales_count, 'Quitar la línea resta su punto (3 → 2)');
+        $this->assertEquals(20.3, (float) $product->fresh()->stock, 'El stock vuelve (0.3 kg)');
+    }
+
+    /**
+     * Anular una venta con remito diferido (stock nunca descontado en mostrador) no debe restar popularidad
+     * que nunca se sumó.
+     */
+    public function test_popularidad_anular_remito_diferido_no_resta_puntos_no_sumados(): void
+    {
+        $shift = $this->crearTurnoAbierto(user: $this->user);
+        $context = $this->contextoMostrador($shift->id);
+
+        $product = Product::create([
+            'name' => 'Bolsa Cemento 50kg', 'internal_code' => 'CEM50', 'cost_price' => 100.00,
+            'selling_price' => 200.00, 'stock' => 30.0, 'sales_count' => 5, 'active' => true,
+        ]);
+
+        $sale = Sale::create([
+            'total' => 800.00, 'status' => 'completed', 'payment_status' => 'paid',
+            'cash_shift_id' => $shift->id, 'user_id' => $this->user->id,
+        ]);
+        $sale->items()->create([
+            'product_id' => $product->id, 'product_name' => $product->name, 'quantity' => 4.0,
+            'unit_price' => 200.00, 'unit_cost_price' => 100.00, 'subtotal' => 800.00,
+        ]);
+
+        // Remito pendiente: processCartStock no descontó stock ni sumó popularidad.
+        $deliveryNote = \App\Models\DeliveryNote::create([
+            'sale_id' => $sale->id, 'status' => 'pending', 'notes' => 'Envío diferido',
+        ]);
+        \App\Models\DeliveryNoteItem::create([
+            'delivery_note_id' => $deliveryNote->id, 'product_id' => $product->id,
+            'quantity_purchased' => 4, 'quantity_delivered' => 0,
+        ]);
+
+        DB::transaction(fn () => $this->stockService->restoreStockForVoid(
+            $sale->fresh('items'), $context, $deliveryNote->fresh('items')
+        ));
+
+        $this->assertEquals(5, $product->fresh()->sales_count, 'No se debe restar popularidad que nunca se sumó');
+        $this->assertEquals(30.0, (float) $product->fresh()->stock);
+    }
 }

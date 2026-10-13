@@ -69,7 +69,7 @@ class StockService
     /**
      * Deduct stock mathematically for a specific product (Combo-aware)
      */
-    protected function deductProductStock(Product $product, float $qty, Sale $sale, SaleContextDTO $context, bool $isAdjustment, Collection $products): void
+    protected function deductProductStock(Product $product, float $qty, Sale $sale, SaleContextDTO $context, bool $isAdjustment, Collection $products, bool $trackPopularity = true): void
     {
         if ($product->is_combo) {
             foreach ($product->children as $child) {
@@ -93,15 +93,21 @@ class StockService
                 $context, $sale);
         }
 
-        if (! $context->isInternalAccount) {
-            if ($qty > 0) {
-                $product->sales_count += $qty;
-            } else {
-                // Si es un ajuste negativo (quitar del carrito), decrementamos seguro
-                $product->sales_count = max(0, $product->sales_count + $qty); // $qty is negative here
-            }
+        if ($trackPopularity && ! $context->isInternalAccount && $qty > 0) {
+            $product->sales_count += $this->popularityPoints($qty);
         }
         $product->save(); // Dispara Observers
+    }
+
+    /**
+     * Puntos de popularidad (sales_count) que aporta una línea de venta según su cantidad.
+     * Toda cantidad positiva vale al menos 1 punto, de modo que ventas fraccionarias por peso
+     * (ej. 0.250 kg) no se pierdan. Es función de la cantidad de la línea (no de una diferencia),
+     * lo que garantiza simetría entre venta, edición de orden en espera y anulación.
+     */
+    protected function popularityPoints(float $qty): int
+    {
+        return $qty > 0 ? max(1, (int) ceil($qty)) : 0;
     }
 
     /**
@@ -124,13 +130,23 @@ class StockService
         $products = $this->lockProducts($allProductIds);
 
         foreach ($allProductIds as $productId) {
-            $oldQty = $originalQuantities[$productId] ?? 0;
-            $newQty = $newQuantities[$productId] ?? 0;
+            $oldQty = (float) ($originalQuantities[$productId] ?? 0);
+            $newQty = (float) ($newQuantities[$productId] ?? 0);
             $diff = $newQty - $oldQty; // Positivo = agregó más al carrito, Negativo = quitó
 
             if ($diff != 0 && isset($products[$productId])) {
                 $product = $products[$productId];
-                $this->deductProductStock($product, $diff, $sale, $context, true, $products);
+                $this->deductProductStock($product, $diff, $sale, $context, true, $products, false);
+
+                // Popularidad: delta entre los puntos de la cantidad nueva y los de la vieja
+                // (0.3 kg → 0.5 kg no suma; 0 → 0.5 kg suma 1; 5 → 3 u. resta 2).
+                if (! $context->isInternalAccount) {
+                    $pointsDelta = $this->popularityPoints($newQty) - $this->popularityPoints($oldQty);
+                    if ($pointsDelta !== 0) {
+                        $product->sales_count = max(0, $product->sales_count + $pointsDelta);
+                        $product->save();
+                    }
+                }
             }
         }
 
@@ -146,6 +162,9 @@ class StockService
 
         $products = $this->lockProducts($productIds);
 
+        // Con remito diferido el mostrador nunca sumó popularidad (ni stock), por lo que no hay nada que revertir.
+        $deferredDelivery = $deliveryNote && ! $sale->hasDeductedStock();
+
         foreach ($sale->items as $item) {
             if (! isset($products[$item->product_id])) {
                 continue;
@@ -154,7 +173,7 @@ class StockService
             $product = $products[$item->product_id];
             $qtyToRestore = (float) $item->quantity;
 
-            if ($deliveryNote && ! $sale->hasDeductedStock()) {
+            if ($deferredDelivery) {
                 // Si el remito era diferido (stock no descontado en mostrador), solo se restituye lo efectivamente entregado
                 $dnItem = $deliveryNote->items->firstWhere('product_id', $item->product_id);
                 $qtyToRestore = $dnItem ? (float) $dnItem->quantity_delivered : 0.0;
@@ -165,8 +184,8 @@ class StockService
             }
 
             // Restauración segura de popularidad (GREATEST logic equivalent in memory since we locked)
-            if (! $context->isInternalAccount) {
-                $product->sales_count = max(0, $product->sales_count - (float) $item->quantity);
+            if (! $deferredDelivery && ! $context->isInternalAccount && (float) $item->quantity > 0) {
+                $product->sales_count = max(0, $product->sales_count - $this->popularityPoints((float) $item->quantity));
                 $product->save();
             }
         }
