@@ -53,9 +53,10 @@ class ProductController extends Controller
                 $query->orderBy($column, $sortDir);
             }
         } else {
-            // Default sorting when no specific sort is requested
-            $query->orderBy('products.sales_count', 'desc')
-                ->orderBy('products.is_sold_by_weight', 'desc')
+            // Default sorting when no specific sort is requested:
+            // 1° Productos por peso primero, 2° Más vendidos (sales_count DESC), 3° Nombre ASC
+            $query->orderBy('products.is_sold_by_weight', 'desc')
+                ->orderBy('products.sales_count', 'desc')
                 ->orderBy('products.name', 'asc');
         }
 
