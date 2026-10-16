@@ -105,4 +105,82 @@ class OfferCrudTest extends TestCase
             'id' => $offerId,
         ]);
     }
+
+    public function test_cashier_without_apply_discounts_permission_cannot_mutate_offers()
+    {
+        $cashier = User::factory()->create([
+            'role' => 'cashier',
+            'permissions' => [],
+        ]);
+        $this->actingAsAdmin($cashier);
+
+        $res = $this->postJson('/api/offers', [
+            'name' => 'Oferta No Autorizada',
+            'type' => 'percentage',
+            'discount_percentage' => 50,
+            'period_type' => 'daily',
+            'products' => [
+                ['product_id' => $this->product1->id],
+            ],
+        ]);
+
+        $res->assertStatus(403);
+    }
+
+    public function test_percentage_offer_requires_positive_discount_percentage()
+    {
+        $resZero = $this->postJson('/api/offers', [
+            'name' => 'Oferta 0%',
+            'type' => 'percentage',
+            'discount_percentage' => 0,
+            'period_type' => 'daily',
+            'products' => [
+                ['product_id' => $this->product1->id],
+            ],
+        ]);
+        $resZero->assertStatus(422);
+
+        $resNull = $this->postJson('/api/offers', [
+            'name' => 'Oferta Null%',
+            'type' => 'percentage',
+            'discount_percentage' => null,
+            'period_type' => 'daily',
+            'products' => [
+                ['product_id' => $this->product1->id],
+            ],
+        ]);
+        $resNull->assertStatus(422);
+    }
+
+    public function test_update_offer_preserves_original_dates_when_period_type_unchanged()
+    {
+        $originalStart = now()->subDays(2)->startOfDay();
+        $originalEnd = now()->addDays(5)->endOfDay();
+
+        $offer = Offer::create([
+            'name' => 'Promo Semanal Original',
+            'type' => 'percentage',
+            'discount_percentage' => 10,
+            'period_type' => 'weekly',
+            'start_date' => $originalStart,
+            'end_date' => $originalEnd,
+            'is_active' => true,
+        ]);
+        $offer->products()->sync([$this->product1->id => ['special_price' => null]]);
+
+        $updateRes = $this->putJson("/api/offers/{$offer->id}", [
+            'name' => 'Promo Semanal Renombrada',
+            'type' => 'percentage',
+            'discount_percentage' => 15,
+            'period_type' => 'weekly',
+            'products' => [
+                ['product_id' => $this->product1->id],
+            ],
+        ]);
+
+        $updateRes->assertStatus(200);
+        $offer->refresh();
+        $this->assertEquals($originalStart->timestamp, $offer->start_date->timestamp);
+        $this->assertEquals($originalEnd->timestamp, $offer->end_date->timestamp);
+    }
 }

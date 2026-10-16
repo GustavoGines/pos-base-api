@@ -33,6 +33,7 @@ class OfferController extends Controller
     {
         $activeOffers = Offer::active()
             ->with(['products:id,name,barcode,internal_code,selling_price'])
+            ->orderBy('id', 'desc')
             ->get()
             ->filter(function (Offer $offer) {
                 return $offer->isCurrentDayValid();
@@ -54,7 +55,7 @@ class OfferController extends Controller
             'name' => 'required|string|max:150',
             'description' => 'nullable|string|max:255',
             'type' => 'required|in:percentage,fixed_price',
-            'discount_percentage' => 'nullable|numeric|min:0|max:100',
+            'discount_percentage' => 'required_if:type,percentage|nullable|numeric|gt:0|max:100',
             'discount_amount' => 'nullable|numeric|min:0',
             'period_type' => 'required|in:daily,weekly,monthly,custom',
             'days_of_week' => 'nullable|array',
@@ -137,7 +138,7 @@ class OfferController extends Controller
             'name' => 'required|string|max:150',
             'description' => 'nullable|string|max:255',
             'type' => 'required|in:percentage,fixed_price',
-            'discount_percentage' => 'nullable|numeric|min:0|max:100',
+            'discount_percentage' => 'required_if:type,percentage|nullable|numeric|gt:0|max:100',
             'discount_amount' => 'nullable|numeric|min:0',
             'period_type' => 'required|in:daily,weekly,monthly,custom',
             'days_of_week' => 'nullable|array',
@@ -149,24 +150,35 @@ class OfferController extends Controller
         ]);
 
         $now = Carbon::now();
-        $startDate = ! empty($validated['start_date']) ? Carbon::parse($validated['start_date']) : $now->copy();
+        $originalPeriodType = $offer->period_type;
+        $startDate = ! empty($validated['start_date']) ? Carbon::parse($validated['start_date']) : null;
         $endDate = ! empty($validated['end_date']) ? Carbon::parse($validated['end_date']) : null;
 
-        if (! $endDate) {
-            switch ($validated['period_type']) {
-                case 'daily':
-                    $startDate = $now->copy()->startOfDay();
-                    $endDate = $now->copy()->endOfDay();
-                    break;
-                case 'weekly':
-                    $endDate = $now->copy()->addDays(7)->endOfDay();
-                    break;
-                case 'monthly':
-                    $endDate = $now->copy()->addDays(30)->endOfDay();
-                    break;
-                default:
-                    $endDate = $now->copy()->addDay()->endOfDay();
-                    break;
+        // Si no se proporcionaron fechas explícitas y el period_type no cambió, conservar las fechas originales
+        if ($startDate === null && $endDate === null && $validated['period_type'] === $originalPeriodType) {
+            $startDate = $offer->start_date;
+            $endDate = $offer->end_date;
+        } else {
+            // Reiniciar fechas solo si se cambió period_type o se proporcionaron fechas explícitas
+            if ($startDate === null) {
+                $startDate = $now->copy();
+            }
+            if ($endDate === null) {
+                switch ($validated['period_type']) {
+                    case 'daily':
+                        $startDate = $now->copy()->startOfDay();
+                        $endDate = $now->copy()->endOfDay();
+                        break;
+                    case 'weekly':
+                        $endDate = $now->copy()->addDays(7)->endOfDay();
+                        break;
+                    case 'monthly':
+                        $endDate = $now->copy()->addDays(30)->endOfDay();
+                        break;
+                    default:
+                        $endDate = $now->copy()->addDay()->endOfDay();
+                        break;
+                }
             }
         }
 

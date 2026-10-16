@@ -95,7 +95,7 @@ class SalesController extends Controller
             'cashier:id,name',
             'customer',
             'payments.paymentMethod:id,name,code,is_cash',
-        ])
+        ])->select('sales.*')
             ->where('status', 'pending')
             ->latest()
             ->get();
