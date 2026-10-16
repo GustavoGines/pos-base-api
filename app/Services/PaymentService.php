@@ -84,7 +84,7 @@ class PaymentService
                         'payment_date' => $currentCheck['payment_date'],
                         'issuer_name' => $currentCheck['issuer_name'],
                         'issuer_cuit' => $currentCheck['issuer_cuit'] ?? null,
-                        'customer_id' => $context->customerId,
+                        'customer_id' => $context->customerId ?? $sale->customer_id,
                         'sale_id' => $sale->id,
                         'cash_shift_id' => $context->cashShiftId,
                         'supplier_id' => null,
@@ -100,11 +100,12 @@ class PaymentService
      */
     public function registerCustomerCharge(Sale $sale, float $amount, SaleContextDTO $context): void
     {
-        if (! $context->customerId) {
+        $customerId = $context->customerId ?? $sale->customer_id;
+        if (! $customerId) {
             return;
         }
 
-        $customer = Customer::lockForUpdate()->find($context->customerId);
+        $customer = Customer::lockForUpdate()->find($customerId);
         if (! $customer) {
             return;
         }

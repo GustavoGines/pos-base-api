@@ -38,6 +38,7 @@ class PaySaleRequest extends FormRequest
             'items.*.unit_price' => 'required_with:items|numeric|min:0',
             'items.*.subtotal' => 'required_with:items|numeric|min:0',
             'user_id' => 'nullable|integer|exists:users,id',
+            'customer_id' => 'nullable|integer|exists:customers,id',
             'cash_shift_id' => [
                 'nullable',
                 'integer',

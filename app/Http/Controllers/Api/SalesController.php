@@ -93,6 +93,7 @@ class SalesController extends Controller
             'items.product:id,name,internal_code,stock,is_sold_by_weight,selling_price,cost_price,price_wholesale,price_card',
             'user:id,name',
             'cashier:id,name',
+            'customer',
             'payments.paymentMethod:id,name,code,is_cash',
         ])
             ->where('status', 'pending')
@@ -123,7 +124,7 @@ class SalesController extends Controller
 
         return response()->json([
             'message' => "Venta #{$completedSale->id} cobrada correctamente.",
-            'sale' => $completedSale->fresh()->load('items.product', 'user:id,name', 'cashier:id,name', 'payments.paymentMethod:id,name,code,is_cash'),
+            'sale' => $completedSale->fresh()->load('items.product', 'user:id,name', 'cashier:id,name', 'customer', 'payments.paymentMethod:id,name,code,is_cash'),
         ]);
     }
 

@@ -151,6 +151,10 @@ class SaleService
 
             $totalToValidate = $lockedSale->total + $dto->totalSurcharge + $dto->shippingCost;
             $this->paymentService->validatePaymentsTotal($dto->payments, $totalToValidate);
+            
+            $effectiveCustomerId = $context->customerId ?? $lockedSale->customer_id;
+            $lockedSale->customer_id = $effectiveCustomerId;
+            
             $this->paymentService->registerPayments($lockedSale, $dto->payments, $dto->checkDetails, $context);
 
             $ccPaymentTotal = 0;
@@ -177,11 +181,13 @@ class SaleService
                     ]);
                 }
 
-                $context->customerId = $context->customerId ?? $lockedSale->customer_id;
-                if (! $context->customerId) {
+                $effectiveCustomerId = $context->customerId ?? $lockedSale->customer_id;
+                if (! $effectiveCustomerId) {
                     throw new \InvalidArgumentException('Debe asociar un cliente a la venta para pagar con Cuenta Corriente.');
                 }
                 $this->paymentService->registerCustomerCharge($lockedSale, $ccPaymentTotal, $context);
+            } else {
+                $effectiveCustomerId = $context->customerId ?? $lockedSale->customer_id;
             }
 
             $lockedSale->update([
@@ -197,6 +203,7 @@ class SaleService
                 'change_amount' => $dto->changeAmount,
                 'cash_shift_id' => $context->cashShiftId ?? $lockedSale->cash_shift_id,
                 'cashier_id' => $context->userId ?? $lockedSale->cashier_id,
+                'customer_id' => $effectiveCustomerId,
             ]);
 
             // Enqueue asynchronous stock synchronization to online platforms
@@ -216,6 +223,8 @@ class SaleService
             event(new SaleCompleted($lockedSale));
 
             ReportCacheService::flush();
+
+            $lockedSale->load(['items.product', 'user', 'cashier', 'customer', 'payments.paymentMethod']);
 
             return $lockedSale;
         });
