@@ -125,6 +125,8 @@ Route::middleware(['session.validate'])->group(function () {
         ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     Route::get('/system/backup', [SystemController::class, 'downloadBackup'])
         ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
+    Route::post('/system/restore', [SystemController::class, 'restoreBackup'])
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     Route::middleware(['feature:ecommerce_sync'])->group(function () {
         Route::apiResource('ecommerce/integrations', EcommerceIntegrationController::class)
             ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);

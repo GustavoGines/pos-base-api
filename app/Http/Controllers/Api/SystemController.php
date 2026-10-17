@@ -193,34 +193,23 @@ class SystemController extends Controller
 
             $tables = $isMysql ? $this->listMysqlTables($pdo) : $this->listSqliteTables($pdo);
 
-            // MySQL: desactivar buffering para streamear tablas grandes sin agotar memoria.
-            if ($isMysql) {
-                $pdo->setAttribute(\PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, false);
-            }
+            foreach ($tables as $table) {
+                $createSql = $isMysql
+                    ? $this->mysqlCreateTableSql($pdo, $table)
+                    : $this->sqliteCreateTableSql($pdo, $table);
 
-            try {
-                foreach ($tables as $table) {
-                    $createSql = $isMysql
-                        ? $this->mysqlCreateTableSql($pdo, $table)
-                        : $this->sqliteCreateTableSql($pdo, $table);
-
-                    fwrite($out, "-- ---------------------------------------------------------\n");
-                    fwrite($out, "-- Tabla: {$table}\n");
-                    fwrite($out, "-- ---------------------------------------------------------\n");
-                    fwrite($out, $isMysql
-                        ? "DROP TABLE IF EXISTS `{$table}`;\n"
-                        : "DROP TABLE IF EXISTS \"{$table}\";\n");
-                    if ($createSql !== null && $createSql !== '') {
-                        fwrite($out, rtrim($createSql, ';').";\n\n");
-                    }
-
-                    $this->writeTableRows($pdo, $out, $table, $isMysql);
-                    fwrite($out, "\n");
+                fwrite($out, "-- ---------------------------------------------------------\n");
+                fwrite($out, "-- Tabla: {$table}\n");
+                fwrite($out, "-- ---------------------------------------------------------\n");
+                fwrite($out, $isMysql
+                    ? "DROP TABLE IF EXISTS `{$table}`;\n"
+                    : "DROP TABLE IF EXISTS \"{$table}\";\n");
+                if ($createSql !== null && $createSql !== '') {
+                    fwrite($out, rtrim($createSql, ';').";\n\n");
                 }
-            } finally {
-                if ($isMysql) {
-                    $pdo->setAttribute(\PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, true);
-                }
+
+                $this->writeTableRows($pdo, $out, $table, $isMysql);
+                fwrite($out, "\n");
             }
 
             fwrite($out, $isMysql
@@ -260,6 +249,7 @@ class SystemController extends Controller
     {
         $stmt = $pdo->query("SHOW CREATE TABLE `{$table}`");
         $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+        $stmt->closeCursor();
 
         return $row ? (string) ($row['Create Table'] ?? $row['Create View'] ?? '') : null;
     }
@@ -276,28 +266,41 @@ class SystemController extends Controller
     private function writeTableRows(\PDO $pdo, $out, string $table, bool $isMysql): void
     {
         $quotedTable = $isMysql ? "`{$table}`" : "\"{$table}\"";
-        $stmt = $pdo->query("SELECT * FROM {$quotedTable}");
-        if ($stmt === false) {
-            return;
+        if ($isMysql) {
+            $pdo->setAttribute(\PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, false);
         }
 
-        $columns = null;
-        $batch = [];
-
-        while (($row = $stmt->fetch(\PDO::FETCH_ASSOC)) !== false) {
-            if ($columns === null) {
-                $columns = array_keys($row);
+        try {
+            $stmt = $pdo->query("SELECT * FROM {$quotedTable}");
+            if ($stmt === false) {
+                return;
             }
-            $batch[] = $row;
-            if (count($batch) >= 200) {
-                $this->flushInsertBatch($pdo, $out, $table, $columns, $batch, $isMysql);
+
+            try {
+                $columns = null;
                 $batch = [];
+
+                while (($row = $stmt->fetch(\PDO::FETCH_ASSOC)) !== false) {
+                    if ($columns === null) {
+                        $columns = array_keys($row);
+                    }
+                    $batch[] = $row;
+                    if (count($batch) >= 200) {
+                        $this->flushInsertBatch($pdo, $out, $table, $columns, $batch, $isMysql);
+                        $batch = [];
+                    }
+                }
+                if ($columns !== null && ! empty($batch)) {
+                    $this->flushInsertBatch($pdo, $out, $table, $columns, $batch, $isMysql);
+                }
+            } finally {
+                $stmt->closeCursor();
+            }
+        } finally {
+            if ($isMysql) {
+                $pdo->setAttribute(\PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, true);
             }
         }
-        if ($columns !== null && ! empty($batch)) {
-            $this->flushInsertBatch($pdo, $out, $table, $columns, $batch, $isMysql);
-        }
-        $stmt->closeCursor();
     }
 
     /**
@@ -338,5 +341,329 @@ class SystemController extends Controller
         }
 
         return $pdo->quote((string) $value);
+    }
+
+    /**
+     * Restaura una copia de seguridad desde un archivo .zip subido.
+     *
+     * El archivo debe contener:
+     *  - database_backup.sql (dump SQL completo)
+     *  - backup_info.json (metadatos del backup)
+     *  - storage/public/ (imágenes de productos y logo, opcional)
+     *  - afip/ o storage/afip/ (certificados fiscales ARCA/AFIP, opcional)
+     *
+     * Protecciones:
+     *  - Validación de estructura del ZIP
+     *  - Zip-Slip protection (rutas absolutas y ..)
+     *  - Snapshot previo automático
+     *  - Preservación de licencia local y sesión activa
+     */
+    public function restoreBackup(Request $request)
+    {
+        $request->validate([
+            'backup_file' => 'required|file|mimes:zip|max:512000', // 512 MB max
+        ]);
+
+        if (! class_exists(\ZipArchive::class)) {
+            return response()->json([
+                'message' => 'La extensión PHP ZipArchive no está disponible en el servidor.',
+                'error_code' => 'ZIP_EXTENSION_MISSING',
+            ], 500);
+        }
+
+        $file = $request->file('backup_file');
+        $tmpDir = storage_path('app/private/restore_temp');
+        if (! is_dir($tmpDir) && ! mkdir($tmpDir, 0755, true)) {
+            return response()->json(['message' => 'No se pudo crear el directorio temporal de restauración.'], 500);
+        }
+
+        $zipPath = $tmpDir.'/upload_'.Str::random(16).'.zip';
+        $file->move($tmpDir, basename($zipPath));
+
+        $zip = new \ZipArchive;
+        if ($zip->open($zipPath) !== true) {
+            @unlink($zipPath);
+            return response()->json(['message' => 'No se pudo abrir el archivo .zip.'], 400);
+        }
+
+        // Validar estructura del ZIP y protección Zip-Slip
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $entryName = str_replace('\\', '/', (string) $zip->getNameIndex($i));
+            if (str_contains($entryName, '../') || str_starts_with($entryName, '/') || str_contains($entryName, ':')) {
+                $zip->close();
+                @unlink($zipPath);
+                return response()->json(['message' => 'El archivo .zip contiene rutas no permitidas.'], 400);
+            }
+        }
+
+        $hasBackupInfo = $zip->locateName('backup_info.json') !== false;
+        $hasDbDump = $zip->locateName('database_backup.sql') !== false;
+        $hasModuleFiles = $hasDbDump;
+
+        if (! $hasModuleFiles) {
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $entryName = str_replace('\\', '/', (string) $zip->getNameIndex($i));
+                if (! str_ends_with($entryName, '/') && (
+                    str_starts_with($entryName, 'storage/public/') ||
+                    str_starts_with($entryName, 'afip/') ||
+                    str_starts_with($entryName, 'storage/afip/')
+                )) {
+                    $hasModuleFiles = true;
+                    break;
+                }
+            }
+        }
+
+        if (! $hasBackupInfo || ! $hasModuleFiles) {
+            $zip->close();
+            @unlink($zipPath);
+            return response()->json(['message' => 'El archivo .zip no es un backup válido (falta database_backup.sql o backup_info.json).'], 400);
+        }
+
+        $extractDir = null;
+
+        try {
+            $infoContent = $zip->getFromName('backup_info.json');
+            $backupInfo = $infoContent !== false ? (json_decode($infoContent, true) ?? []) : [];
+
+            $snapshotPath = null;
+            $tablesRestored = 0;
+
+            if ($hasDbDump) {
+                // Generar snapshot previo de seguridad antes de tocar la base de datos
+                $snapshotPath = $tmpDir.'/pre_restore_safety_'.now()->format('Ymd_His').'.sql';
+                $this->writeSqlDump($snapshotPath);
+
+                $sqlContent = $zip->getFromName('database_backup.sql');
+                if ($sqlContent === false || trim($sqlContent) === '') {
+                    throw new \RuntimeException('No se pudo leer database_backup.sql del ZIP.');
+                }
+
+                // Resguardar licencia local y sesión del usuario autenticado antes de restaurar
+                $localLicense = [];
+                $localLicenseFields = ['license_key', 'license_status', 'installation_hash', 'last_license_check'];
+                foreach ($localLicenseFields as $field) {
+                    $localLicense[$field] = BusinessSetting::where('key', $field)->value('value');
+                }
+
+                $currentUser = $request->user();
+                $currentUserId = $currentUser?->id;
+                $currentSessionToken = $currentUser?->session_token ?? $request->header('X-Session-Token');
+
+                // Ejecutar dump SQL
+                $pdo = DB::connection()->getPdo();
+                $driver = $pdo->getAttribute(\PDO::ATTR_DRIVER_NAME);
+                $isMysql = $driver === 'mysql';
+
+                if ($isMysql) {
+                    $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
+                } else {
+                    $pdo->exec('PRAGMA foreign_keys=OFF');
+                }
+
+                $statements = $this->parseSqlStatements($sqlContent);
+
+                try {
+                    foreach ($statements as $stmt) {
+                        if (preg_match('/^\s*CREATE\s+TABLE/i', $stmt)) {
+                            $tablesRestored++;
+                        }
+                        $pdo->exec($stmt);
+                    }
+                } finally {
+                    if ($isMysql) {
+                        $pdo->exec('SET FOREIGN_KEY_CHECKS=1');
+                    } else {
+                        $pdo->exec('PRAGMA foreign_keys=ON');
+                    }
+                }
+
+                // Restaurar licencia local si existía
+                if (! empty(array_filter($localLicense, fn ($v) => $v !== null && $v !== ''))) {
+                    foreach ($localLicense as $key => $value) {
+                        if ($value !== null) {
+                            BusinessSetting::updateOrCreate(['key' => $key], ['value' => $value]);
+                        }
+                    }
+                }
+
+                // Preservar el session_token del usuario actual para no desconectar su sesión activa
+                if ($currentUserId !== null && ! empty($currentSessionToken)) {
+                    DB::table('users')
+                        ->where('id', $currentUserId)
+                        ->update(['session_token' => $currentSessionToken]);
+                }
+            }
+
+            // Restaurar imágenes y certificados AFIP si existen en el ZIP
+            $imagesRestored = 0;
+            $afipRestored = 0;
+            $publicPrefix = 'storage/public/';
+            $afipPrefix = 'afip/';
+            $legacyAfipPrefix = 'storage/afip/';
+
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $filename = str_replace('\\', '/', (string) $zip->getNameIndex($i));
+                if (str_ends_with($filename, '/')) {
+                    continue;
+                }
+
+                if (str_starts_with($filename, $publicPrefix)) {
+                    $relPath = substr($filename, strlen($publicPrefix));
+                    if ($relPath === '') {
+                        continue;
+                    }
+                    $targetPath = storage_path('app/public/'.$relPath);
+                    $targetDir = dirname($targetPath);
+                    if (! is_dir($targetDir)) {
+                        mkdir($targetDir, 0755, true);
+                    }
+                    $content = $zip->getFromIndex($i);
+                    if ($content !== false) {
+                        file_put_contents($targetPath, $content);
+                        $imagesRestored++;
+                    }
+                } elseif (str_starts_with($filename, $afipPrefix) || str_starts_with($filename, $legacyAfipPrefix)) {
+                    $relPath = str_starts_with($filename, $afipPrefix)
+                        ? substr($filename, strlen($afipPrefix))
+                        : substr($filename, strlen($legacyAfipPrefix));
+                    if ($relPath === '') {
+                        continue;
+                    }
+                    $targetPath = storage_path('app/private/afip/'.$relPath);
+                    $targetDir = dirname($targetPath);
+                    if (! is_dir($targetDir)) {
+                        mkdir($targetDir, 0755, true);
+                    }
+                    $content = $zip->getFromIndex($i);
+                    if ($content !== false) {
+                        file_put_contents($targetPath, $content);
+                        $afipRestored++;
+                    }
+                }
+            }
+
+            // Limpiar directorios temporales
+            if ($extractDir !== null && is_dir($extractDir)) {
+                $this->recursiveDelete($extractDir);
+            }
+            $zip->close();
+            @unlink($zipPath);
+
+            return response()->json([
+                'message' => 'Copia de seguridad restaurada exitosamente.',
+                'backup_info' => $backupInfo,
+                'tables_restored' => $tablesRestored,
+                'images_restored' => $imagesRestored,
+                'afip_restored' => $afipRestored,
+                'snapshot_path' => $snapshotPath,
+            ]);
+        } catch (\Throwable $e) {
+            $zip->close();
+            @unlink($zipPath);
+            if ($extractDir !== null && is_dir($extractDir)) {
+                $this->recursiveDelete($extractDir);
+            }
+            report($e);
+
+            return response()->json([
+                'message' => 'Error al restaurar la copia de seguridad: '.$e->getMessage(),
+                'error_code' => 'RESTORE_FAILED',
+            ], 500);
+        }
+    }
+
+    /**
+     * Parsea un archivo SQL en sentencias individuales, ignorando comentarios (-- y /* * /)
+     * fuera de cadenas literales y respetando escapes (\' y '').
+     *
+     * @return string[]
+     */
+    private function parseSqlStatements(string $sql): array
+    {
+        $statements = [];
+        $current = '';
+        $inString = false;
+        $len = strlen($sql);
+
+        for ($i = 0; $i < $len; $i++) {
+            $char = $sql[$i];
+
+            if ($inString) {
+                if ($char === '\\' && $i + 1 < $len) {
+                    $current .= $char.$sql[$i + 1];
+                    $i++;
+                    continue;
+                }
+                if ($char === "'" && $i + 1 < $len && $sql[$i + 1] === "'") {
+                    // Escape estándar SQL ('')
+                    $current .= "''";
+                    $i++;
+                    continue;
+                }
+                if ($char === "'") {
+                    $inString = false;
+                }
+                $current .= $char;
+                continue;
+            }
+
+            // Comentario de línea (-- ...)
+            if ($char === '-' && $i + 1 < $len && $sql[$i + 1] === '-') {
+                $newlinePos = strpos($sql, "\n", $i + 2);
+                if ($newlinePos === false) {
+                    break;
+                }
+                $i = $newlinePos;
+                continue;
+            }
+
+            // Comentario de bloque (/* ... */)
+            if ($char === '/' && $i + 1 < $len && $sql[$i + 1] === '*') {
+                $endCommentPos = strpos($sql, '*/', $i + 2);
+                if ($endCommentPos === false) {
+                    break;
+                }
+                $i = $endCommentPos + 1;
+                continue;
+            }
+
+            if ($char === "'") {
+                $inString = true;
+                $current .= $char;
+                continue;
+            }
+
+            if ($char === ';') {
+                $stmt = trim($current);
+                if ($stmt !== '') {
+                    $statements[] = $stmt;
+                }
+                $current = '';
+                continue;
+            }
+
+            $current .= $char;
+        }
+
+        $stmt = trim($current);
+        if ($stmt !== '') {
+            $statements[] = $stmt;
+        }
+
+        return $statements;
+    }
+
+    private function recursiveDelete(string $dir): void
+    {
+        if (! is_dir($dir)) {
+            return;
+        }
+        $files = array_diff(scandir($dir), ['.', '..']);
+        foreach ($files as $file) {
+            $path = $dir.'/'.$file;
+            is_dir($path) ? $this->recursiveDelete($path) : unlink($path);
+        }
+        rmdir($dir);
     }
 }
