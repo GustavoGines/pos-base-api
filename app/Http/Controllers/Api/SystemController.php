@@ -234,8 +234,10 @@ class SystemController extends Controller
     /** @return string[] */
     private function listMysqlTables(\PDO $pdo): array
     {
+        // Solo tablas físicas: SHOW TABLES también devuelve vistas (VIEW),
+        // que no se pueden exportar con SHOW CREATE TABLE + INSERT INTO.
         $tables = [];
-        foreach ($pdo->query('SHOW TABLES')->fetchAll(\PDO::FETCH_NUM) as $row) {
+        foreach ($pdo->query("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'")->fetchAll(\PDO::FETCH_NUM) as $row) {
             $tables[] = (string) $row[0];
         }
 
