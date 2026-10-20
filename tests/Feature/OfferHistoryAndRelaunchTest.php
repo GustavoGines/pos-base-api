@@ -80,6 +80,19 @@ class OfferHistoryAndRelaunchTest extends TestCase
         ]);
         $paused->products()->sync([$this->product2->id]);
 
+        // Vencida (con is_active = false para verificar precedencia de expired sobre paused)
+        $expiredPaused = Offer::create([
+            'name' => 'Promo Vencida y Pausada',
+            'type' => 'percentage',
+            'discount_percentage' => 15,
+            'period_type' => 'daily',
+            'start_date' => now()->subDays(10),
+            'end_date' => now()->subDays(8),
+            'is_active' => false,
+        ]);
+        $expiredPaused->products()->sync([$this->product1->id]);
+        $this->assertEquals('expired', $expiredPaused->status);
+
         // Filtrar por status=active
         $resActive = $this->getJson('/api/offers?status=active');
         $resActive->assertStatus(200)
@@ -87,16 +100,18 @@ class OfferHistoryAndRelaunchTest extends TestCase
             ->assertJsonMissing(['name' => 'Promo Vencida Pasada'])
             ->assertJsonMissing(['name' => 'Promo Galletitas Pausada']);
 
-        // Filtrar por status=expired
+        // Filtrar por status=expired (debe incluir tanto la vencida con is_active=true como la vencida con is_active=false)
         $resExpired = $this->getJson('/api/offers?status=expired');
         $resExpired->assertStatus(200)
             ->assertJsonFragment(['name' => 'Promo Vencida Pasada'])
+            ->assertJsonFragment(['name' => 'Promo Vencida y Pausada'])
             ->assertJsonMissing(['name' => 'Promo Activa Bebidas']);
 
-        // Filtrar por status=paused
+        // Filtrar por status=paused (solo pausadas con vigencia no vencida)
         $resPaused = $this->getJson('/api/offers?status=paused');
         $resPaused->assertStatus(200)
             ->assertJsonFragment(['name' => 'Promo Galletitas Pausada'])
+            ->assertJsonMissing(['name' => 'Promo Vencida y Pausada'])
             ->assertJsonMissing(['name' => 'Promo Activa Bebidas']);
 
         // Búsqueda por texto (q)
@@ -132,6 +147,21 @@ class OfferHistoryAndRelaunchTest extends TestCase
 
         $offer->refresh();
         $this->assertTrue($offer->is_active);
+
+        // 3. Intentar pausar/reanudar una oferta ya vencida debe retornar 422
+        $expiredOffer = Offer::create([
+            'name' => 'Promo Vencida No Pausable',
+            'type' => 'percentage',
+            'discount_percentage' => 10,
+            'period_type' => 'daily',
+            'start_date' => now()->subDays(5),
+            'end_date' => now()->subDays(2),
+            'is_active' => true,
+        ]);
+
+        $resExpiredToggle = $this->patchJson("/api/offers/{$expiredOffer->id}/toggle-status");
+        $resExpiredToggle->assertStatus(422)
+            ->assertJsonPath('success', false);
     }
 
     public function test_relaunch_offer_with_duplicate_creates_new_offer_record()

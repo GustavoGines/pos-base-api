@@ -46,28 +46,33 @@ class Offer extends Model
 
     /**
      * Accesor para calcular el estado unificado de la oferta.
+     * Precedencia mutuamente excluyente:
+     * 1. expired: end_date < now (vencida por fecha sin importar is_active)
+     * 2. paused: is_active == false (y vigencia no vencida)
+     * 3. scheduled: is_active == true y start_date > now
+     * 4. active: is_active == true y dentro de fecha vigente
      */
     public function getStatusAttribute(): string
     {
+        $now = Carbon::now();
+
+        if ($this->end_date && $this->end_date->lt($now)) {
+            return 'expired';
+        }
+
         if (! $this->is_active) {
             return 'paused';
         }
 
-        $now = Carbon::now();
-
         if ($this->start_date && $this->start_date->gt($now)) {
             return 'scheduled';
-        }
-
-        if ($this->end_date && $this->end_date->lt($now)) {
-            return 'expired';
         }
 
         return 'active';
     }
 
     /**
-     * Scope para filtrar por estado unificado.
+     * Scope para filtrar por estado unificado (mutuamente excluyente).
      */
     public function scopeByStatus($query, ?string $status)
     {
@@ -86,8 +91,16 @@ class Offer extends Model
                     $q->whereNull('end_date')->orWhere('end_date', '>=', $now);
                 }),
             'expired' => $query->whereNotNull('end_date')->where('end_date', '<', $now),
-            'scheduled' => $query->where('is_active', true)->whereNotNull('start_date')->where('start_date', '>', $now),
-            'paused' => $query->where('is_active', false),
+            'scheduled' => $query->where('is_active', true)
+                ->whereNotNull('start_date')
+                ->where('start_date', '>', $now)
+                ->where(function ($q) use ($now) {
+                    $q->whereNull('end_date')->orWhere('end_date', '>=', $now);
+                }),
+            'paused' => $query->where('is_active', false)
+                ->where(function ($q) use ($now) {
+                    $q->whereNull('end_date')->orWhere('end_date', '>=', $now);
+                }),
             default => $query,
         };
     }

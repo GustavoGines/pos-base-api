@@ -131,10 +131,13 @@ class OfferController extends Controller
 
             DB::commit();
 
+            $offer->load('products:id,name,barcode,internal_code,selling_price,cost_price');
+
             return response()->json([
                 'success' => true,
                 'message' => 'Oferta creada y activada correctamente',
-                'data' => $offer->load('products:id,name,barcode,internal_code,selling_price'),
+                'data' => $offer,
+                'margin_warnings' => $this->evaluateMarginWarnings($offer),
             ], 201);
         } catch (\Throwable $e) {
             DB::rollBack();
@@ -224,10 +227,13 @@ class OfferController extends Controller
 
             DB::commit();
 
+            $offer->load('products:id,name,barcode,internal_code,selling_price,cost_price');
+
             return response()->json([
                 'success' => true,
                 'message' => 'Oferta actualizada correctamente',
-                'data' => $offer->load('products:id,name,barcode,internal_code,selling_price'),
+                'data' => $offer,
+                'margin_warnings' => $this->evaluateMarginWarnings($offer),
             ]);
         } catch (\Throwable $e) {
             DB::rollBack();
@@ -309,38 +315,13 @@ class OfferController extends Controller
 
             DB::commit();
 
-            // Evaluar alertas de margen de costo
-            $warnings = [];
-            foreach ($targetOffer->products as $product) {
-                $selling = (float) $product->selling_price;
-                $cost = (float) $product->cost_price;
-                $discounted = $selling;
-
-                if ($targetOffer->type === 'percentage' && $targetOffer->discount_percentage > 0) {
-                    $discounted = $selling * (1 - ($targetOffer->discount_percentage / 100));
-                } elseif ($targetOffer->type === 'fixed_price') {
-                    if ($product->pivot->special_price !== null && (float) $product->pivot->special_price > 0) {
-                        $discounted = (float) $product->pivot->special_price;
-                    } elseif ($targetOffer->discount_amount > 0) {
-                        $discounted = max(0, $selling - (float) $targetOffer->discount_amount);
-                    }
-                }
-
-                if ($cost > 0 && $discounted < $cost) {
-                    $warnings[] = [
-                        'product_id' => $product->id,
-                        'product_name' => $product->name,
-                        'cost_price' => $cost,
-                        'discounted_price' => round($discounted, 2),
-                        'message' => "El precio de oferta (\${$discounted}) es inferior al costo de reposición (\${$cost}).",
-                    ];
-                }
-            }
+            $targetOffer->load('products:id,name,barcode,internal_code,selling_price,cost_price');
+            $warnings = $this->evaluateMarginWarnings($targetOffer);
 
             return response()->json([
                 'success' => true,
                 'message' => $duplicate ? 'Oferta duplicada y relanzada correctamente' : 'Oferta relanzada correctamente',
-                'data' => $targetOffer->load('products:id,name,barcode,internal_code,selling_price,cost_price'),
+                'data' => $targetOffer,
                 'margin_warnings' => $warnings,
             ]);
         } catch (\Throwable $e) {
@@ -358,6 +339,13 @@ class OfferController extends Controller
      */
     public function toggleStatus(Offer $offer): JsonResponse
     {
+        if ($offer->end_date && $offer->end_date->lt(Carbon::now())) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No se puede pausar o reanudar una oferta vencida. Utilizá la opción Relanzar para asignarle una nueva vigencia.',
+            ], 422);
+        }
+
         $offer->is_active = ! $offer->is_active;
         $offer->save();
 
@@ -366,6 +354,41 @@ class OfferController extends Controller
             'message' => $offer->is_active ? 'Oferta reanudada y activada' : 'Oferta pausada correctamente',
             'data' => $offer->load('products:id,name,barcode,internal_code,selling_price,cost_price'),
         ]);
+    }
+
+    /**
+     * Evalúa si algún producto incluido en la oferta queda con precio promocional por debajo de su costo.
+     */
+    private function evaluateMarginWarnings(Offer $offer): array
+    {
+        $warnings = [];
+        foreach ($offer->products as $product) {
+            $selling = (float) $product->selling_price;
+            $cost = (float) $product->cost_price;
+            $discounted = $selling;
+
+            if ($offer->type === 'percentage' && $offer->discount_percentage > 0) {
+                $discounted = $selling * (1 - ($offer->discount_percentage / 100));
+            } elseif ($offer->type === 'fixed_price') {
+                if ($product->pivot->special_price !== null && (float) $product->pivot->special_price > 0) {
+                    $discounted = (float) $product->pivot->special_price;
+                } elseif ($offer->discount_amount > 0) {
+                    $discounted = max(0, $selling - (float) $offer->discount_amount);
+                }
+            }
+
+            if ($cost > 0 && $discounted < $cost) {
+                $warnings[] = [
+                    'product_id' => $product->id,
+                    'product_name' => $product->name,
+                    'cost_price' => $cost,
+                    'discounted_price' => round($discounted, 2),
+                    'message' => "El precio de oferta (\${$discounted}) es inferior al costo de reposición (\${$cost}).",
+                ];
+            }
+        }
+
+        return $warnings;
     }
 
     /**
