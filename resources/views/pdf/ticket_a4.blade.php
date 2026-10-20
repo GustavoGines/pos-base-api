@@ -248,7 +248,7 @@
                             @if($sale->total_surcharge > 0 || $sale->shipping_cost > 0)
                             <tr>
                                 <td>Subtotal:</td>
-                                <td class="text-right">${{ number_format($sale->total - $sale->shipping_cost, 2, ',', '.') }}</td>
+                                <td class="text-right">${{ number_format($sale->total, 2, ',', '.') }}</td>
                             </tr>
                             @if($sale->shipping_cost > 0)
                             <tr>
@@ -265,7 +265,7 @@
                             @endif
                             <tr class="total-row">
                                 <td style="padding-top: 15px;">TOTAL:</td>
-                                <td class="text-right" style="padding-top: 15px;">${{ number_format($sale->total + $sale->total_surcharge, 2, ',', '.') }}</td>
+                                <td class="text-right" style="padding-top: 15px;">${{ number_format($sale->total + $sale->total_surcharge + $sale->shipping_cost, 2, ',', '.') }}</td>
                             </tr>
                         </table>
                     </div>

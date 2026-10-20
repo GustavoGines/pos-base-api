@@ -33,11 +33,63 @@ class Offer extends Model
         'is_active' => 'boolean',
     ];
 
+    protected $appends = [
+        'status',
+    ];
+
     public function products(): BelongsToMany
     {
         return $this->belongsToMany(Product::class, 'offer_products')
             ->withPivot('special_price')
             ->withTimestamps();
+    }
+
+    /**
+     * Accesor para calcular el estado unificado de la oferta.
+     */
+    public function getStatusAttribute(): string
+    {
+        if (! $this->is_active) {
+            return 'paused';
+        }
+
+        $now = Carbon::now();
+
+        if ($this->start_date && $this->start_date->gt($now)) {
+            return 'scheduled';
+        }
+
+        if ($this->end_date && $this->end_date->lt($now)) {
+            return 'expired';
+        }
+
+        return 'active';
+    }
+
+    /**
+     * Scope para filtrar por estado unificado.
+     */
+    public function scopeByStatus($query, ?string $status)
+    {
+        if (! $status || $status === 'all') {
+            return $query;
+        }
+
+        $now = Carbon::now();
+
+        return match ($status) {
+            'active' => $query->where('is_active', true)
+                ->where(function ($q) use ($now) {
+                    $q->whereNull('start_date')->orWhere('start_date', '<=', $now);
+                })
+                ->where(function ($q) use ($now) {
+                    $q->whereNull('end_date')->orWhere('end_date', '>=', $now);
+                }),
+            'expired' => $query->whereNotNull('end_date')->where('end_date', '<', $now),
+            'scheduled' => $query->where('is_active', true)->whereNotNull('start_date')->where('start_date', '>', $now),
+            'paused' => $query->where('is_active', false),
+            default => $query,
+        };
     }
 
     /**

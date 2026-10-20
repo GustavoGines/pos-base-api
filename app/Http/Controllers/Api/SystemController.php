@@ -61,6 +61,9 @@ class SystemController extends Controller
      */
     public function downloadBackup(Request $request)
     {
+        @set_time_limit(0);
+        @ini_set('memory_limit', '512M');
+
         $includeDb = $request->boolean('include_db', true);
         $includeImages = $request->boolean('include_images', false);
         $includeAfip = $request->boolean('include_afip', false);
@@ -360,6 +363,9 @@ class SystemController extends Controller
      */
     public function restoreBackup(Request $request)
     {
+        @set_time_limit(0);
+        @ini_set('memory_limit', '512M');
+
         $request->validate([
             'backup_file' => 'required|file|mimes:zip|max:512000', // 512 MB max
         ]);
@@ -470,6 +476,24 @@ class SystemController extends Controller
                         }
                         $pdo->exec($stmt);
                     }
+                    if ($snapshotPath !== null && file_exists($snapshotPath)) {
+                        @unlink($snapshotPath);
+                    }
+                } catch (\Throwable $sqlException) {
+                    if ($snapshotPath !== null && file_exists($snapshotPath)) {
+                        try {
+                            $rollbackContent = file_get_contents($snapshotPath);
+                            if (is_string($rollbackContent) && trim($rollbackContent) !== '') {
+                                foreach ($this->parseSqlStatements($rollbackContent) as $rbStmt) {
+                                    $pdo->exec($rbStmt);
+                                }
+                            }
+                        } catch (\Throwable $rollbackException) {
+                            report($rollbackException);
+                        }
+                    }
+
+                    throw $sqlException;
                 } finally {
                     if ($isMysql) {
                         $pdo->exec('SET FOREIGN_KEY_CHECKS=1');

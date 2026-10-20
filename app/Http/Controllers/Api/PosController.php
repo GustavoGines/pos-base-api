@@ -7,6 +7,8 @@ use App\DTOs\ProcessSaleDTO;
 use App\DTOs\SaleContextDTO;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\ProcessSaleRequest;
+use App\Models\BusinessSetting;
+use App\Models\Offer;
 use App\Models\Product;
 use App\Models\User;
 use App\Services\SaleService;
@@ -98,6 +100,29 @@ class PosController extends Controller
         $throttleKey = 'pin_attempts:'.($user ? $user->id : 'guest').':'.$request->ip();
         $authorizedAdmin = null;
 
+        // Pre-cargar ofertas vigentes hoy y configuración de listas de precios
+        $activeOffers = Offer::active()
+            ->with('products')
+            ->get()
+            ->filter(fn (Offer $offer) => $offer->isCurrentDayValid());
+
+        $advancedTiersEnabled = in_array(
+            BusinessSetting::where('key', 'enable_advanced_price_tiers')->value('value'),
+            ['1', 1, true, 'true'],
+            true
+        );
+        $rawWholesalePct = BusinessSetting::where('key', 'wholesale_percentage')->value('value');
+        $wholesalePct = is_numeric($rawWholesalePct) ? (float) $rawWholesalePct : -15.0;
+
+        $customTiers = [];
+        $rawCustomTiers = BusinessSetting::where('key', 'custom_price_tiers')->value('value');
+        if (is_string($rawCustomTiers) && $rawCustomTiers !== '') {
+            $decoded = json_decode($rawCustomTiers, true);
+            if (is_array($decoded)) {
+                $customTiers = $decoded;
+            }
+        }
+
         foreach ($items as $item) {
             /** @var Product|null $product */
             $product = Product::with('priceTiers')->find($item['product_id']);
@@ -108,8 +133,72 @@ class PosController extends Controller
             $quantity = (float) ($item['quantity'] ?? 1);
             $unitPrice = (float) ($item['unit_price'] ?? 0);
 
-            // Calcular precio esperado según tramo de volumen
-            $expectedPrice = (float) $product->getPriceForQuantity($quantity);
+            // 1. Calcular precio esperado según tramo de volumen
+            $baseVolumetricPrice = (float) $product->getPriceForQuantity($quantity);
+            $expectedPrice = $baseVolumetricPrice;
+
+            // 2. Contemplar Ofertas / Promociones activas hoy para este producto
+            $baseSellingPrice = (float) $product->selling_price;
+            foreach ($activeOffers as $offer) {
+                $offerProduct = $offer->products->firstWhere('id', $product->id);
+                if (! $offerProduct) {
+                    continue;
+                }
+
+                $promoPrice = $baseSellingPrice;
+                if ($offer->type === 'percentage' && (float) $offer->discount_percentage > 0) {
+                    $discount = $baseSellingPrice * ((float) $offer->discount_percentage / 100.0);
+                    $promoPrice = round(max(0.0, $baseSellingPrice - $discount), 2);
+                } elseif ($offer->type === 'fixed_discount' && (float) $offer->discount_amount > 0) {
+                    $promoPrice = round(max(0.0, $baseSellingPrice - (float) $offer->discount_amount), 2);
+                } elseif ($offer->type === 'fixed_price') {
+                    $pivotPrice = $offerProduct->pivot?->special_price;
+                    if ($pivotPrice !== null && (float) $pivotPrice > 0) {
+                        $promoPrice = round((float) $pivotPrice, 2);
+                    } elseif ((float) $offer->discount_amount > 0) {
+                        $promoPrice = round((float) $offer->discount_amount, 2);
+                    }
+                }
+
+                if ($promoPrice > 0 && $promoPrice < $expectedPrice) {
+                    $expectedPrice = $promoPrice;
+                }
+            }
+
+            // 3. Verificar si el precio enviado corresponde a una Lista de Precios oficial (Mayorista / Personalizada)
+            if ($unitPrice < ($expectedPrice - 0.01)) {
+                $validTierPrices = [];
+
+                if ($product->price_wholesale !== null && (float) $product->price_wholesale > 0) {
+                    $validTierPrices[] = round((float) $product->price_wholesale, 2);
+                }
+
+                if ($advancedTiersEnabled) {
+                    $wholesaleFactor = 1.0 + ($wholesalePct / 100.0);
+                    $validTierPrices[] = round($baseVolumetricPrice * $wholesaleFactor, 2);
+                    $validTierPrices[] = round($baseSellingPrice * $wholesaleFactor, 2);
+
+                    foreach ($customTiers as $tier) {
+                        if (is_array($tier) && isset($tier['modifier']) && is_numeric($tier['modifier'])) {
+                            $customFactor = 1.0 + ((float) $tier['modifier'] / 100.0);
+                            $validTierPrices[] = round($baseVolumetricPrice * $customFactor, 2);
+                            $validTierPrices[] = round($baseSellingPrice * $customFactor, 2);
+                        }
+                    }
+                }
+
+                $matchesOfficialTier = false;
+                foreach ($validTierPrices as $tierPrice) {
+                    if ($tierPrice > 0 && abs($unitPrice - $tierPrice) <= 0.015) {
+                        $matchesOfficialTier = true;
+                        break;
+                    }
+                }
+
+                if ($matchesOfficialTier) {
+                    continue;
+                }
+            }
 
             // Margen de tolerancia de 0.01
             if ($unitPrice < ($expectedPrice - 0.01)) {

@@ -370,6 +370,10 @@ Route::middleware(['session.validate'])->group(function () {
             ->middleware('permission.or.pin:'.Permissions::APPLY_DISCOUNTS);
         Route::put('/{offer}', [OfferController::class, 'update'])
             ->middleware('permission.or.pin:'.Permissions::APPLY_DISCOUNTS);
+        Route::post('/{offer}/relaunch', [OfferController::class, 'relaunch'])
+            ->middleware('permission.or.pin:'.Permissions::APPLY_DISCOUNTS);
+        Route::patch('/{offer}/toggle-status', [OfferController::class, 'toggleStatus'])
+            ->middleware('permission.or.pin:'.Permissions::APPLY_DISCOUNTS);
         Route::delete('/{offer}', [OfferController::class, 'destroy'])
             ->middleware('permission.or.pin:'.Permissions::APPLY_DISCOUNTS);
     });

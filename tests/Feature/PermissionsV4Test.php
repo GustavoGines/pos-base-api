@@ -3,7 +3,9 @@
 namespace Tests\Feature;
 
 use App\Constants\Permissions;
+use App\Models\BusinessSetting;
 use App\Models\CashShift;
+use App\Models\Offer;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
@@ -377,6 +379,102 @@ class PermissionsV4Test extends TestCase
         $product = Product::create([
             'name' => 'Item Discount 3',
             'internal_code' => 'DISC03',
+            'selling_price' => 1000.00,
+            'cost_price' => 500.00,
+            'stock' => 50,
+            'active' => true,
+        ]);
+
+        $response = $this->postJson('/api/pos/sales', [
+            'cash_shift_id' => $shift->id,
+            'user_id' => $cashier->id,
+            'total' => 850.00,
+            'total_surcharge' => 0,
+            'items' => [
+                [
+                    'product_id' => $product->id,
+                    'quantity' => 1,
+                    'unit_price' => 850.00,
+                    'subtotal' => 850.00,
+                ],
+            ],
+            'payments' => [
+                [
+                    'payment_method_id' => $metodo->id,
+                    'base_amount' => 850.00,
+                    'surcharge_amount' => 0,
+                    'total_amount' => 850.00,
+                ],
+            ],
+        ]);
+
+        $response->assertStatus(201);
+    }
+
+    public function test_pos_sale_with_active_offer_succeeds_for_regular_cashier_without_pin(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $shift = $this->crearTurnoAbierto(user: $admin);
+        $cashier = $this->actingAsCashier(permissions: []);
+        $metodo = $this->crearMetodoEfectivo();
+
+        $product = Product::create([
+            'name' => 'Item En Oferta',
+            'internal_code' => 'OFFER01',
+            'selling_price' => 1000.00,
+            'cost_price' => 500.00,
+            'stock' => 50,
+            'active' => true,
+        ]);
+
+        $offer = Offer::create([
+            'name' => 'Promo 15% OFF',
+            'type' => 'percentage',
+            'discount_percentage' => 15.00,
+            'period_type' => 'daily',
+            'is_active' => true,
+        ]);
+        $offer->products()->attach($product->id);
+
+        $response = $this->postJson('/api/pos/sales', [
+            'cash_shift_id' => $shift->id,
+            'user_id' => $cashier->id,
+            'total' => 850.00,
+            'total_surcharge' => 0,
+            'items' => [
+                [
+                    'product_id' => $product->id,
+                    'quantity' => 1,
+                    'unit_price' => 850.00,
+                    'subtotal' => 850.00,
+                ],
+            ],
+            'payments' => [
+                [
+                    'payment_method_id' => $metodo->id,
+                    'base_amount' => 850.00,
+                    'surcharge_amount' => 0,
+                    'total_amount' => 850.00,
+                ],
+            ],
+        ]);
+
+        $response->assertStatus(201);
+    }
+
+    public function test_pos_sale_with_official_wholesale_list_succeeds_for_regular_cashier_without_pin(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $shift = $this->crearTurnoAbierto(user: $admin);
+        $cashier = $this->actingAsCashier(permissions: []);
+        $metodo = $this->crearMetodoEfectivo();
+
+        BusinessSetting::updateOrCreate(['key' => 'enable_advanced_price_tiers'], ['value' => '1']);
+        BusinessSetting::updateOrCreate(['key' => 'wholesale_percentage'], ['value' => '-15']);
+
+        $product = Product::create([
+            'name' => 'Item Mayorista',
+            'internal_code' => 'WHL01',
             'selling_price' => 1000.00,
             'cost_price' => 500.00,
             'stock' => 50,
