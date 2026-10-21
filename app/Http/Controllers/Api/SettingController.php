@@ -41,6 +41,11 @@ class SettingController extends Controller
         $settings['server_time'] = now()->toIso8601String();
         $settings['grace_period_hours'] = 72;
 
+        // Valores por defecto para el motor de Acceso Rápido POS
+        $settings['pos_popularity_days'] = $settings['pos_popularity_days'] ?? '30';
+        $settings['pos_popularity_metric'] = $settings['pos_popularity_metric'] ?? 'tickets';
+        $settings['pos_demote_out_of_stock'] = $settings['pos_demote_out_of_stock'] ?? '0';
+
         return response()->json($settings);
     }
 

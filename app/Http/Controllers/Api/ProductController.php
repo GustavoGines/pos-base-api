@@ -49,9 +49,9 @@ class ProductController extends Controller
             }
         } else {
             // Default sorting when no specific sort is requested:
-            // 1° Productos por peso primero, 2° Más vendidos (sales_count DESC), 3° Nombre ASC
-            $query->orderBy('products.is_sold_by_weight', 'desc')
-                ->orderBy('products.sales_count', 'desc')
+            // 1° Más vendidos (sales_count DESC), 2° Productos por peso como desempate, 3° Nombre ASC
+            $query->orderBy('products.sales_count', 'desc')
+                ->orderBy('products.is_sold_by_weight', 'desc')
                 ->orderBy('products.name', 'asc');
         }
 

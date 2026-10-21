@@ -95,7 +95,11 @@ class SalesAnalyticsRepository
                       OR (products.cost_price IS NOT NULL AND products.cost_price > 0)
                     THEN 1
                 END) as items_with_cost,
-                COUNT(*) as total_items
+                COUNT(*) as total_items,
+                COUNT(DISTINCT sales.id) as tickets_count,
+                MAX(products.sales_count) as pos_sales_count,
+                MAX(products.stock) as current_stock,
+                MAX(products.is_sold_by_weight) as is_sold_by_weight
             ')
             ->whereBetween('sales.created_at', [$start, $end])
             ->where('sales.status', 'completed')
@@ -123,11 +127,16 @@ class SalesAnalyticsRepository
                 'revenue_with_cost' => round((float) $items->sum('revenue_with_cost'), 2),
                 'items_with_cost' => (int) $items->sum('items_with_cost'),
                 'total_items' => (int) $items->sum('total_items'),
+                'tickets_count' => (int) $items->sum('tickets_count'),
                 'products' => $items->sortByDesc('total_revenue')->map(function ($prod) {
                     return [
                         'product_id' => $prod->product_id,
                         'product_name' => $prod->product_name,
                         'items_sold' => (float) $prod->items_sold,
+                        'tickets_count' => (int) ($prod->tickets_count ?? 0),
+                        'pos_sales_count' => (int) ($prod->pos_sales_count ?? 0),
+                        'current_stock' => (float) ($prod->current_stock ?? 0),
+                        'is_sold_by_weight' => (bool) ($prod->is_sold_by_weight ?? false),
                         'total_revenue' => round((float) $prod->total_revenue, 2),
                         'total_profit' => round((float) $prod->total_profit, 2),
                         'revenue_with_cost' => round((float) $prod->revenue_with_cost, 2),

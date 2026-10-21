@@ -3,6 +3,9 @@
 namespace Tests\Unit;
 
 use App\DTOs\SaleContextDTO;
+use App\Models\BusinessSetting;
+use App\Models\DeliveryNote;
+use App\Models\DeliveryNoteItem;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\User;
@@ -132,9 +135,9 @@ class StockServiceTest extends TestCase
 
         $this->stockService->processCartStock($items, $products, $sale, $context, false, 'delivered');
 
-        // Stock decrementado
+        // Stock decrementado y +1 punto de frecuencia por ticket (métrica 'tickets' por defecto)
         $this->assertEquals(48.0, (float) $product->fresh()->stock);
-        $this->assertEquals(2, $product->fresh()->sales_count);
+        $this->assertEquals(1, $product->fresh()->sales_count);
 
         // Movimiento registrado en kardex
         $this->assertDatabaseHas('stock_movements', [
@@ -277,8 +280,8 @@ class StockServiceTest extends TestCase
 
         // Stock restaurado: 15 + 2 = 17
         $this->assertEquals(17.0, (float) $product->fresh()->stock);
-        // Popularidad revertida: 10 - 2 = 8
-        $this->assertEquals(8, $product->fresh()->sales_count);
+        // Popularidad revertida (1 ticket anulado = -1 punto): 10 - 1 = 9
+        $this->assertEquals(9, $product->fresh()->sales_count);
 
         // Movimiento de entrada registrado en kardex
         $this->assertDatabaseHas('stock_movements', [
@@ -363,13 +366,13 @@ class StockServiceTest extends TestCase
             $this->stockService->reconcileStockDiff($newItems, $sale, $context);
         });
 
-        // Cable: stock sube en 4 (80 -> 84)
+        // Cable: stock sube en 4 (80 -> 84); sigue presente en el ticket -> popularidad se mantiene en 20
         $this->assertEquals(84.0, (float) $prodA->fresh()->stock);
-        $this->assertEquals(16, $prodA->fresh()->sales_count); // 20 - 4 = 16
+        $this->assertEquals(20, $prodA->fresh()->sales_count);
 
-        // Cinta: stock baja en 3 (40 -> 37)
+        // Cinta: stock baja en 3 (40 -> 37); sigue presente en el ticket -> popularidad se mantiene en 10
         $this->assertEquals(37.0, (float) $prodB->fresh()->stock);
-        $this->assertEquals(13, $prodB->fresh()->sales_count); // 10 + 3 = 13
+        $this->assertEquals(10, $prodB->fresh()->sales_count);
     }
 
     /**
@@ -555,10 +558,10 @@ class StockServiceTest extends TestCase
         ]);
 
         // Remito pendiente: processCartStock no descontó stock ni sumó popularidad.
-        $deliveryNote = \App\Models\DeliveryNote::create([
+        $deliveryNote = DeliveryNote::create([
             'sale_id' => $sale->id, 'status' => 'pending', 'notes' => 'Envío diferido',
         ]);
-        \App\Models\DeliveryNoteItem::create([
+        DeliveryNoteItem::create([
             'delivery_note_id' => $deliveryNote->id, 'product_id' => $product->id,
             'quantity_purchased' => 4, 'quantity_delivered' => 0,
         ]);
@@ -569,5 +572,94 @@ class StockServiceTest extends TestCase
 
         $this->assertEquals(5, $product->fresh()->sales_count, 'No se debe restar popularidad que nunca se sumó');
         $this->assertEquals(30.0, (float) $product->fresh()->stock);
+    }
+
+    /**
+     * Cuando pos_popularity_metric = 'units', suma la cantidad redondeada hacia arriba (ceil).
+     */
+    public function test_popularidad_modo_units_suma_unidades_redondeadas(): void
+    {
+        BusinessSetting::updateOrCreate(
+            ['key' => 'pos_popularity_metric'],
+            ['value' => 'units']
+        );
+
+        $shift = $this->crearTurnoAbierto(user: $this->user);
+        $context = $this->contextoMostrador($shift->id);
+
+        $product = Product::create([
+            'name' => 'Alfajor Triple', 'internal_code' => 'ALF01', 'cost_price' => 50.00,
+            'selling_price' => 100.00, 'stock' => 100.0, 'sales_count' => 0, 'active' => true,
+        ]);
+
+        $sale = Sale::create([
+            'total' => 600.00, 'status' => 'completed', 'payment_status' => 'paid',
+            'cash_shift_id' => $shift->id, 'user_id' => $this->user->id,
+        ]);
+        $sale->items()->create([
+            'product_id' => $product->id, 'product_name' => $product->name, 'quantity' => 6.0,
+            'unit_price' => 100.00, 'unit_cost_price' => 50.00, 'subtotal' => 600.00,
+        ]);
+
+        $this->stockService->processCartStock(
+            [['product_id' => $product->id, 'quantity' => 6.0]],
+            new Collection([$product->id => $product]), $sale, $context, false, 'delivered'
+        );
+
+        $this->assertEquals(6, $product->fresh()->sales_count);
+    }
+
+    /**
+     * recalculatePopularityCounts recalcula sobre la ventana móvil configurada e ignora ventas viejas o previas a un reset.
+     */
+    public function test_recalculate_popularity_counts_aplica_ventana_30_dias_y_reset(): void
+    {
+        $shift = $this->crearTurnoAbierto(user: $this->user);
+
+        $prodReciente = Product::create([
+            'name' => 'Coca Cola 2.25L', 'internal_code' => 'COC225', 'cost_price' => 1000,
+            'selling_price' => 2000, 'stock' => 50, 'sales_count' => 999, 'active' => true,
+        ]);
+
+        $prodViejo = Product::create([
+            'name' => 'Sidra Navideña', 'internal_code' => 'SID01', 'cost_price' => 800,
+            'selling_price' => 1500, 'stock' => 20, 'sales_count' => 500, 'active' => true,
+        ]);
+
+        // Venta reciente (hace 5 días) con 10 unidades de Coca Cola en 1 ticket
+        $saleReciente = Sale::create([
+            'total' => 20000, 'status' => 'completed', 'payment_status' => 'paid',
+            'cash_shift_id' => $shift->id, 'user_id' => $this->user->id,
+        ]);
+        DB::table('sales')->where('id', $saleReciente->id)->update(['created_at' => now()->subDays(5)]);
+        $saleReciente->items()->create([
+            'product_id' => $prodReciente->id, 'product_name' => $prodReciente->name, 'quantity' => 10.0,
+            'unit_price' => 2000, 'unit_cost_price' => 1000, 'subtotal' => 20000,
+        ]);
+
+        // Venta vieja (hace 45 días) de Sidra
+        $saleVieja = Sale::create([
+            'total' => 1500, 'status' => 'completed', 'payment_status' => 'paid',
+            'cash_shift_id' => $shift->id, 'user_id' => $this->user->id,
+        ]);
+        DB::table('sales')->where('id', $saleVieja->id)->update(['created_at' => now()->subDays(45)]);
+        $saleVieja->items()->create([
+            'product_id' => $prodViejo->id, 'product_name' => $prodViejo->name, 'quantity' => 1.0,
+            'unit_price' => 1500, 'unit_cost_price' => 800, 'subtotal' => 1500,
+        ]);
+
+        $updated = $this->stockService->recalculatePopularityCounts(30, 'tickets');
+
+        $this->assertEquals(1, $updated);
+        $this->assertEquals(1, $prodReciente->fresh()->sales_count, '1 ticket en los últimos 30 días = 1 punto');
+        $this->assertEquals(0, $prodViejo->fresh()->sales_count, 'Venta de hace 45 días queda fuera de la ventana de 30 días');
+
+        // Ahora probamos poner en cero (reset de temporada)
+        $this->stockService->resetPopularityCounts();
+        $this->assertEquals(0, $prodReciente->fresh()->sales_count);
+
+        // Si se vuelve a ejecutar recalculatePopularityCounts tras el reset, la venta de hace 5 días no revive
+        $this->stockService->recalculatePopularityCounts(30, 'tickets');
+        $this->assertEquals(0, $prodReciente->fresh()->sales_count);
     }
 }

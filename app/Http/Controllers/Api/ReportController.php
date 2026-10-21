@@ -3,11 +3,13 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\BusinessSetting;
 use App\Models\SaleItem;
 use App\Repositories\SalesAnalyticsRepository;
 use App\Services\ReportCacheService;
 use App\Services\Reports\ReportExpenseService;
 use App\Services\Reports\ReportExportService;
+use App\Services\StockService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -481,5 +483,75 @@ class ReportController extends Controller
         $filters = $this->expenseService->parseExpenseFilters($request);
 
         return $this->exportService->exportExpensesAnalysisPdf($filters, $this->expenseService);
+    }
+
+    /**
+     * Guarda las reglas del motor de Acceso Rápido POS y recalibra (o pone en cero)
+     * los contadores de popularidad (products.sales_count).
+     */
+    public function recalibratePosPopularity(Request $request, StockService $stockService): JsonResponse
+    {
+        $validated = $request->validate([
+            'action' => 'nullable|string|in:recalibrate,reset',
+            'pos_popularity_days' => 'nullable|integer|in:0,7,15,30,90',
+            'pos_popularity_metric' => 'nullable|string|in:tickets,units',
+            'pos_demote_out_of_stock' => 'nullable|boolean',
+        ]);
+
+        $action = $validated['action'] ?? 'recalibrate';
+
+        if (array_key_exists('pos_popularity_days', $validated) && $validated['pos_popularity_days'] !== null) {
+            BusinessSetting::updateOrCreate(
+                ['key' => 'pos_popularity_days'],
+                ['value' => (string) $validated['pos_popularity_days']]
+            );
+        }
+
+        if (array_key_exists('pos_popularity_metric', $validated) && $validated['pos_popularity_metric'] !== null) {
+            BusinessSetting::updateOrCreate(
+                ['key' => 'pos_popularity_metric'],
+                ['value' => $validated['pos_popularity_metric']]
+            );
+        }
+
+        if (array_key_exists('pos_demote_out_of_stock', $validated) && $validated['pos_demote_out_of_stock'] !== null) {
+            BusinessSetting::updateOrCreate(
+                ['key' => 'pos_demote_out_of_stock'],
+                ['value' => $validated['pos_demote_out_of_stock'] ? '1' : '0']
+            );
+        }
+
+        if ($action === 'reset') {
+            $stockService->resetPopularityCounts();
+            $updatedProducts = 0;
+            $message = 'Contadores de popularidad puestos en cero correctamente para la nueva temporada.';
+        } else {
+            // Al recalibrar manualmente desde las ventas reales, limpiamos cualquier corte previo de reset
+            BusinessSetting::where('key', 'pos_popularity_reset_at')->delete();
+            $days = isset($validated['pos_popularity_days']) ? (int) $validated['pos_popularity_days'] : null;
+            $metric = $validated['pos_popularity_metric'] ?? null;
+            $updatedProducts = $stockService->recalculatePopularityCounts($days, $metric);
+            $message = "Acceso Rápido POS recalibrado ({$updatedProducts} productos con ventas en el período).";
+        }
+
+        ReportCacheService::flush();
+
+        $settings = BusinessSetting::whereIn('key', [
+            'pos_popularity_days',
+            'pos_popularity_metric',
+            'pos_demote_out_of_stock',
+            'pos_popularity_reset_at',
+        ])->pluck('value', 'key')->toArray();
+
+        return response()->json([
+            'message' => $message,
+            'updated_products_count' => $updatedProducts,
+            'settings' => [
+                'pos_popularity_days' => (int) ($settings['pos_popularity_days'] ?? 30),
+                'pos_popularity_metric' => $settings['pos_popularity_metric'] ?? 'tickets',
+                'pos_demote_out_of_stock' => ($settings['pos_demote_out_of_stock'] ?? '0') === '1',
+                'pos_popularity_reset_at' => $settings['pos_popularity_reset_at'] ?? null,
+            ],
+        ]);
     }
 }

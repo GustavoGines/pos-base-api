@@ -12,6 +12,7 @@ use App\Models\SalePayment;
 use App\Models\ThirdPartyCheck;
 use Exception;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class CashShiftService
 {
@@ -265,6 +266,14 @@ class CashShiftService
                 'status' => 'closed',
                 'closed_by_user_id' => $closerUserId,
             ]);
+
+            // Recalibrar ventana móvil del Acceso Rápido POS al cerrar caja
+            // (para que el próximo turno inicie con el ranking limpio y actualizado).
+            try {
+                app(StockService::class)->recalculatePopularityCounts();
+            } catch (\Throwable $e) {
+                Log::warning('Error al recalcular popularidad en cierre de caja: '.$e->getMessage());
+            }
 
             return $shift;
         });

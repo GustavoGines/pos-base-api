@@ -64,6 +64,10 @@ class BusinessSetting extends Model
         'tax_condition',
         'iibb',
         'activity_start_date',
+        'pos_popularity_days',
+        'pos_popularity_metric',
+        'pos_demote_out_of_stock',
+        'pos_popularity_reset_at',
     ];
 
     public static function getSecret(string $key, ?string $default = null): ?string

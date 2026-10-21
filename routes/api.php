@@ -326,6 +326,7 @@ Route::middleware(['session.validate'])->group(function () {
 
     // ── Módulo de Reportes Gerenciales ───────────────────────────────
     Route::prefix('reports')->middleware('permission.or.pin:'.Permissions::VIEW_REPORTS)->group(function () {
+        Route::post('/pos-popularity/recalibrate', [ReportController::class, 'recalibratePosPopularity']);
         Route::get('/sales-by-category/export', [ReportController::class, 'exportProfitByCategory']);
         Route::get('/sales-by-category/pdf', [ReportController::class, 'exportPdfByCategory']);
         Route::get('/sales-by-category', [ReportController::class, 'profitByCategory']);
