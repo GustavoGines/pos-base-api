@@ -492,13 +492,13 @@ class ReportController extends Controller
     public function recalibratePosPopularity(Request $request, StockService $stockService): JsonResponse
     {
         $validated = $request->validate([
-            'action' => 'nullable|string|in:recalibrate,reset',
+            'action' => 'nullable|string|in:recalibrate,save_settings,reset,restore_history',
             'pos_popularity_days' => 'nullable|integer|in:0,7,15,30,90',
             'pos_popularity_metric' => 'nullable|string|in:tickets,units',
             'pos_demote_out_of_stock' => 'nullable|boolean',
         ]);
 
-        $action = $validated['action'] ?? 'recalibrate';
+        $action = $validated['action'] ?? 'save_settings';
 
         if (array_key_exists('pos_popularity_days', $validated) && $validated['pos_popularity_days'] !== null) {
             BusinessSetting::updateOrCreate(
@@ -521,17 +521,22 @@ class ReportController extends Controller
             );
         }
 
+        $days = isset($validated['pos_popularity_days']) ? (int) $validated['pos_popularity_days'] : null;
+        $metric = $validated['pos_popularity_metric'] ?? null;
+
         if ($action === 'reset') {
             $stockService->resetPopularityCounts();
             $updatedProducts = 0;
-            $message = 'Contadores de popularidad puestos en cero correctamente para la nueva temporada.';
-        } else {
-            // Al recalibrar manualmente desde las ventas reales, limpiamos cualquier corte previo de reset
+            $message = 'Ranking del POS reiniciado en cero y guardado correctamente.';
+        } elseif ($action === 'restore_history') {
+            // Restauración explícita: limpia el corte de reinicio para reconstruir desde el historial de la ventana
             BusinessSetting::where('key', 'pos_popularity_reset_at')->delete();
-            $days = isset($validated['pos_popularity_days']) ? (int) $validated['pos_popularity_days'] : null;
-            $metric = $validated['pos_popularity_metric'] ?? null;
             $updatedProducts = $stockService->recalculatePopularityCounts($days, $metric);
-            $message = "Acceso Rápido POS recalibrado ({$updatedProducts} productos con ventas en el período).";
+            $message = "Historial del Acceso Rápido restaurado ({$updatedProducts} productos con ventas en el período).";
+        } else {
+            // save_settings / recalibrate: guarda preferencias y recalcula respetando cualquier reinicio en cero activo
+            $updatedProducts = $stockService->recalculatePopularityCounts($days, $metric);
+            $message = 'Configuración del Acceso Rápido guardada y aplicada automáticamente.';
         }
 
         ReportCacheService::flush();
