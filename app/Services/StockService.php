@@ -3,10 +3,12 @@
 namespace App\Services;
 
 use App\DTOs\SaleContextDTO;
+use App\Models\BusinessSetting;
 use App\Models\DeliveryNote;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\StockMovement;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -54,6 +56,9 @@ class StockService
             return; // Stock will be deducted upon delivery
         }
 
+        $metric = $this->getPopularityMetric();
+        $countedInTicket = [];
+
         foreach ($items as $itemData) {
             if (! isset($products[$itemData['product_id']])) {
                 continue;
@@ -62,7 +67,17 @@ class StockService
             $product = $products[$itemData['product_id']];
             $qty = (float) $itemData['quantity'];
 
-            $this->deductProductStock($product, $qty, $sale, $context, false, $products);
+            // En modo 'tickets' cada producto suma como máximo 1 vez por ticket
+            $trackPopularity = true;
+            if ($metric === 'tickets' && $qty > 0) {
+                if (isset($countedInTicket[$product->id])) {
+                    $trackPopularity = false;
+                } else {
+                    $countedInTicket[$product->id] = true;
+                }
+            }
+
+            $this->deductProductStock($product, $qty, $sale, $context, false, $products, $trackPopularity);
         }
     }
 
@@ -100,14 +115,36 @@ class StockService
     }
 
     /**
-     * Puntos de popularidad (sales_count) que aporta una línea de venta según su cantidad.
-     * Toda cantidad positiva vale al menos 1 punto, de modo que ventas fraccionarias por peso
-     * (ej. 0.250 kg) no se pierdan. Es función de la cantidad de la línea (no de una diferencia),
-     * lo que garantiza simetría entre venta, edición de orden en espera y anulación.
+     * Devuelve la métrica de popularidad configurada para el Acceso Rápido POS ('tickets' | 'units').
      */
-    protected function popularityPoints(float $qty): int
+    public function getPopularityMetric(): string
     {
-        return $qty > 0 ? max(1, (int) ceil($qty)) : 0;
+        try {
+            $metric = BusinessSetting::where('key', 'pos_popularity_metric')->value('value');
+
+            return in_array($metric, ['tickets', 'units'], true) ? $metric : 'tickets';
+        } catch (\Throwable) {
+            return 'tickets';
+        }
+    }
+
+    /**
+     * Puntos de popularidad (sales_count) que aporta una línea de venta:
+     * - Modo 'tickets' (default): 1 aparición en el ticket = 1 punto de frecuencia en mostrador.
+     * - Modo 'units': max(1, ceil($qty)) unidades.
+     */
+    protected function popularityPoints(float $qty, ?string $metric = null): int
+    {
+        if ($qty <= 0) {
+            return 0;
+        }
+
+        $effectiveMetric = $metric ?? $this->getPopularityMetric();
+        if ($effectiveMetric === 'units') {
+            return max(1, (int) ceil($qty));
+        }
+
+        return 1;
     }
 
     /**
@@ -164,6 +201,8 @@ class StockService
 
         // Con remito diferido el mostrador nunca sumó popularidad (ni stock), por lo que no hay nada que revertir.
         $deferredDelivery = $deliveryNote && ! $sale->hasDeductedStock();
+        $metric = $this->getPopularityMetric();
+        $restoredPopularityProductIds = [];
 
         foreach ($sale->items as $item) {
             if (! isset($products[$item->product_id])) {
@@ -185,9 +224,138 @@ class StockService
 
             // Restauración segura de popularidad (GREATEST logic equivalent in memory since we locked)
             if (! $deferredDelivery && ! $context->isInternalAccount && (float) $item->quantity > 0) {
-                $product->sales_count = max(0, $product->sales_count - $this->popularityPoints((float) $item->quantity));
+                if ($metric === 'tickets' && isset($restoredPopularityProductIds[$product->id])) {
+                    continue;
+                }
+                $restoredPopularityProductIds[$product->id] = true;
+
+                $product->sales_count = max(0, $product->sales_count - $this->popularityPoints((float) $item->quantity, $metric));
                 $product->save();
             }
+        }
+    }
+
+    /**
+     * Recalcula masivamente products.sales_count a partir de las ventas reales completadas
+     * en la ventana temporal móvil configurada (por defecto 30 días, métrica 'tickets').
+     *
+     * @return int Cantidad de productos con popularidad > 0 tras el recálculo.
+     */
+    public function recalculatePopularityCounts(?int $days = null, ?string $metric = null): int
+    {
+        $rawDays = $days ?? BusinessSetting::where('key', 'pos_popularity_days')->value('value');
+        $effectiveDays = $rawDays !== null ? (int) $rawDays : 30;
+        $effectiveMetric = $metric ?? $this->getPopularityMetric();
+        $resetAt = BusinessSetting::where('key', 'pos_popularity_reset_at')->value('value');
+
+        $query = DB::table('sale_items')
+            ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
+            ->where('sales.status', 'completed')
+            ->where('sale_items.quantity', '>', 0)
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('customers')
+                    ->whereColumn('customers.id', 'sales.customer_id')
+                    ->where('customers.is_internal_account', true);
+            })
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('delivery_notes')
+                    ->whereColumn('delivery_notes.sale_id', 'sales.id')
+                    ->where('delivery_notes.status', 'pending');
+            });
+
+        if ($effectiveDays > 0) {
+            $query->where('sales.created_at', '>=', now()->subDays($effectiveDays)->startOfDay());
+        }
+
+        if (! empty($resetAt)) {
+            try {
+                $resetCarbon = Carbon::parse($resetAt);
+                $query->where('sales.created_at', '>=', $resetCarbon);
+            } catch (\Throwable) {
+                // Fecha inválida, ignorar filtro adicional
+            }
+        }
+
+        $scores = [];
+        if ($effectiveMetric === 'units') {
+            $rows = $query->selectRaw('sale_items.sale_id, sale_items.product_id, SUM(sale_items.quantity) as total_qty')
+                ->groupBy('sale_items.sale_id', 'sale_items.product_id')
+                ->get();
+            foreach ($rows as $row) {
+                $pid = (int) $row->product_id;
+                $totalQty = (float) $row->total_qty;
+                if ($pid > 0 && $totalQty > 0) {
+                    $scores[$pid] = ($scores[$pid] ?? 0) + max(1, (int) ceil($totalQty));
+                }
+            }
+        } else {
+            $rows = $query->selectRaw('sale_items.product_id, COUNT(DISTINCT sale_items.sale_id) as score')
+                ->groupBy('sale_items.product_id')
+                ->get();
+            foreach ($rows as $row) {
+                $pid = (int) $row->product_id;
+                $score = (int) $row->score;
+                if ($pid > 0 && $score > 0) {
+                    $scores[$pid] = $score;
+                }
+            }
+        }
+
+        $runUpdate = function () use ($scores) {
+            DB::table('products')->update(['sales_count' => 0]);
+
+            if (! empty($scores)) {
+                foreach (array_chunk($scores, 300, true) as $chunk) {
+                    $cases = [];
+                    $bindings = [];
+                    $ids = [];
+                    foreach ($chunk as $productId => $score) {
+                        $cases[] = 'WHEN ? THEN ?';
+                        $bindings[] = (int) $productId;
+                        $bindings[] = (int) $score;
+                        $ids[] = (int) $productId;
+                    }
+                    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+                    $bindings = array_merge($bindings, $ids);
+                    $caseSql = implode(' ', $cases);
+
+                    DB::update(
+                        "UPDATE products SET sales_count = CASE id {$caseSql} ELSE sales_count END WHERE id IN ({$placeholders})",
+                        $bindings
+                    );
+                }
+            }
+        };
+
+        if (DB::transactionLevel() > 0) {
+            $runUpdate();
+        } else {
+            DB::transaction($runUpdate);
+        }
+
+        return count($scores);
+    }
+
+    /**
+     * Pone en cero todos los contadores de popularidad del Acceso Rápido POS y registra
+     * la marca temporal de corte para que futuros cierres de caja solo cuenten ventas nuevas.
+     */
+    public function resetPopularityCounts(): void
+    {
+        $runReset = function () {
+            BusinessSetting::updateOrCreate(
+                ['key' => 'pos_popularity_reset_at'],
+                ['value' => now()->toIso8601String()]
+            );
+            DB::table('products')->update(['sales_count' => 0]);
+        };
+
+        if (DB::transactionLevel() > 0) {
+            $runReset();
+        } else {
+            DB::transaction($runReset);
         }
     }
 
