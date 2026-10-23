@@ -78,9 +78,16 @@ class CashRegisterController extends Controller
             return response()->json(['message' => 'La Caja Principal es obligatoria y no puede eliminarse.'], 403);
         }
 
+        if ($register->shifts()->where('status', 'open')->exists()) {
+            return response()->json([
+                'message' => 'No se puede eliminar ni desactivar una caja con un turno abierto. Cierre el turno primero.',
+            ], 422);
+        }
+
         // En lugar de borrar físicamente, podríamos forzar soft delete si hubiera,
         // pero preferible desactivar si hay turnos vinculados.
         if ($register->shifts()->count() > 0) {
+            $register->update(['is_active' => false]);
             $register->delete(); // Soft delete because of the trait
 
             return response()->json(['message' => 'Caja desactivada correctamente (Soft delete aplicado).']);

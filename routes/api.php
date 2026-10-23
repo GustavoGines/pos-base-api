@@ -45,9 +45,10 @@ Route::prefix('auth')->group(function () {
 
 // Lectura de configuración pública — necesaria en el arranque de la app ANTES del login
 Route::get('/settings', [SettingController::class, 'index']);
-// Escritura de licencia pública — se necesita sin sesión para activar/sincronizar licencias
-Route::post('/settings/license', [SettingController::class, 'updateLicense']);
-Route::post('/settings/license/sync', [SettingController::class, 'syncLicense']);
+// Escritura de licencia pública — se necesita sin sesión para activar/sincronizar licencias desde LicenseLockScreen
+// L-04: Protegido con throttle para prevenir saturación de workers (DoS)
+Route::post('/settings/license', [SettingController::class, 'updateLicense'])->middleware('throttle:10,1');
+Route::post('/settings/license/sync', [SettingController::class, 'syncLicense'])->middleware('throttle:10,1');
 
 use App\Http\Controllers\Api\CashMovementController;
 use App\Http\Controllers\Api\ExpenseCategoryController;
@@ -63,7 +64,7 @@ use App\Http\Controllers\Api\UserController;
 // Endpoint de rescate de migraciones OTA (silencioso)
 Route::match(['get', 'post'], '/system/rescue-migrate', [SystemController::class, 'rescueMigrate']);
 Route::get('/version-check', [SystemController::class, 'versionCheck']);
-Route::get('/system/install-path', [SystemController::class, 'installPath'])->middleware('auth:sanctum');
+Route::get('/system/install-path', [SystemController::class, 'installPath']);
 
 // Webhook de Mercado Pago (público, autenticado criptográficamente vía HMAC x-signature)
 Route::post('/webhooks/mercadopago', [MercadoPagoController::class, 'webhook']);
@@ -103,10 +104,10 @@ Route::get('/catalog/brands', [BrandController::class, 'index']);
 Route::apiResource('payment-methods', PaymentMethodController::class)->only(['index']);
 
 // ══════════════════════════════════════════════════════════════════════════════
-// RUTAS PROTEGIDAS — Requieren X-Session-Token válido (Single Active Session)
+// RUTAS PROTEGIDAS — Requieren X-Session-Token válido y Licencia Activa (L-02)
 // ══════════════════════════════════════════════════════════════════════════════
 
-Route::middleware(['session.validate'])->group(function () {
+Route::middleware(['session.validate', 'license.active'])->group(function () {
 
     // ── 1. CONFIGURACIÓN Y ADMINISTRACIÓN ─────────────────────────────
     Route::put('/settings', [SettingController::class, 'update'])

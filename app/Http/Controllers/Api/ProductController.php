@@ -5,11 +5,13 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreProductRequest;
 use App\Http\Requests\UpdateProductRequest;
+use App\Jobs\SyncProductStockToPlatformsJob;
 use App\Models\Product;
 use App\Models\ProductPriceTier;
 use App\Services\BarcodeService;
 use App\Services\InventoryAlertService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
 class ProductController extends Controller
@@ -84,8 +86,9 @@ class ProductController extends Controller
 
         // Auditoría: Registrar stock inicial si es mayor a 0
         if ($product->stock > 0) {
+            $actorUser = $request->user() ?? $request->attributes->get('authenticated_user');
             $product->stockMovements()->create([
-                'user_id' => $request->attributes->get('authenticated_user')?->id,
+                'user_id' => $actorUser?->id,
                 'type' => 'in',
                 'quantity' => $product->stock,
                 'notes' => 'Stock inicial (Creación de producto)',
@@ -117,67 +120,82 @@ class ProductController extends Controller
     {
         $validated = $request->validated();
 
-        // Flujo de Código Interno (PLU) en actualización
-        if (empty($request->internal_code)) {
-            $validated['internal_code'] = $product->internal_code;
-        } else {
-            $validated['internal_code'] = str_pad($request->internal_code, 5, '0', STR_PAD_LEFT);
-        }
+        $stockChanged = false;
 
-        if (array_key_exists('barcode', $validated) && empty($validated['barcode'])) {
-            $isWeight = $request->has('is_sold_by_weight') ? $request->is_sold_by_weight : $product->is_sold_by_weight;
-            $validated['barcode'] = empty($isWeight) ? $barcodeService->generateInternalEan13($validated['internal_code']) : null;
-        }
+        DB::transaction(function () use ($request, &$product, &$validated, $barcodeService, &$stockChanged) {
+            $product = Product::lockForUpdate()->findOrFail($product->id);
 
-        // Auditoría de Stock: Guardar valor previo antes de actualizar
-        $oldStock = (float) $product->stock;
-
-        // Si usamos add_stock, no pisamos el stock absoluto
-        if (! empty($validated['add_stock'])) {
-            unset($validated['stock']);
-        }
-
-        $product->update($validated);
-
-        // Modificación aditiva (Sin race condition)
-        if (! empty($request->add_stock)) {
-            $product->increment('stock', $request->add_stock);
-
-            $product->stockMovements()->create([
-                'user_id' => $request->attributes->get('authenticated_user')?->id,
-                'type' => 'in',
-                'quantity' => $request->add_stock,
-                'notes' => 'Ingreso rápido de mercadería (Mobile)',
-            ]);
-        }
-        // Modificación absoluta (Puede tener race conditions si no se usa con cuidado)
-        elseif (array_key_exists('stock', $validated) && (float) $validated['stock'] !== $oldStock) {
-            $newStock = (float) $validated['stock'];
-            $diff = $newStock - $oldStock;
-
-            $product->stockMovements()->create([
-                'user_id' => $request->attributes->get('authenticated_user')?->id,
-                'type' => $diff > 0 ? 'in' : 'out',
-                'quantity' => abs($diff),
-                'notes' => "Modificación manual de ficha de producto (de $oldStock a $newStock)",
-            ]);
-        }
-
-        if (array_key_exists('is_combo', $validated)) {
-            if (! empty($validated['is_combo']) && $request->has('combo_ingredients')) {
-                $syncData = [];
-                foreach ($request->combo_ingredients as $ingredient) {
-                    $syncData[$ingredient['id']] = ['quantity' => $ingredient['quantity']];
-                }
-                $product->children()->sync($syncData);
-            } elseif (empty($validated['is_combo'])) {
-                $product->children()->detach();
+            // Flujo de Código Interno (PLU) en actualización
+            if (empty($request->internal_code)) {
+                $validated['internal_code'] = $product->internal_code;
+            } else {
+                $validated['internal_code'] = str_pad((string) $request->internal_code, 5, '0', STR_PAD_LEFT);
             }
-        }
 
-        // Sincronizar tramos de precio si vienen en el payload
-        if ($request->has('price_tiers')) {
-            $this->syncPriceTiers($product, $request->price_tiers ?? []);
+            if (array_key_exists('barcode', $validated) && empty($validated['barcode'])) {
+                $isWeight = $request->has('is_sold_by_weight') ? $request->is_sold_by_weight : $product->is_sold_by_weight;
+                $validated['barcode'] = empty($isWeight) ? $barcodeService->generateInternalEan13($validated['internal_code']) : null;
+            }
+
+            // Auditoría de Stock: Guardar valor previo bajo lock antes de actualizar
+            $oldStock = (float) $product->stock;
+
+            // Si usamos add_stock, no pisamos el stock absoluto
+            if (! empty($validated['add_stock'])) {
+                unset($validated['stock']);
+            }
+
+            $product->update($validated);
+
+            $actorUser = $request->user() ?? $request->attributes->get('authenticated_user');
+
+            // Modificación aditiva (Sin race condition)
+            if (! empty($request->add_stock)) {
+                $product->increment('stock', $request->add_stock);
+                $product->refresh();
+                $stockChanged = true;
+
+                $product->stockMovements()->create([
+                    'user_id' => $actorUser?->id,
+                    'type' => 'in',
+                    'quantity' => $request->add_stock,
+                    'notes' => 'Ingreso rápido de mercadería (Mobile)',
+                ]);
+            }
+            // Modificación absoluta protegida bajo lockForUpdate
+            elseif (array_key_exists('stock', $validated) && (float) $validated['stock'] !== $oldStock) {
+                $newStock = (float) $validated['stock'];
+                $diff = $newStock - $oldStock;
+                $stockChanged = true;
+
+                $product->stockMovements()->create([
+                    'user_id' => $actorUser?->id,
+                    'type' => $diff > 0 ? 'in' : 'out',
+                    'quantity' => abs($diff),
+                    'notes' => "Modificación manual de ficha de producto (de $oldStock a $newStock)",
+                ]);
+            }
+
+            if (array_key_exists('is_combo', $validated)) {
+                if (! empty($validated['is_combo']) && $request->has('combo_ingredients')) {
+                    $syncData = [];
+                    foreach ($request->combo_ingredients as $ingredient) {
+                        $syncData[$ingredient['id']] = ['quantity' => $ingredient['quantity']];
+                    }
+                    $product->children()->sync($syncData);
+                } elseif (empty($validated['is_combo'])) {
+                    $product->children()->detach();
+                }
+            }
+
+            // Sincronizar tramos de precio si vienen en el payload
+            if ($request->has('price_tiers')) {
+                $this->syncPriceTiers($product, $request->price_tiers ?? []);
+            }
+        });
+
+        if ($stockChanged) {
+            SyncProductStockToPlatformsJob::dispatch($product->id, (float) $product->stock)->afterCommit();
         }
 
         return response()->json($product->load(['category.rubro', 'brand', 'supplier', 'children', 'priceTiers']));

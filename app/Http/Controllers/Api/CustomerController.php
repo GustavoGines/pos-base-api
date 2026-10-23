@@ -99,7 +99,7 @@ class CustomerController extends Controller
     {
         $pendingSales = Sale::where('customer_id', $customer->id)
             ->where('amount_due', '>', 0)
-            ->where('status', '!=', 'voided')
+            ->where('status', 'completed')
             ->with('items')
             ->orderByDesc('created_at')
             ->get();
@@ -187,11 +187,13 @@ class CustomerController extends Controller
                     if ($request->filled('sale_ids')) {
                         $sales = Sale::whereIn('id', $request->sale_ids)
                             ->where('customer_id', $lockedCustomer->id)
+                            ->where('status', 'completed')
                             ->lockForUpdate()
                             ->orderBy('created_at', 'asc')
                             ->get();
                     } else {
                         $sales = Sale::where('customer_id', $lockedCustomer->id)
+                            ->where('status', 'completed')
                             ->whereIn('payment_status', ['pending', 'partial'])
                             ->lockForUpdate()
                             ->orderBy('created_at', 'asc')

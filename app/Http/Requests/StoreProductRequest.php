@@ -12,6 +12,15 @@ class StoreProductRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        if ($this->filled('internal_code')) {
+            $this->merge([
+                'internal_code' => str_pad(trim((string) $this->input('internal_code')), 5, '0', STR_PAD_LEFT),
+            ]);
+        }
+    }
+
     public function rules(): array
     {
         return [
@@ -46,7 +55,11 @@ class StoreProductRequest extends FormRequest
             'price_tiers' => 'nullable|array',
             'price_tiers.*.min_quantity' => 'required_with:price_tiers|numeric|min:1',
             'price_tiers.*.unit_price' => 'required_with:price_tiers|numeric|min:0',
-            'internal_code' => 'nullable|string',
+            'internal_code' => [
+                'nullable',
+                'string',
+                Rule::unique('products', 'internal_code')->whereNull('deleted_at'),
+            ],
         ];
     }
 }

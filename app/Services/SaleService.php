@@ -49,8 +49,8 @@ class SaleService
 
                 if ($isCuentaCorriente) {
                     $featuresJson = DB::table('business_settings')->where('key', 'license_features_dict')->value('value');
-                    $features = !empty($featuresJson) ? json_decode($featuresJson, true) : [];
-                    if (!empty($features) && (!isset($features['current_accounts']) || $features['current_accounts'] !== true)) {
+                    $features = ! empty($featuresJson) ? json_decode($featuresJson, true) : [];
+                    if (! empty($features) && (! isset($features['current_accounts']) || $features['current_accounts'] !== true)) {
                         throw ValidationException::withMessages([
                             'payment_methods' => 'El cobro con Cuenta Corriente (Fiado) requiere el módulo de Cuentas Corrientes habilitado en su licencia.',
                         ]);
@@ -145,16 +145,16 @@ class SaleService
                 $this->processItems($lockedSale, $dto->items, $lockedProducts, $context);
 
                 // Recalculate Totals based on new items
-                $newTotal = (float) $lockedSale->items()->sum('subtotal');
-                $lockedSale->total = $newTotal + (float) $dto->iibbPerceptionAmount;
+                $newTotal = round((float) $lockedSale->items()->sum('subtotal'), 2);
+                $lockedSale->total = round($newTotal + (float) $dto->iibbPerceptionAmount, 2);
             }
 
-            $totalToValidate = $lockedSale->total + $dto->totalSurcharge + $dto->shippingCost;
+            $totalToValidate = round((float) $lockedSale->total + (float) $dto->totalSurcharge + (float) $dto->shippingCost, 2);
             $this->paymentService->validatePaymentsTotal($dto->payments, $totalToValidate);
-            
+
             $effectiveCustomerId = $context->customerId ?? $lockedSale->customer_id;
             $lockedSale->customer_id = $effectiveCustomerId;
-            
+
             $this->paymentService->registerPayments($lockedSale, $dto->payments, $dto->checkDetails, $context);
 
             $ccPaymentTotal = 0;
@@ -174,8 +174,8 @@ class SaleService
 
             if ($isCuentaCorriente) {
                 $featuresJson = DB::table('business_settings')->where('key', 'license_features_dict')->value('value');
-                $features = !empty($featuresJson) ? json_decode($featuresJson, true) : [];
-                if (!empty($features) && (!isset($features['current_accounts']) || $features['current_accounts'] !== true)) {
+                $features = ! empty($featuresJson) ? json_decode($featuresJson, true) : [];
+                if (! empty($features) && (! isset($features['current_accounts']) || $features['current_accounts'] !== true)) {
                     throw ValidationException::withMessages([
                         'payment_methods' => 'El cobro con Cuenta Corriente (Fiado) requiere el módulo de Cuentas Corrientes habilitado en su licencia.',
                     ]);
@@ -232,6 +232,93 @@ class SaleService
 
     public function voidSale(Sale $sale, SaleContextDTO $context): Sale
     {
+        // ── FASE A: Pre-validación de invariantes antes de comunicar a AFIP ──
+        DB::transaction(function () use ($sale) {
+            $lockedSale = Sale::lockForUpdate()->find($sale->id);
+
+            if ($lockedSale->status === 'voided') {
+                throw new \InvalidArgumentException('Esta venta ya está anulada.');
+            }
+            if ($lockedSale->status !== 'pending' && $lockedSale->status !== 'completed') {
+                throw new \InvalidArgumentException('No se puede anular una venta en este estado.');
+            }
+
+            $checks = ThirdPartyCheck::with('supplier')->where('sale_id', $lockedSale->id)->lockForUpdate()->get();
+            foreach ($checks as $check) {
+                if ($check->status === 'endorsed') {
+                    $supplierName = $check->supplier?->name;
+                    $msg = $supplierName
+                        ? "No se puede anular la venta porque el cheque #{$check->check_number} fue endosado al proveedor '{$supplierName}'. Debe anular primero el pago al proveedor en Movimientos de Caja para reincorporarlo a cartera."
+                        : "No se puede anular la venta porque el cheque #{$check->check_number} figura como endosado. Debe reincorporarlo a cartera primero.";
+                    throw new \InvalidArgumentException($msg);
+                }
+                if ($check->status === 'deposited') {
+                    throw new \InvalidArgumentException(
+                        "No se puede anular la venta porque el cheque #{$check->check_number} ya fue depositado en el banco."
+                    );
+                }
+                if ($check->status === 'rejected') {
+                    throw new \InvalidArgumentException(
+                        "No se puede anular la venta porque el cheque #{$check->check_number} figura como rechazado."
+                    );
+                }
+                if ($check->status !== 'in_wallet' && $check->status !== 'voided') {
+                    throw new \InvalidArgumentException(
+                        "No se puede anular la venta porque el cheque #{$check->check_number} tiene un estado incompatible ({$check->status})."
+                    );
+                }
+            }
+        });
+
+        // ── FASE B: Emisión de Nota de Crédito AFIP fuera de la transacción de reversión local ──
+        // Si AFIP autoriza el CAE, se persiste inmediatamente en electronic_invoices para garantizar
+        // idempotencia fiscal y evitar duplicar Notas de Crédito si fallara una operación local posterior.
+        $saleForAfip = Sale::with('electronicInvoice')->find($sale->id);
+        $electronicInvoice = $saleForAfip?->electronicInvoice;
+        if ($electronicInvoice && $electronicInvoice->cae && empty($electronicInvoice->credit_note_cae)) {
+            $ncVoucherType = match ($electronicInvoice->voucher_type) {
+                AfipHelper::VOUCHER_FACTURA_A => AfipHelper::VOUCHER_NOTA_CREDITO_A,
+                AfipHelper::VOUCHER_FACTURA_C => AfipHelper::VOUCHER_NOTA_CREDITO_C,
+                default => AfipHelper::VOUCHER_NOTA_CREDITO_B,
+            };
+
+            $cbtesAsoc = [
+                [
+                    'Tipo' => $electronicInvoice->voucher_type,
+                    'PtoVta' => $electronicInvoice->point_of_sale,
+                    'Nro' => $electronicInvoice->voucher_number,
+                    // 'Cuit' lo completa AfipWsfeService con el CUIT emisor (comprobante propio)
+                    'CbteFch' => $electronicInvoice->issued_at ? $electronicInvoice->issued_at->format('Ymd') : date('Ymd'),
+                ],
+            ];
+
+            $options = [
+                'voucher_type' => $ncVoucherType,
+                'point_of_sale' => $electronicInvoice->point_of_sale,
+                'doc_type' => $electronicInvoice->doc_type,
+                'doc_number' => $electronicInvoice->doc_number,
+                'receiver_name' => $electronicInvoice->receiver_name,
+                'receiver_address' => $electronicInvoice->receiver_address,
+                'receiver_tax_condition' => $electronicInvoice->receiver_tax_condition,
+                'cbtes_asoc' => $cbtesAsoc,
+            ];
+
+            try {
+                $ncData = $this->afipWsfeService->authorizeInvoice($saleForAfip, $options);
+                $electronicInvoice->update([
+                    'credit_note_cae' => $ncData['cae'],
+                    'credit_note_expiration' => $ncData['cae_expiration'],
+                    'credit_note_number' => $ncData['voucher_number'],
+                    'credit_note_issued_at' => now(),
+                    'credit_note_voucher_type' => $ncVoucherType,
+                    'credit_note_qr_data' => $ncData['qr_data'] ?? null,
+                ]);
+            } catch (\Exception $e) {
+                throw new \InvalidArgumentException('No se pudo emitir la Nota de Crédito en AFIP. Motivo: '.$e->getMessage());
+            }
+        }
+
+        // ── FASE C: Restitución transaccional local (Stock, Remito, Cheques, Cta Cte, Caja) ──
         return DB::transaction(function () use ($sale, $context) {
             $lockedSale = Sale::lockForUpdate()->find($sale->id);
 
@@ -242,7 +329,6 @@ class SaleService
                 throw new \InvalidArgumentException('No se puede anular una venta en este estado.');
             }
 
-            // ── PASO 1: Validar estado de Cheques antes de AFIP (bloqueo pesimista) ──
             $checks = ThirdPartyCheck::with('supplier')->where('sale_id', $lockedSale->id)->lockForUpdate()->get();
             foreach ($checks as $check) {
                 if ($check->status === 'endorsed') {
@@ -269,52 +355,6 @@ class SaleService
                 }
             }
 
-            // ── PASO 2: Emisión de Nota de Crédito AFIP si corresponde ──
-            $electronicInvoice = $lockedSale->electronicInvoice;
-            if ($electronicInvoice && $electronicInvoice->cae && empty($electronicInvoice->credit_note_cae)) {
-                $ncVoucherType = match ($electronicInvoice->voucher_type) {
-                    AfipHelper::VOUCHER_FACTURA_A => AfipHelper::VOUCHER_NOTA_CREDITO_A,
-                    AfipHelper::VOUCHER_FACTURA_C => AfipHelper::VOUCHER_NOTA_CREDITO_C,
-                    default => AfipHelper::VOUCHER_NOTA_CREDITO_B,
-                };
-
-                $cbtesAsoc = [
-                    [
-                        'Tipo' => $electronicInvoice->voucher_type,
-                        'PtoVta' => $electronicInvoice->point_of_sale,
-                        'Nro' => $electronicInvoice->voucher_number,
-                        // 'Cuit' lo completa AfipWsfeService con el CUIT emisor (comprobante propio)
-                        'CbteFch' => $electronicInvoice->issued_at ? $electronicInvoice->issued_at->format('Ymd') : date('Ymd'),
-                    ],
-                ];
-
-                $options = [
-                    'voucher_type' => $ncVoucherType,
-                    'point_of_sale' => $electronicInvoice->point_of_sale,
-                    'doc_type' => $electronicInvoice->doc_type,
-                    'doc_number' => $electronicInvoice->doc_number,
-                    'receiver_name' => $electronicInvoice->receiver_name,
-                    'receiver_address' => $electronicInvoice->receiver_address,
-                    'receiver_tax_condition' => $electronicInvoice->receiver_tax_condition,
-                    'cbtes_asoc' => $cbtesAsoc,
-                ];
-
-                try {
-                    $ncData = $this->afipWsfeService->authorizeInvoice($lockedSale, $options);
-                    $electronicInvoice->update([
-                        'credit_note_cae' => $ncData['cae'],
-                        'credit_note_expiration' => $ncData['cae_expiration'],
-                        'credit_note_number' => $ncData['voucher_number'],
-                        'credit_note_issued_at' => now(),
-                        'credit_note_voucher_type' => $ncVoucherType,
-                        'credit_note_qr_data' => $ncData['qr_data'] ?? null,
-                    ]);
-                } catch (\Exception $e) {
-                    throw new \InvalidArgumentException('No se pudo emitir la Nota de Crédito en AFIP. Motivo: '.$e->getMessage());
-                }
-            }
-
-            // ── PASO 3: Restitución local (Stock, Remito) ──
             $deliveryNote = DeliveryNote::with('items')->where('sale_id', $lockedSale->id)->first();
 
             $this->stockService->restoreStockForVoid($lockedSale, $context, $deliveryNote);
@@ -322,8 +362,6 @@ class SaleService
             if ($deliveryNote) {
                 $deliveryNote->update(['status' => 'cancelled']);
             }
-
-            // ── PASO 4: Si los cheques están 'in_wallet', procedemos a anularlos ──
 
             // Si están 'in_wallet', procedemos a anularlos
             foreach ($checks as $check) {
@@ -345,7 +383,7 @@ class SaleService
                         'cash_shift_id' => $context->cashShiftId,
                         'user_id' => $context->userId,
                         'amount' => $cashRefundAmount,
-                        'payment_method' => 'efectivo',
+                        'payment_method' => 'cash',
                         'type' => 'expense',
                         'category' => 'refund',
                         'description' => "Devolución en efectivo por anulación de Venta #{$lockedSale->id} (Turno anterior)",

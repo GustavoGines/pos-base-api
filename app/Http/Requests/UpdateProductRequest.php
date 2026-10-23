@@ -12,6 +12,15 @@ class UpdateProductRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        if ($this->filled('internal_code')) {
+            $this->merge([
+                'internal_code' => str_pad(trim((string) $this->input('internal_code')), 5, '0', STR_PAD_LEFT),
+            ]);
+        }
+    }
+
     public function rules(): array
     {
         $productId = $this->route('product') ? $this->route('product')->id : null;
@@ -40,7 +49,7 @@ class UpdateProductRequest extends FormRequest
             'vencimiento_dias' => 'nullable|integer|min:1|max:3650',
             'category_id' => ['nullable', 'integer', 'exists:categories,id'],
             'brand_id' => 'nullable|exists:brands,id',
-            'supplier_id' => 'nullable|exists:suppliers,id',
+            'supplier_id' => ['nullable', Rule::exists('suppliers', 'id')->whereNull('deleted_at')],
             'is_combo' => 'boolean',
             'combo_ingredients' => 'nullable|array|required_if:is_combo,true',
             'combo_ingredients.*.id' => 'required_with:combo_ingredients|exists:products,id',
@@ -49,7 +58,11 @@ class UpdateProductRequest extends FormRequest
             'price_tiers.*.min_quantity' => 'required_with:price_tiers|numeric|min:1',
             'price_tiers.*.unit_price' => 'required_with:price_tiers|numeric|min:0',
             'add_stock' => 'nullable|numeric|min:0.001',
-            'internal_code' => 'nullable|string',
+            'internal_code' => [
+                'nullable',
+                'string',
+                Rule::unique('products', 'internal_code')->ignore($productId)->whereNull('deleted_at'),
+            ],
         ];
     }
 }

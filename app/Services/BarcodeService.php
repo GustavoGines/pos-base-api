@@ -15,13 +15,15 @@ class BarcodeService
         if (DB::getDriverName() === 'sqlite') {
             // Fallback para SQLite en entorno de testing (evita REGEXP y CAST AS UNSIGNED)
             $lastCode = Product::withTrashed()
+                ->lockForUpdate()
                 ->get(['internal_code'])
-                ->filter(fn ($p) => ctype_digit($p->internal_code))
+                ->filter(fn ($p) => ctype_digit((string) $p->internal_code))
                 ->max(fn ($p) => (int) $p->internal_code);
             $nextNumber = $lastCode ? $lastCode + 1 : 1;
         } else {
             // Obtener el último código interno numérico (incluso si fue borrado)
             $lastCode = Product::withTrashed()
+                ->lockForUpdate()
                 ->whereRaw('internal_code REGEXP "^[0-9]+$"')
                 ->orderByRaw('CAST(internal_code AS UNSIGNED) DESC')
                 ->first();

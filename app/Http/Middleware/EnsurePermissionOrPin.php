@@ -24,9 +24,22 @@ class EnsurePermissionOrPin
         /** @var User|null $user */
         $user = $request->user() ?? $request->attributes->get('authenticated_user');
 
-        if (! $user && ($request->header('X-Session-Token') ?? $request->query('token'))) {
+        $fallbackToken = $request->header('X-Session-Token') ?? $request->bearerToken();
+        if (! $fallbackToken && $request->isMethod('GET') && (
+            $request->is('api/catalog/products/import-template') ||
+            $request->is('api/catalog/products/export') ||
+            $request->is('api/cash-movements/export') ||
+            $request->is('api/sales/*/ticket-pdf') ||
+            $request->is('api/reports/*/export') ||
+            $request->is('api/reports/*/pdf') ||
+            $request->is('api/system/backup')
+        )) {
+            $fallbackToken = $request->query('token');
+        }
+
+        if (! $user && $fallbackToken) {
             $user = User::withoutGlobalScope('visible')
-                ->where('session_token', $request->header('X-Session-Token') ?? $request->query('token'))
+                ->where('session_token', $fallbackToken)
                 ->first();
             if ($user) {
                 $request->attributes->set('authenticated_user', $user);

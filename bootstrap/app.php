@@ -2,6 +2,7 @@
 
 use App\Http\Middleware\CheckAddonPermission;
 use App\Http\Middleware\CheckFeatureAccess;
+use App\Http\Middleware\EnsureLicenseIsActive;
 use App\Http\Middleware\EnsurePermissionOrPin;
 use App\Http\Middleware\EnsureUserIsAdmin;
 use App\Http\Middleware\ValidateSessionToken;
@@ -22,6 +23,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'addon' => CheckAddonPermission::class,
             'feature' => CheckFeatureAccess::class,   // [feature-flags] Seguridad modular
+            'license.active' => EnsureLicenseIsActive::class, // [L-02] Control de licencia activa en backend
             'session.validate' => ValidateSessionToken::class, // [single-session] Sesión única por usuario
             'role.admin' => EnsureUserIsAdmin::class,
             'permission.or.pin' => EnsurePermissionOrPin::class,

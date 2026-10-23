@@ -136,4 +136,7 @@ return [
     */
     'rescue_migrate_secret' => env('RESCUE_MIGRATE_SECRET', ''),
 
+    'license_server_url' => env('LICENSE_SERVER_URL', 'https://pos-license-server-2jma.onrender.com'),
+    'license_signing_secret' => env('LICENSE_SIGNING_SECRET'),
+
 ];

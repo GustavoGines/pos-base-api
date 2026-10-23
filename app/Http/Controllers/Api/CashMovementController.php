@@ -259,19 +259,19 @@ class CashMovementController extends Controller
     public function destroy(Request $request, $id)
     {
         $movement = CashMovement::findOrFail($id);
-        $user = $request->attributes->get('authenticated_user');
+        $user = $request->user() ?? $request->attributes->get('authenticated_user');
 
         // Candado de Seguridad 1: Debe haber un turno abierto
-        $activeShift = CashShift::where('status', 'open')->latest('id')->first();
-        if (! $activeShift) {
+        if (! CashShift::where('status', 'open')->exists()) {
             return response()->json([
                 'message' => 'No hay un turno de caja abierto.',
                 'error' => 'Para anular un movimiento, debe tener una caja abierta.',
             ], 403);
         }
 
-        // Candado de Seguridad 2: El movimiento debe pertenecer al turno actual
-        if ($movement->cash_shift_id !== $activeShift->id) {
+        // Candado de Seguridad 2: El turno al que pertenece el movimiento debe seguir abierto (multi-caja safe)
+        $movementShift = CashShift::find($movement->cash_shift_id);
+        if (! $movementShift || $movementShift->status !== 'open') {
             return response()->json([
                 'message' => 'Movimiento bloqueado por seguridad.',
                 'error' => 'Solo se pueden anular movimientos pertenecientes al turno de caja actual. Los movimientos de turnos cerrados están bloqueados y son inmutables.',
@@ -306,7 +306,7 @@ class CashMovementController extends Controller
                 }
 
                 // Marcar auditoría y borrar
-                $movement->deleted_by = $user->id;
+                $movement->deleted_by = $user?->id;
                 $movement->save();
                 $movement->delete();
             });

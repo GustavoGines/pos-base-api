@@ -25,7 +25,20 @@ class ValidateSessionToken
 {
     public function handle(Request $request, Closure $next): Response
     {
-        $token = $request->header('X-Session-Token') ?? $request->query('token');
+        $token = $request->header('X-Session-Token') ?? $request->bearerToken();
+
+        // L-15: Solo permitir ?token= en descargas GET directas de navegador (ej. plantilla Excel / export / PDF)
+        if (! $token && $request->isMethod('GET') && (
+            $request->is('api/catalog/products/import-template') ||
+            $request->is('api/catalog/products/export') ||
+            $request->is('api/cash-movements/export') ||
+            $request->is('api/sales/*/ticket-pdf') ||
+            $request->is('api/reports/*/export') ||
+            $request->is('api/reports/*/pdf') ||
+            $request->is('api/system/backup')
+        )) {
+            $token = $request->query('token');
+        }
 
         if (! $token) {
             return response()->json([

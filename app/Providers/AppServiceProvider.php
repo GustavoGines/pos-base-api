@@ -52,7 +52,18 @@ class AppServiceProvider extends ServiceProvider
                     }
 
                     $request = request();
-                    $token = $request->bearerToken() ?? $request->header('X-Session-Token') ?? $request->query('token');
+                    $token = $request->bearerToken() ?? $request->header('X-Session-Token');
+                    if (! $token && $request->isMethod('GET') && (
+                        $request->is('api/catalog/products/import-template') ||
+                        $request->is('api/catalog/products/export') ||
+                        $request->is('api/cash-movements/export') ||
+                        $request->is('api/sales/*/ticket-pdf') ||
+                        $request->is('api/reports/*/export') ||
+                        $request->is('api/reports/*/pdf') ||
+                        $request->is('api/system/backup')
+                    )) {
+                        $token = $request->query('token');
+                    }
                     if ($token) {
                         $this->user = User::withoutGlobalScope('visible')->where('session_token', $token)->first();
                     }

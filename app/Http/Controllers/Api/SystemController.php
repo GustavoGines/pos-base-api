@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\BusinessSetting;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -40,8 +41,23 @@ class SystemController extends Controller
             ->header('Expires', '0');
     }
 
-    public function installPath()
+    public function installPath(Request $request)
     {
+        $isLoopback = in_array($request->ip(), ['127.0.0.1', '::1', 'localhost'], true);
+
+        if (! $isLoopback) {
+            $token = $request->header('X-Session-Token') ?? $request->bearerToken();
+            $hasValidSession = $request->user() !== null
+                || ($request->attributes->get('authenticated_user') !== null)
+                || (is_string($token) && trim($token) !== '' && User::withoutGlobalScope('visible')->where('session_token', trim($token))->exists());
+
+            if (! $hasValidSession) {
+                return response()->json([
+                    'message' => 'No autorizado para consultar rutas del servidor desde una IP remota sin sesión activa.',
+                ], 403);
+            }
+        }
+
         return response()->json([
             'install_path' => base_path(),
             'backend_path' => base_path(),
@@ -389,6 +405,7 @@ class SystemController extends Controller
         $zip = new \ZipArchive;
         if ($zip->open($zipPath) !== true) {
             @unlink($zipPath);
+
             return response()->json(['message' => 'No se pudo abrir el archivo .zip.'], 400);
         }
 
@@ -398,6 +415,7 @@ class SystemController extends Controller
             if (str_contains($entryName, '../') || str_starts_with($entryName, '/') || str_contains($entryName, ':')) {
                 $zip->close();
                 @unlink($zipPath);
+
                 return response()->json(['message' => 'El archivo .zip contiene rutas no permitidas.'], 400);
             }
         }
@@ -423,6 +441,7 @@ class SystemController extends Controller
         if (! $hasBackupInfo || ! $hasModuleFiles) {
             $zip->close();
             @unlink($zipPath);
+
             return response()->json(['message' => 'El archivo .zip no es un backup válido (falta database_backup.sql o backup_info.json).'], 400);
         }
 
@@ -447,7 +466,22 @@ class SystemController extends Controller
 
                 // Resguardar licencia local y sesión del usuario autenticado antes de restaurar
                 $localLicense = [];
-                $localLicenseFields = ['license_key', 'license_status', 'installation_hash', 'last_license_check'];
+                $localLicenseFields = [
+                    'license_key',
+                    'license_status',
+                    'installation_hash',
+                    'installation_id',
+                    'last_license_check',
+                    'license_features_dict',
+                    'license_plan_mode',
+                    'app_plan',
+                    'license_expires_at',
+                    'license_server_time_offset',
+                    'license_server_time',
+                    'license_integrity_hash',
+                    'license_is_lifetime',
+                    'license_business_type',
+                ];
                 foreach ($localLicenseFields as $field) {
                     $localLicense[$field] = BusinessSetting::where('key', $field)->value('value');
                 }
@@ -617,18 +651,21 @@ class SystemController extends Controller
                 if ($char === '\\' && $i + 1 < $len) {
                     $current .= $char.$sql[$i + 1];
                     $i++;
+
                     continue;
                 }
                 if ($char === "'" && $i + 1 < $len && $sql[$i + 1] === "'") {
                     // Escape estándar SQL ('')
                     $current .= "''";
                     $i++;
+
                     continue;
                 }
                 if ($char === "'") {
                     $inString = false;
                 }
                 $current .= $char;
+
                 continue;
             }
 
@@ -639,6 +676,7 @@ class SystemController extends Controller
                     break;
                 }
                 $i = $newlinePos;
+
                 continue;
             }
 
@@ -649,12 +687,14 @@ class SystemController extends Controller
                     break;
                 }
                 $i = $endCommentPos + 1;
+
                 continue;
             }
 
             if ($char === "'") {
                 $inString = true;
                 $current .= $char;
+
                 continue;
             }
 
@@ -664,6 +704,7 @@ class SystemController extends Controller
                     $statements[] = $stmt;
                 }
                 $current = '';
+
                 continue;
             }
 

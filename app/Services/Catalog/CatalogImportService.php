@@ -129,6 +129,8 @@ class CatalogImportService
                     return (float) $val;
                 };
 
+                $oldStock = $isNew ? 0.0 : (float) $product->stock;
+
                 if ($nombre) {
                     $product->name = $nombre;
                 }
@@ -152,6 +154,22 @@ class CatalogImportService
                 }
 
                 $product->save();
+
+                if ($stock !== null) {
+                    $newStock = (float) $product->stock;
+                    $diff = round($newStock - $oldStock, 4);
+                    if ($diff != 0.0) {
+                        $actorUser = request()?->user() ?? request()?->attributes?->get('authenticated_user');
+                        $product->stockMovements()->create([
+                            'user_id' => $actorUser?->id ?? auth()->id(),
+                            'type' => $diff > 0 ? 'in' : 'out',
+                            'quantity' => abs($diff),
+                            'notes' => $isNew
+                                ? 'Stock inicial (Importación de catálogo)'
+                                : "Actualización por importación de catálogo (de {$oldStock} a {$newStock})",
+                        ]);
+                    }
+                }
 
                 if ($isNew) {
                     $createdCount++;

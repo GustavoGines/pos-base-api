@@ -37,8 +37,10 @@ class SettingController extends Controller
             $settings['logo_url'] = asset('storage/'.$settings['logo_path']);
         }
 
-        // Agregar metadata dinámica para el DRM Heartbeat
+        // Agregar metadata dinámica para el DRM Heartbeat (L-18: priorizar hora verificada del servidor remoto si fue sincronizada recientemente)
+        $remoteServerTime = BusinessSetting::where('key', 'license_server_time')->value('value');
         $settings['server_time'] = now()->toIso8601String();
+        $settings['license_server_time'] = $remoteServerTime;
         $settings['grace_period_hours'] = 72;
 
         // Valores por defecto para el motor de Acceso Rápido POS

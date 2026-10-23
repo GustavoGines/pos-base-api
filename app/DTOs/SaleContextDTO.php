@@ -28,7 +28,7 @@ class SaleContextDTO
         }
 
         return new self(
-            userId: $data['user_id'] ?? $authenticatedUserId,
+            userId: $authenticatedUserId ?? ($data['user_id'] ?? null),
             cashShiftId: $data['cash_shift_id'] ?? null,
             customerId: $data['customer_id'] ?? null,
             quoteId: $data['quote_id'] ?? null,

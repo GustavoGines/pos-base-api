@@ -41,7 +41,7 @@ class StockController extends Controller
                 $actorUser = $request->user() ?? $request->attributes->get('authenticated_user');
                 StockMovement::create([
                     'product_id' => $product->id,
-                    'user_id' => $validated['user_id'] ?? $actorUser?->id,
+                    'user_id' => $actorUser?->id ?? ($validated['user_id'] ?? null),
                     'authorized_by_admin_id' => $request->attributes->get('authorized_by_admin_id')
                         ?? ($actorUser?->isAdmin() ? $actorUser->id : null),
                     'type' => $type,

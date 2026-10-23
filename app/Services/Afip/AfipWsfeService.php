@@ -6,6 +6,8 @@ namespace App\Services\Afip;
 
 use App\Models\BusinessSetting;
 use App\Models\Sale;
+use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use InvalidArgumentException;
 use RuntimeException;
@@ -81,6 +83,88 @@ class AfipWsfeService
     }
 
     /**
+     * Consulta en AFIP WSFEv1 (FECompConsultar) si un comprobante específico ya fue emitido.
+     * Útil para recuperar el CAE ante cortes de red o timeouts durante FECAESolicitar.
+     *
+     * @return array{cae: string, cae_expiration: string, resultado: string, cbte_nro: int, imp_total: float}|null
+     */
+    public function consultVoucher(int $pointOfSale, int $voucherType, int $voucherNumber): ?array
+    {
+        $ticket = $this->wsaaService->getAccessTicket('wsfe');
+        $cuit = BusinessSetting::where('key', 'afip_cuit')->value('value');
+        $cuit = (int) preg_replace('/\D/', '', (string) $cuit);
+
+        $endpoint = $this->getWsfeEndpoint();
+
+        $soapEnvelope = '<?xml version="1.0" encoding="utf-8"?>'.
+            '<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'.
+            '<soap:Body>'.
+            '<FECompConsultar xmlns="http://ar.gov.afip.dif.FEV1/">'.
+            '<Auth>'.
+            '<Token>'.htmlspecialchars($ticket['token'], ENT_XML1).'</Token>'.
+            '<Sign>'.htmlspecialchars($ticket['sign'], ENT_XML1).'</Sign>'.
+            '<Cuit>'.$cuit.'</Cuit>'.
+            '</Auth>'.
+            '<FeCompConsReq>'.
+            '<CbteTipo>'.$voucherType.'</CbteTipo>'.
+            '<CbteNro>'.$voucherNumber.'</CbteNro>'.
+            '<PtoVta>'.$pointOfSale.'</PtoVta>'.
+            '</FeCompConsReq>'.
+            '</FECompConsultar>'.
+            '</soap:Body>'.
+            '</soap:Envelope>';
+
+        $response = Http::withHeaders([
+            'Content-Type' => 'text/xml; charset=utf-8',
+            'SOAPAction' => '"http://ar.gov.afip.dif.FEV1/FECompConsultar"',
+        ])->timeout(10)->send('POST', $endpoint, [
+            'body' => $soapEnvelope,
+        ]);
+
+        if (! $response->successful()) {
+            throw new RuntimeException("AFIP WSFEv1 Error HTTP {$response->status()}: {$response->body()}");
+        }
+
+        $xml = $response->body();
+
+        if (str_contains($xml, '<faultstring>')) {
+            preg_match('/<faultstring>(.*?)<\/faultstring>/s', $xml, $m);
+            throw new RuntimeException('AFIP WSFE Fault: '.($m[1] ?? 'Error desconocido'));
+        }
+
+        // Código 602 en FECompConsultar indica que el comprobante no consta en AFIP
+        if (preg_match('/<Errors>(.*?)<\/Errors>/s', $xml, $errMatch)) {
+            if (preg_match('/<Code>\s*602\s*<\/Code>/', $errMatch[1])) {
+                return null;
+            }
+            preg_match_all('/<Msg>(.*?)<\/Msg>/s', $errMatch[1], $msgMatch);
+            $msg = implode('; ', $msgMatch[1] ?? ['Error al consultar comprobante en AFIP']);
+            throw new RuntimeException("AFIP WSFE Error: {$msg}");
+        }
+
+        if (! preg_match('/<CodAutorizacion>(\d+)<\/CodAutorizacion>/', $xml, $caeMatch)) {
+            return null;
+        }
+
+        preg_match('/<FchVto>(\d{8})<\/FchVto>/', $xml, $vtoMatch);
+        preg_match('/<Resultado>([A-Z])<\/Resultado>/', $xml, $resMatch);
+        preg_match('/<ImpTotal>([\d\.]+)<\/ImpTotal>/', $xml, $impMatch);
+
+        $rawVto = $vtoMatch[1] ?? '';
+        $caeExpiration = ! empty($rawVto)
+            ? substr($rawVto, 0, 4).'-'.substr($rawVto, 4, 2).'-'.substr($rawVto, 6, 2)
+            : date('Y-m-d', strtotime('+10 days'));
+
+        return [
+            'cae' => $caeMatch[1],
+            'cae_expiration' => $caeExpiration,
+            'resultado' => $resMatch[1] ?? 'A',
+            'cbte_nro' => $voucherNumber,
+            'imp_total' => isset($impMatch[1]) ? (float) $impMatch[1] : 0.0,
+        ];
+    }
+
+    /**
      * Solicita autorización fiscal (CAE) a WSFEv1 para una venta del sistema POS.
      *
      * @param  Sale  $sale  Venta a facturar
@@ -150,10 +234,6 @@ class AfipWsfeService
         }
 
         $numericDocNro = (int) $docNumber;
-
-        // Correlatividad numérica estricta
-        $lastNumber = $this->getLastVoucherNumber($ptoVta, $voucherType);
-        $cbteNro = $lastNumber + 1;
 
         // Percepción IIBB
         $perceptionAmount = round((float) ($options['iibb_perception_amount'] ?? $sale->iibb_perception_amount ?? 0.0), 2);
@@ -351,55 +431,74 @@ class AfipWsfeService
             $cbtesAsocXml .= '</CbtesAsoc>';
         }
 
-        // Armado del Envelope SOAP FECAESolicitar
-        $soapEnvelope = '<?xml version="1.0" encoding="utf-8"?>'.
-            '<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'.
-            '<soap:Body>'.
-            '<FECAESolicitar xmlns="http://ar.gov.afip.dif.FEV1/">'.
-            '<Auth>'.
-            '<Token>'.htmlspecialchars($ticket['token'], ENT_XML1).'</Token>'.
-            '<Sign>'.htmlspecialchars($ticket['sign'], ENT_XML1).'</Sign>'.
-            '<Cuit>'.$issuerCuit.'</Cuit>'.
-            '</Auth>'.
-            '<FeCAEReq>'.
-            '<FeCabReq>'.
-            '<CantReg>1</CantReg>'.
-            '<PtoVta>'.$ptoVta.'</PtoVta>'.
-            '<CbteTipo>'.$voucherType.'</CbteTipo>'.
-            '</FeCabReq>'.
-            '<FeDetReq>'.
-            '<FECAEDetRequest>'.
-            '<Concepto>1</Concepto>'.
-            '<DocTipo>'.$docType.'</DocTipo>'.
-            '<DocNro>'.$numericDocNro.'</DocNro>'.
-            '<CbteDesde>'.$cbteNro.'</CbteDesde>'.
-            '<CbteHasta>'.$cbteNro.'</CbteHasta>'.
-            '<CbteFch>'.$cbteFch.'</CbteFch>'.
-            '<ImpTotal>'.number_format($totalAmount, 2, '.', '').'</ImpTotal>'.
-            '<ImpTotConc>0.00</ImpTotConc>'.
-            '<ImpNeto>'.number_format($netAmount, 2, '.', '').'</ImpNeto>'.
-            '<ImpOpEx>0.00</ImpOpEx>'.
-            '<ImpTrib>'.number_format($perceptionAmount, 2, '.', '').'</ImpTrib>'.
-            '<ImpIVA>'.number_format($ivaAmount, 2, '.', '').'</ImpIVA>'.
-            '<MonId>PES</MonId>'.
-            '<MonCotiz>1</MonCotiz>'.
-            '<CondicionIVAReceptorId>'.AfipHelper::getCondicionIvaReceptorId($receiverTaxCondition).'</CondicionIVAReceptorId>'.
-            $cbtesAsocXml.
-            $tributosXml.
-            $ivaXml.
-            '</FECAEDetRequest>'.
-            '</FeDetReq>'.
-            '</FeCAEReq>'.
-            '</FECAESolicitar>'.
-            '</soap:Body>'.
-            '</soap:Envelope>';
+        // Lock atómico por CUIT + Punto de Venta + Tipo de Comprobante para evitar colisión
+        // de correlatividad (FECompUltimoAutorizado -> FECAESolicitar) en peticiones concurrentes.
+        $cacheDriver = config('cache.default') === 'database' ? 'file' : config('cache.default');
+        $lock = Cache::store($cacheDriver)->lock("afip_wsfe_lock:{$issuerCuit}:{$ptoVta}:{$voucherType}", 25);
 
-        $response = Http::withHeaders([
-            'Content-Type' => 'text/xml; charset=utf-8',
-            'SOAPAction' => '"http://ar.gov.afip.dif.FEV1/FECAESolicitar"',
-        ])->timeout(12)->send('POST', $endpoint, [
-            'body' => $soapEnvelope,
-        ]);
+        try {
+            $lock->block(15);
+        } catch (LockTimeoutException) {
+            throw new RuntimeException('Otro comprobante fiscal se está emitiendo en este punto de venta. Intente nuevamente en unos segundos.');
+        }
+
+        try {
+            // Correlatividad numérica estricta dentro de la sección crítica
+            $lastNumber = $this->getLastVoucherNumber($ptoVta, $voucherType);
+            $cbteNro = $lastNumber + 1;
+
+            // Armado del Envelope SOAP FECAESolicitar
+            $soapEnvelope = '<?xml version="1.0" encoding="utf-8"?>'.
+                '<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'.
+                '<soap:Body>'.
+                '<FECAESolicitar xmlns="http://ar.gov.afip.dif.FEV1/">'.
+                '<Auth>'.
+                '<Token>'.htmlspecialchars($ticket['token'], ENT_XML1).'</Token>'.
+                '<Sign>'.htmlspecialchars($ticket['sign'], ENT_XML1).'</Sign>'.
+                '<Cuit>'.$issuerCuit.'</Cuit>'.
+                '</Auth>'.
+                '<FeCAEReq>'.
+                '<FeCabReq>'.
+                '<CantReg>1</CantReg>'.
+                '<PtoVta>'.$ptoVta.'</PtoVta>'.
+                '<CbteTipo>'.$voucherType.'</CbteTipo>'.
+                '</FeCabReq>'.
+                '<FeDetReq>'.
+                '<FECAEDetRequest>'.
+                '<Concepto>1</Concepto>'.
+                '<DocTipo>'.$docType.'</DocTipo>'.
+                '<DocNro>'.$numericDocNro.'</DocNro>'.
+                '<CbteDesde>'.$cbteNro.'</CbteDesde>'.
+                '<CbteHasta>'.$cbteNro.'</CbteHasta>'.
+                '<CbteFch>'.$cbteFch.'</CbteFch>'.
+                '<ImpTotal>'.number_format($totalAmount, 2, '.', '').'</ImpTotal>'.
+                '<ImpTotConc>0.00</ImpTotConc>'.
+                '<ImpNeto>'.number_format($netAmount, 2, '.', '').'</ImpNeto>'.
+                '<ImpOpEx>0.00</ImpOpEx>'.
+                '<ImpTrib>'.number_format($perceptionAmount, 2, '.', '').'</ImpTrib>'.
+                '<ImpIVA>'.number_format($ivaAmount, 2, '.', '').'</ImpIVA>'.
+                '<MonId>PES</MonId>'.
+                '<MonCotiz>1</MonCotiz>'.
+                '<CondicionIVAReceptorId>'.AfipHelper::getCondicionIvaReceptorId($receiverTaxCondition).'</CondicionIVAReceptorId>'.
+                $cbtesAsocXml.
+                $tributosXml.
+                $ivaXml.
+                '</FECAEDetRequest>'.
+                '</FeDetReq>'.
+                '</FeCAEReq>'.
+                '</FECAESolicitar>'.
+                '</soap:Body>'.
+                '</soap:Envelope>';
+
+            $response = Http::withHeaders([
+                'Content-Type' => 'text/xml; charset=utf-8',
+                'SOAPAction' => '"http://ar.gov.afip.dif.FEV1/FECAESolicitar"',
+            ])->timeout(12)->send('POST', $endpoint, [
+                'body' => $soapEnvelope,
+            ]);
+        } finally {
+            $lock->release();
+        }
 
         if (! $response->successful()) {
             throw new RuntimeException("AFIP WSFEv1 Error HTTP {$response->status()}: {$response->body()}");
