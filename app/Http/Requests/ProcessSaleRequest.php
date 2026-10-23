@@ -47,7 +47,11 @@ class ProcessSaleRequest extends FormRequest
             'delivery_address' => 'nullable|string|max:500',
             'status' => 'nullable|string|in:pending,completed',
             'items' => 'required|array|min:1',
-            'items.*.product_id' => 'required|integer|exists:products,id',
+            'items.*.product_id' => [
+                'required',
+                'integer',
+                Rule::exists('products', 'id')->whereNull('deleted_at'),
+            ],
             'items.*.quantity' => 'required|numeric|min:0.001',
             'items.*.unit_price' => 'required|numeric|min:0',
             'items.*.subtotal' => 'required|numeric|min:0',
@@ -75,6 +79,9 @@ class ProcessSaleRequest extends FormRequest
             // Autorización de descuento puntual
             'discount_pin' => 'nullable|string|size:4|regex:/^[0-9]{4}$/',
             'admin_pin' => 'nullable|string|min:4|max:10',
+
+            // Clave de idempotencia ante reintentos de red (F3-RESIL-01)
+            'client_transaction_id' => 'nullable|string|max:64',
         ];
     }
 
@@ -92,15 +99,45 @@ class ProcessSaleRequest extends FormRequest
     {
         return [
             function ($validator) {
+                if ($this->input('status') === 'pending') {
+                    return;
+                }
+
                 $payments = $this->input('payments', []);
                 if (is_array($payments) && ! empty($payments)) {
                     $paymentMethodIds = collect($payments)->pluck('payment_method_id')->filter()->unique();
-                    $hasCuentaCorriente = PaymentMethod::whereIn('id', $paymentMethodIds)
-                        ->where('code', 'cuenta_corriente')
-                        ->exists();
+                    $methodsByCode = PaymentMethod::whereIn('id', $paymentMethodIds)
+                        ->pluck('code', 'id');
 
+                    $hasCuentaCorriente = $methodsByCode->contains('cuenta_corriente');
                     if ($hasCuentaCorriente && empty($this->input('customer_id'))) {
                         $validator->errors()->add('customer_id', 'Debe seleccionar un cliente para ventas en Cuenta Corriente.');
+                    }
+
+                    $hasCheque = $methodsByCode->contains('cheque');
+                    if ($hasCheque) {
+                        $checkDetails = $this->input('check_details');
+                        if (empty($checkDetails) || ! is_array($checkDetails)) {
+                            $validator->errors()->add('check_details', 'Debe completar los datos del cheque (banco, número y firmante).');
+                        } else {
+                            $checksToValidate = isset($checkDetails[0]) && is_array($checkDetails[0])
+                                ? $checkDetails
+                                : [$checkDetails];
+
+                            foreach ($checksToValidate as $idx => $check) {
+                                if (
+                                    empty(trim((string) ($check['bank_name'] ?? ''))) ||
+                                    empty(trim((string) ($check['check_number'] ?? ''))) ||
+                                    empty(trim((string) ($check['issuer_name'] ?? '')))
+                                ) {
+                                    $validator->errors()->add(
+                                        "check_details.{$idx}",
+                                        'Debe completar los datos obligatorios del cheque (banco, número y firmante).'
+                                    );
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
             },

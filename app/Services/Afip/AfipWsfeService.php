@@ -359,10 +359,15 @@ class AfipWsfeService
             }
             $diff = round($baseSale - ($netAmount + $ivaAmount), 2);
             if ($diff !== 0.00 && abs($diff) < 1.00) {
-                $netAmount = round($baseSale - $ivaAmount, 2);
                 $firstKey = array_key_first($aliquotResults);
                 if ($firstKey !== null) {
-                    $aliquotResults[$firstKey]['BaseImp'] = round($aliquotResults[$firstKey]['BaseImp'] + $diff, 2);
+                    $adjustedGross = round((float) $groupedByAliquot[$firstKey]['subtotal'] + $diff, 2);
+                    $recalc = AfipHelper::calculateNetAndIva($adjustedGross, (float) $groupedByAliquot[$firstKey]['rate']);
+                    $aliquotResults[$firstKey]['BaseImp'] = $recalc['net'];
+                    $aliquotResults[$firstKey]['Importe'] = $recalc['iva'];
+
+                    $netAmount = round(array_sum(array_column($aliquotResults, 'BaseImp')), 2);
+                    $ivaAmount = round(array_sum(array_column($aliquotResults, 'Importe')), 2);
                 }
             }
 
@@ -436,6 +441,11 @@ class AfipWsfeService
         $cacheDriver = config('cache.default') === 'database' ? 'file' : config('cache.default');
         $lock = Cache::store($cacheDriver)->lock("afip_wsfe_lock:{$issuerCuit}:{$ptoVta}:{$voucherType}", 25);
 
+        $isCreditNote = ! empty($options['cbtes_asoc']);
+        $pendingCacheKey = ! empty($sale->id)
+            ? ('afip_pending_'.($isCreditNote ? 'nc' : 'sale').":{$sale->id}:{$ptoVta}:{$voucherType}")
+            : null;
+
         try {
             $lock->block(15);
         } catch (LockTimeoutException) {
@@ -443,9 +453,63 @@ class AfipWsfeService
         }
 
         try {
+            // Reconciliación diferida (FN-F3-01): si la misma venta tuvo un intento previo interrumpido,
+            // verificamos con FECompConsultar antes de pedir un nuevo correlativo para evitar duplicar CAE.
+            if ($pendingCacheKey !== null && Cache::store($cacheDriver)->has($pendingCacheKey)) {
+                $pendingData = Cache::store($cacheDriver)->get($pendingCacheKey);
+                $pendingCbteNro = (int) ($pendingData['cbte_nro'] ?? 0);
+                if ($pendingCbteNro > 0) {
+                    try {
+                        $recovered = $this->consultVoucher($ptoVta, $voucherType, $pendingCbteNro);
+                        if (
+                            $recovered !== null
+                            && ($recovered['resultado'] ?? '') === 'A'
+                            && ! empty($recovered['cae'])
+                            && ($recovered['imp_total'] <= 0.0 || abs($recovered['imp_total'] - $totalAmount) <= 0.05)
+                        ) {
+                            Cache::store($cacheDriver)->forget($pendingCacheKey);
+
+                            return $this->buildAuthorizedInvoiceResult(
+                                voucherType: $voucherType,
+                                voucherLetter: $voucherLetter,
+                                ptoVta: $ptoVta,
+                                cbteNro: $pendingCbteNro,
+                                cae: (string) $recovered['cae'],
+                                caeExpiration: (string) $recovered['cae_expiration'],
+                                docType: $docType,
+                                docNumber: (string) $docNumber,
+                                numericDocNro: $numericDocNro,
+                                receiverName: $receiverName,
+                                receiverAddress: $receiverAddress,
+                                receiverTaxCondition: $receiverTaxCondition,
+                                netAmount: $netAmount,
+                                ivaAmount: $ivaAmount,
+                                perceptionAmount: $perceptionAmount,
+                                tributesBreakdown: $tributesBreakdown,
+                                totalAmount: $totalAmount,
+                                ivaBreakdown: $ivaBreakdown,
+                                issuerCuit: $issuerCuit,
+                                resultado: (string) $recovered['resultado'],
+                            );
+                        }
+                    } catch (\Throwable) {
+                        // Si falla la consulta preventiva, procedemos con la emisión normal
+                    }
+                }
+            }
+
             // Correlatividad numérica estricta dentro de la sección crítica
             $lastNumber = $this->getLastVoucherNumber($ptoVta, $voucherType);
             $cbteNro = $lastNumber + 1;
+
+            if ($pendingCacheKey !== null) {
+                Cache::store($cacheDriver)->put($pendingCacheKey, [
+                    'pto_vta' => $ptoVta,
+                    'voucher_type' => $voucherType,
+                    'cbte_nro' => $cbteNro,
+                    'total_amount' => $totalAmount,
+                ], now()->addHours(24));
+            }
 
             // Armado del Envelope SOAP FECAESolicitar
             $soapEnvelope = '<?xml version="1.0" encoding="utf-8"?>'.
@@ -490,12 +554,60 @@ class AfipWsfeService
                 '</soap:Body>'.
                 '</soap:Envelope>';
 
-            $response = Http::withHeaders([
-                'Content-Type' => 'text/xml; charset=utf-8',
-                'SOAPAction' => '"http://ar.gov.afip.dif.FEV1/FECAESolicitar"',
-            ])->timeout(12)->send('POST', $endpoint, [
-                'body' => $soapEnvelope,
-            ]);
+            try {
+                $response = Http::withHeaders([
+                    'Content-Type' => 'text/xml; charset=utf-8',
+                    'SOAPAction' => '"http://ar.gov.afip.dif.FEV1/FECAESolicitar"',
+                ])->timeout(12)->send('POST', $endpoint, [
+                    'body' => $soapEnvelope,
+                ]);
+
+                if ($response->status() >= 500) {
+                    throw new RuntimeException("AFIP WSFEv1 Error HTTP {$response->status()}: {$response->body()}");
+                }
+            } catch (\Throwable $requestException) {
+                // F3-AFIP-01: Reconciliación inmediata ante timeout o error HTTP 5xx en FECAESolicitar
+                try {
+                    $recovered = $this->consultVoucher($ptoVta, $voucherType, $cbteNro);
+                    if (
+                        $recovered !== null
+                        && ($recovered['resultado'] ?? '') === 'A'
+                        && ! empty($recovered['cae'])
+                        && ($recovered['imp_total'] <= 0.0 || abs($recovered['imp_total'] - $totalAmount) <= 0.05)
+                    ) {
+                        if ($pendingCacheKey !== null) {
+                            Cache::store($cacheDriver)->forget($pendingCacheKey);
+                        }
+
+                        return $this->buildAuthorizedInvoiceResult(
+                            voucherType: $voucherType,
+                            voucherLetter: $voucherLetter,
+                            ptoVta: $ptoVta,
+                            cbteNro: $cbteNro,
+                            cae: (string) $recovered['cae'],
+                            caeExpiration: (string) $recovered['cae_expiration'],
+                            docType: $docType,
+                            docNumber: (string) $docNumber,
+                            numericDocNro: $numericDocNro,
+                            receiverName: $receiverName,
+                            receiverAddress: $receiverAddress,
+                            receiverTaxCondition: $receiverTaxCondition,
+                            netAmount: $netAmount,
+                            ivaAmount: $ivaAmount,
+                            perceptionAmount: $perceptionAmount,
+                            tributesBreakdown: $tributesBreakdown,
+                            totalAmount: $totalAmount,
+                            ivaBreakdown: $ivaBreakdown,
+                            issuerCuit: $issuerCuit,
+                            resultado: (string) $recovered['resultado'],
+                        );
+                    }
+                } catch (\Throwable) {
+                    // Si FECompConsultar también falla, relanzamos la excepción original
+                }
+
+                throw $requestException;
+            }
         } finally {
             $lock->release();
         }
@@ -514,6 +626,9 @@ class AfipWsfeService
 
         // 2. Errores a nivel Cabecera
         if (preg_match('/<Errors>(.*?)<\/Errors>/s', $xml, $errMatch)) {
+            if ($pendingCacheKey !== null) {
+                Cache::store($cacheDriver)->forget($pendingCacheKey);
+            }
             preg_match_all('/<Msg>(.*?)<\/Msg>/s', $errMatch[1], $msgs);
             $errList = implode('; ', $msgs[1] ?? []);
             throw new RuntimeException("AFIP WSFE Error: {$errList}");
@@ -524,6 +639,9 @@ class AfipWsfeService
         $resultado = $resMatch[1] ?? 'R';
 
         if ($resultado !== 'A') {
+            if ($pendingCacheKey !== null) {
+                Cache::store($cacheDriver)->forget($pendingCacheKey);
+            }
             $obsMsg = 'Comprobante rechazado por AFIP';
             if (preg_match('/<Observaciones>(.*?)<\/Observaciones>/s', $xml, $obsMatch)) {
                 preg_match_all('/<Msg>(.*?)<\/Msg>/s', $obsMatch[1], $obsMsgs);
@@ -543,11 +661,63 @@ class AfipWsfeService
             throw new RuntimeException('La respuesta de AFIP no contiene un CAE válido.');
         }
 
+        if ($pendingCacheKey !== null) {
+            Cache::store($cacheDriver)->forget($pendingCacheKey);
+        }
+
         $caeExpiration = ! empty($rawVto)
             ? substr($rawVto, 0, 4).'-'.substr($rawVto, 4, 2).'-'.substr($rawVto, 6, 2)
             : date('Y-m-d', strtotime('+10 days'));
 
-        // Generar URL del Código QR Fiscal Oficial RG 4892
+        return $this->buildAuthorizedInvoiceResult(
+            voucherType: $voucherType,
+            voucherLetter: $voucherLetter,
+            ptoVta: $ptoVta,
+            cbteNro: $cbteNro,
+            cae: $cae,
+            caeExpiration: $caeExpiration,
+            docType: $docType,
+            docNumber: (string) $docNumber,
+            numericDocNro: $numericDocNro,
+            receiverName: $receiverName,
+            receiverAddress: $receiverAddress,
+            receiverTaxCondition: $receiverTaxCondition,
+            netAmount: $netAmount,
+            ivaAmount: $ivaAmount,
+            perceptionAmount: $perceptionAmount,
+            tributesBreakdown: $tributesBreakdown,
+            totalAmount: $totalAmount,
+            ivaBreakdown: $ivaBreakdown,
+            issuerCuit: $issuerCuit,
+            resultado: $resultado,
+        );
+    }
+
+    /**
+     * Construye el arreglo canónico de respuesta de comprobante fiscal autorizado.
+     */
+    protected function buildAuthorizedInvoiceResult(
+        int $voucherType,
+        string $voucherLetter,
+        int $ptoVta,
+        int $cbteNro,
+        string $cae,
+        string $caeExpiration,
+        int $docType,
+        string $docNumber,
+        int $numericDocNro,
+        string $receiverName,
+        string $receiverAddress,
+        string $receiverTaxCondition,
+        float $netAmount,
+        float $ivaAmount,
+        float $perceptionAmount,
+        ?array $tributesBreakdown,
+        float $totalAmount,
+        array $ivaBreakdown,
+        int $issuerCuit,
+        string $resultado = 'A',
+    ): array {
         $qrUrl = $this->buildQrUrl([
             'fecha' => date('Y-m-d'),
             'cuit' => $issuerCuit,
@@ -569,7 +739,7 @@ class AfipWsfeService
             'cae' => $cae,
             'cae_expiration' => $caeExpiration,
             'doc_type' => $docType,
-            'doc_number' => (string) $docNumber,
+            'doc_number' => $docNumber,
             'receiver_name' => $receiverName,
             'receiver_address' => $receiverAddress,
             'receiver_tax_condition' => $receiverTaxCondition,

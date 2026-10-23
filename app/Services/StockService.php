@@ -61,7 +61,7 @@ class StockService
 
         foreach ($items as $itemData) {
             if (! isset($products[$itemData['product_id']])) {
-                continue;
+                throw new \InvalidArgumentException("El producto con ID {$itemData['product_id']} ya no está disponible o fue dado de baja.");
             }
 
             $product = $products[$itemData['product_id']];
@@ -97,14 +97,14 @@ class StockService
                 $canonicalChild->save(); // Dispara Observers
 
                 $this->logMovement($canonicalChild->id, -$qtyDeducted, 'sale',
-                    ($isAdjustment ? 'Ajuste Recall ' : 'Venta ')."Ticket #{$sale->id} (Hijo de: {$product->name})",
+                    ($isAdjustment ? 'Ajuste Recall ' : 'Venta ').StockMovement::CHECKOUT_NOTE_TOKEN."{$sale->id} (Hijo de: {$product->name})",
                     $context, $sale);
             }
         } else {
             // Update the canonical product (which $product already is, as it comes from $products)
             $product->stock -= $qty;
             $this->logMovement($product->id, -$qty, 'sale',
-                ($isAdjustment ? 'Ajuste Recall ' : 'Venta ')."Ticket #{$sale->id}",
+                ($isAdjustment ? 'Ajuste Recall ' : 'Venta ').StockMovement::CHECKOUT_NOTE_TOKEN."{$sale->id}",
                 $context, $sale);
         }
 

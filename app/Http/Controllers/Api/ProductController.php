@@ -195,7 +195,7 @@ class ProductController extends Controller
         });
 
         if ($stockChanged) {
-            SyncProductStockToPlatformsJob::dispatch($product->id, (float) $product->stock)->afterCommit();
+            SyncProductStockToPlatformsJob::dispatchForProducts([$product->id]);
         }
 
         return response()->json($product->load(['category.rubro', 'brand', 'supplier', 'children', 'priceTiers']));

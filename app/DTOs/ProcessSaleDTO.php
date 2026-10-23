@@ -17,7 +17,8 @@ class ProcessSaleDTO
         public readonly bool $requiresDispatch,
         public readonly string $fulfillmentStatus,
         public readonly float $iibbPerceptionAmount = 0.0,
-        public readonly ?float $iibbPerceptionRate = null
+        public readonly ?float $iibbPerceptionRate = null,
+        public readonly ?string $clientTransactionId = null
     ) {}
 
     public static function fromArray(array $validated): self
@@ -37,6 +38,9 @@ class ProcessSaleDTO
             iibbPerceptionAmount: (float) ($validated['iibb_perception_amount'] ?? 0),
             iibbPerceptionRate: isset($validated['iibb_perception_rate']) && $validated['iibb_perception_rate'] !== null
                 ? (float) $validated['iibb_perception_rate']
+                : null,
+            clientTransactionId: ! empty($validated['client_transaction_id'])
+                ? (string) $validated['client_transaction_id']
                 : null
         );
     }

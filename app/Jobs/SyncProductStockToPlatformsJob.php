@@ -13,6 +13,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class SyncProductStockToPlatformsJob implements ShouldQueue
@@ -43,6 +44,42 @@ class SyncProductStockToPlatformsJob implements ShouldQueue
     }
 
     /**
+     * Despacha la sincronización asíncrona post-commit para un conjunto de IDs de productos,
+     * propagando automáticamente la actualización a cualquier Combo padre que los utilice como ingrediente.
+     */
+    public static function dispatchForProducts(iterable $productIds, ?int $excludedIntegrationId = null): void
+    {
+        $ids = [];
+        foreach ($productIds as $id) {
+            if ($id !== null && (int) $id > 0) {
+                $ids[] = (int) $id;
+            }
+        }
+        $ids = array_values(array_unique($ids));
+
+        if (empty($ids)) {
+            return;
+        }
+
+        $parentComboIds = DB::table('product_combos')
+            ->whereIn('child_product_id', $ids)
+            ->pluck('parent_product_id')
+            ->map(fn ($id) => (int) $id)
+            ->toArray();
+
+        $allIds = array_values(array_unique(array_merge($ids, $parentComboIds)));
+
+        $currentStocks = DB::table('products')
+            ->whereIn('id', $allIds)
+            ->pluck('stock', 'id');
+
+        foreach ($allIds as $id) {
+            $stockSnapshot = isset($currentStocks[$id]) ? (float) $currentStocks[$id] : null;
+            self::dispatch($id, $stockSnapshot, $excludedIntegrationId)->afterCommit();
+        }
+    }
+
+    /**
      * Execute the job.
      */
     public function handle(EcommerceManager $ecommerceManager): void
@@ -53,6 +90,8 @@ class SyncProductStockToPlatformsJob implements ShouldQueue
         }
 
         // 1. Calculate base stock (Combo-aware virtual stock or physical stock)
+        // Fix F1-ALTA-03: Siempre leer el stock real autoritativo desde la base de datos fresca
+        // en lugar de confiar en $this->newStock congelado al encolar, evitando condiciones de carrera.
         if ($product->is_combo) {
             if ($product->children->isEmpty()) {
                 $baseStock = 0.0;
@@ -71,7 +110,7 @@ class SyncProductStockToPlatformsJob implements ShouldQueue
                 $baseStock = (float) max(0, $limiting ?? 0);
             }
         } else {
-            $baseStock = $this->newStock !== null ? (float) $this->newStock : (float) $product->stock;
+            $baseStock = (float) $product->stock;
         }
 
         // 2. Iterate through each platform mapping

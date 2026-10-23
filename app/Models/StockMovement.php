@@ -10,6 +10,12 @@ class StockMovement extends Model
 {
     use HasFactory;
 
+    /**
+     * Token canónico en `notes` que identifica que una venta dedujo stock en el mostrador (checkout),
+     * diferenciándolo de los movimientos diferidos de logística ("Despacho Logístico Remito #...").
+     */
+    public const CHECKOUT_NOTE_TOKEN = 'Ticket #';
+
     protected $fillable = ['product_id', 'user_id', 'authorized_by_admin_id', 'type', 'quantity', 'notes', 'supplier_invoice_id', 'cash_shift_id', 'sale_id'];
 
     protected $casts = [

@@ -167,9 +167,9 @@ class CustomerController extends Controller
                 }
 
                 if ($request->filled('cash_shift_id')) {
-                    $activeShift = CashShift::where('id', $request->cash_shift_id)->where('status', 'open')->first();
+                    $activeShift = CashShift::where('id', $request->cash_shift_id)->where('status', 'open')->lockForUpdate()->first();
                 } else {
-                    $activeShift = CashShift::where('status', 'open')->latest('id')->first();
+                    $activeShift = CashShift::where('status', 'open')->latest('id')->lockForUpdate()->first();
                 }
 
                 if (! $activeShift) {

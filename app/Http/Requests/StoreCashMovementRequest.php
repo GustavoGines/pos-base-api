@@ -24,6 +24,8 @@ class StoreCashMovementRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'cash_shift_id' => ['nullable', 'integer'],
+            'cash_register_id' => ['nullable', 'integer', 'exists:cash_registers,id'],
             'type' => ['required', 'string', 'in:expense,withdrawal,deposit,supplier_payment'],
             'expense_category_id' => ['nullable', 'integer', 'exists:expense_categories,id'],
             'category' => ['nullable', 'string', 'max:100'],

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\SyncProductStockToPlatformsJob;
 use App\Models\DeliveryNote;
 use App\Models\Sale;
 use App\Models\StockMovement;
@@ -155,6 +156,11 @@ class DeliveryNoteController extends Controller
 
             $note->status = $allDelivered ? 'delivered' : 'partial';
             $note->save();
+
+            // Fix F1-ALTA-04: Sincronizar stock con canales e-commerce tras despacho diferido
+            if ($lockedProducts !== null && $lockedProducts->isNotEmpty()) {
+                SyncProductStockToPlatformsJob::dispatchForProducts($lockedProducts->keys());
+            }
 
             return response()->json($note->load('items.product'));
         });

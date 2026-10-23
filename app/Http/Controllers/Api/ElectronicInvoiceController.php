@@ -70,7 +70,22 @@ class ElectronicInvoiceController extends Controller
                     ])
                 );
 
-                $lockedSale->update(['invoice_status' => 'invoiced']);
+                $saleUpdates = ['invoice_status' => 'invoiced'];
+
+                // Fix F1-MED-09: Si se auto-calculó o aplicó una percepción IIBB al emitir la factura
+                // que no estaba registrada en la cabecera de la venta, sincronizarla en `sales` para
+                // evitar divergencia contable entre el comprobante fiscal y los registros de venta.
+                $tributeAmount = round((float) ($invoiceData['tribute_amount'] ?? 0.0), 2);
+                if ($tributeAmount > 0.0 && round((float) ($lockedSale->iibb_perception_amount ?? 0.0), 2) <= 0.0) {
+                    $saleUpdates['iibb_perception_amount'] = $tributeAmount;
+                    $tributeAlic = $invoiceData['tributes_breakdown'][0]['Alic'] ?? $validated['iibb_perception_rate'] ?? $lockedSale->customer?->iibb_perception_rate ?? null;
+                    if ($tributeAlic !== null) {
+                        $saleUpdates['iibb_perception_rate'] = (float) $tributeAlic;
+                    }
+                    $saleUpdates['total'] = round((float) $lockedSale->total + $tributeAmount, 2);
+                }
+
+                $lockedSale->update($saleUpdates);
 
                 return response()->json([
                     'success' => true,

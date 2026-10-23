@@ -30,6 +30,11 @@ class PaymentService
         if (round($sumPayments, 2) < round($expectedTotal, 2)) {
             throw new \InvalidArgumentException('El monto de los pagos enviados ('.$sumPayments.') no cubre el total esperado de la venta ('.$expectedTotal.').');
         }
+
+        // Fix F1-MED-07: Impedir sobrepagos que inflen SalePayment.total_amount y distorsionen el arqueo de caja
+        if ((round($sumPayments, 2) - round($expectedTotal, 2)) > 0.02) {
+            throw new \InvalidArgumentException('El monto de los pagos enviados ('.$sumPayments.') excede el total esperado de la venta ('.$expectedTotal.').');
+        }
     }
 
     /**
@@ -66,8 +71,12 @@ class PaymentService
                     ]);
             }
 
-            // Bridge de Cheque
-            if ($paymentMethod && $paymentMethod->code === 'cheque' && ! empty($checkDetails)) {
+            // Bridge de Cheque (Fix F1-MED-08: Exigir datos del cheque y garantizar fechas por defecto compatibles con v1.8.5)
+            if ($paymentMethod && $paymentMethod->code === 'cheque') {
+                if (empty($checkDetails)) {
+                    throw new \InvalidArgumentException('Debe completar los datos del cheque (banco, número y firmante) para registrar un pago con cheque.');
+                }
+
                 $currentCheck = $isMultiCheck ? array_shift($checkDetails) : $checkDetails;
 
                 if (! $isMultiCheck && $checkDetailsUsed) {
@@ -75,22 +84,24 @@ class PaymentService
                 }
                 $checkDetailsUsed = true;
 
-                if ($currentCheck) {
-                    ThirdPartyCheck::create([
-                        'bank_name' => $currentCheck['bank_name'],
-                        'check_number' => $currentCheck['check_number'],
-                        'amount' => $payment['total_amount'],
-                        'issue_date' => $currentCheck['issue_date'],
-                        'payment_date' => $currentCheck['payment_date'],
-                        'issuer_name' => $currentCheck['issuer_name'],
-                        'issuer_cuit' => $currentCheck['issuer_cuit'] ?? null,
-                        'customer_id' => $context->customerId ?? $sale->customer_id,
-                        'sale_id' => $sale->id,
-                        'cash_shift_id' => $context->cashShiftId,
-                        'supplier_id' => null,
-                        'status' => 'in_wallet',
-                    ]);
+                if (! $currentCheck || empty($currentCheck['bank_name']) || empty($currentCheck['check_number'])) {
+                    throw new \InvalidArgumentException('Faltan los datos obligatorios del cheque (banco y número).');
                 }
+
+                ThirdPartyCheck::create([
+                    'bank_name' => $currentCheck['bank_name'],
+                    'check_number' => $currentCheck['check_number'],
+                    'amount' => $payment['total_amount'],
+                    'issue_date' => ! empty($currentCheck['issue_date']) ? $currentCheck['issue_date'] : now()->toDateString(),
+                    'payment_date' => ! empty($currentCheck['payment_date']) ? $currentCheck['payment_date'] : now()->toDateString(),
+                    'issuer_name' => $currentCheck['issuer_name'] ?? 'Sin Especificar',
+                    'issuer_cuit' => $currentCheck['issuer_cuit'] ?? null,
+                    'customer_id' => $context->customerId ?? $sale->customer_id,
+                    'sale_id' => $sale->id,
+                    'cash_shift_id' => $context->cashShiftId ?? $sale->cash_shift_id,
+                    'supplier_id' => null,
+                    'status' => 'in_wallet',
+                ]);
             }
         }
     }

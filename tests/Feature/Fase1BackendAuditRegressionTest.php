@@ -12,7 +12,11 @@ use App\Models\CashMovement;
 use App\Models\CashRegister;
 use App\Models\CashShift;
 use App\Models\Customer;
+use App\Models\DeliveryNote;
+use App\Models\EcommerceIntegration;
+use App\Models\EcommerceProductMapping;
 use App\Models\ElectronicInvoice;
+use App\Models\Offer;
 use App\Models\PaymentMethod;
 use App\Models\Product;
 use App\Models\Sale;
@@ -23,8 +27,10 @@ use App\Models\User;
 use App\Services\Afip\AfipWsaaService;
 use App\Services\Afip\AfipWsfeService;
 use App\Services\Catalog\CatalogImportService;
+use App\Services\Ecommerce\EcommerceManager;
 use App\Services\SaleService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
@@ -522,5 +528,423 @@ class Fase1BackendAuditRegressionTest extends TestCase
         } finally {
             @unlink($tmpFile);
         }
+    }
+
+    public function test_f1_crit_01_pay_pending_sale_enforces_discount_authorization_and_preserves_v185_already_authorized_prices(): void
+    {
+        $this->admin->update(['pin' => Hash::make('4321')]);
+
+        $cashier = User::factory()->create([
+            'role' => 'cashier',
+            'permissions' => ['pos', 'collect_customer_debt'],
+            'session_token' => 'cashier-session-f1-crit01',
+        ]);
+
+        $register = CashRegister::create(['name' => 'Caja 1', 'is_active' => true]);
+        $shift = CashShift::create([
+            'user_id' => $cashier->id,
+            'cash_register_id' => $register->id,
+            'opening_balance' => 1000,
+            'status' => 'open',
+            'opened_at' => now(),
+        ]);
+
+        $cashMethod = PaymentMethod::create([
+            'name' => 'Efectivo',
+            'code' => 'cash',
+            'is_cash' => true,
+            'is_active' => true,
+        ]);
+
+        $product = Product::create([
+            'name' => 'Taladro Percutor',
+            'internal_code' => '00701',
+            'cost_price' => 50000,
+            'selling_price' => 100000,
+            'stock' => 10,
+            'active' => true,
+        ]);
+
+        // 1. El cajero crea una venta en espera a precio regular ($100.000)
+        $holdResp = $this->withHeaders($this->authHeaders($cashier))
+            ->postJson('/api/pos/sales', [
+                'total' => 100000,
+                'total_surcharge' => 0,
+                'cash_shift_id' => $shift->id,
+                'status' => 'pending',
+                'items' => [
+                    [
+                        'product_id' => $product->id,
+                        'quantity' => 1,
+                        'unit_price' => 100000,
+                        'subtotal' => 100000,
+                    ],
+                ],
+            ]);
+        $holdResp->assertStatus(201);
+        $saleId = $holdResp->json('sale.id');
+
+        // 2. El cajero intenta cobrar el ticket en espera bajando el precio a $1.00 sin PIN -> 403
+        $exploitResp = $this->withHeaders($this->authHeaders($cashier))
+            ->putJson("/api/sales/{$saleId}/pay", [
+                'cash_shift_id' => $shift->id,
+                'total_surcharge' => 0,
+                'items' => [
+                    [
+                        'product_id' => $product->id,
+                        'quantity' => 1,
+                        'unit_price' => 1.00,
+                        'subtotal' => 1.00,
+                    ],
+                ],
+                'payments' => [
+                    [
+                        'payment_method_id' => $cashMethod->id,
+                        'base_amount' => 1.00,
+                        'surcharge_amount' => 0,
+                        'total_amount' => 1.00,
+                    ],
+                ],
+            ]);
+
+        $exploitResp->assertStatus(403)
+            ->assertJsonPath('error_code', 'UNAUTHORIZED_PRICE_DISCOUNT');
+
+        // 3. Con PIN de supervisor válido (discount_pin), el descuento es autorizado -> 200 OK
+        $authorizedResp = $this->withHeaders($this->authHeaders($cashier))
+            ->putJson("/api/sales/{$saleId}/pay", [
+                'cash_shift_id' => $shift->id,
+                'total_surcharge' => 0,
+                'discount_pin' => '4321',
+                'items' => [
+                    [
+                        'product_id' => $product->id,
+                        'quantity' => 1,
+                        'unit_price' => 80000.00,
+                        'subtotal' => 80000.00,
+                    ],
+                ],
+                'payments' => [
+                    [
+                        'payment_method_id' => $cashMethod->id,
+                        'base_amount' => 80000.00,
+                        'surcharge_amount' => 0,
+                        'total_amount' => 80000.00,
+                    ],
+                ],
+            ]);
+
+        $authorizedResp->assertStatus(200);
+        $this->assertEquals(80000.00, (float) Sale::find($saleId)->total);
+
+        // 4. Salvaguarda v1.8.5: Si la venta en espera YA fue creada con un descuento autorizado ($85.000),
+        // el cajero puede cobrarla a $85.000 sin que le vuelva a exigir PIN.
+        $preAuthHold = $this->withHeaders($this->authHeaders($cashier))
+            ->postJson('/api/pos/sales', [
+                'total' => 85000,
+                'total_surcharge' => 0,
+                'cash_shift_id' => $shift->id,
+                'status' => 'pending',
+                'discount_pin' => '4321',
+                'items' => [
+                    [
+                        'product_id' => $product->id,
+                        'quantity' => 1,
+                        'unit_price' => 85000,
+                        'subtotal' => 85000,
+                    ],
+                ],
+            ]);
+        $preAuthHold->assertStatus(201);
+        $preAuthSaleId = $preAuthHold->json('sale.id');
+
+        $v185PayResp = $this->withHeaders($this->authHeaders($cashier))
+            ->putJson("/api/sales/{$preAuthSaleId}/pay", [
+                'cash_shift_id' => $shift->id,
+                'total_surcharge' => 0,
+                'items' => [
+                    [
+                        'product_id' => $product->id,
+                        'quantity' => 1,
+                        'unit_price' => 85000,
+                        'subtotal' => 85000,
+                    ],
+                ],
+                'payments' => [
+                    [
+                        'payment_method_id' => $cashMethod->id,
+                        'base_amount' => 85000,
+                        'surcharge_amount' => 0,
+                        'total_amount' => 85000,
+                    ],
+                ],
+            ]);
+
+        $v185PayResp->assertStatus(200);
+    }
+
+    public function test_f1_alta_02_rejects_soft_deleted_products_in_process_sale_and_pay_pending_sale(): void
+    {
+        $register = CashRegister::create(['name' => 'Caja 1', 'is_active' => true]);
+        $shift = CashShift::create([
+            'user_id' => $this->admin->id,
+            'cash_register_id' => $register->id,
+            'opening_balance' => 1000,
+            'status' => 'open',
+            'opened_at' => now(),
+        ]);
+
+        $cashMethod = PaymentMethod::create([
+            'name' => 'Efectivo',
+            'code' => 'cash',
+            'is_cash' => true,
+            'is_active' => true,
+        ]);
+
+        $activeProduct = Product::create([
+            'name' => 'Producto Activo',
+            'internal_code' => '00702',
+            'cost_price' => 500,
+            'selling_price' => 1000,
+            'stock' => 10,
+            'active' => true,
+        ]);
+
+        $deletedProduct = Product::create([
+            'name' => 'Producto Archivado',
+            'internal_code' => '00703',
+            'cost_price' => 500,
+            'selling_price' => 2000,
+            'stock' => 10,
+            'active' => true,
+        ]);
+        $deletedProduct->delete(); // SoftDelete
+
+        $resp = $this->withHeaders($this->authHeaders())
+            ->postJson('/api/pos/sales', [
+                'total' => 3000,
+                'total_surcharge' => 0,
+                'cash_shift_id' => $shift->id,
+                'items' => [
+                    ['product_id' => $activeProduct->id, 'quantity' => 1, 'unit_price' => 1000, 'subtotal' => 1000],
+                    ['product_id' => $deletedProduct->id, 'quantity' => 1, 'unit_price' => 2000, 'subtotal' => 2000],
+                ],
+                'payments' => [
+                    ['payment_method_id' => $cashMethod->id, 'base_amount' => 3000, 'surcharge_amount' => 0, 'total_amount' => 3000],
+                ],
+            ]);
+
+        $resp->assertStatus(422)
+            ->assertJsonValidationErrors(['items.1.product_id']);
+    }
+
+    public function test_f1_alta_03_and_04_ecommerce_sync_reads_fresh_db_stock_and_dispatches_on_void_adjust_delivery_and_parent_combos(): void
+    {
+        // 1. Verificar que SyncProductStockToPlatformsJob::handle lee el stock fresco de la BD y no el snapshot obsoleto
+        $integration = EcommerceIntegration::create([
+            'platform' => 'mercadolibre',
+            'name' => 'MELI Test',
+            'client_id' => 'APP_1',
+            'client_secret' => 'sec',
+            'access_token' => 'tok',
+            'is_active' => true,
+            'sync_stock_enabled' => true,
+        ]);
+
+        $ingredient = Product::create([
+            'name' => 'Ingrediente Base',
+            'internal_code' => '00704',
+            'cost_price' => 100,
+            'selling_price' => 200,
+            'stock' => 8, // Stock real actual en BD = 8
+            'active' => true,
+        ]);
+
+        EcommerceProductMapping::create([
+            'integration_id' => $integration->id,
+            'product_id' => $ingredient->id,
+            'platform' => 'mercadolibre',
+            'external_product_id' => 'MLA999888',
+            'sync_stock' => true,
+            'allocated_stock_percentage' => 100,
+            'safety_stock_threshold' => 0,
+        ]);
+
+        Http::fake([
+            'https://api.mercadolibre.com/items/MLA999888' => Http::response(['id' => 'MLA999888'], 200),
+        ]);
+
+        // Simulamos un Job atrasado cuyo snapshot newStock decía 9.0, pero en BD ya hay 8.0
+        $staleJob = new SyncProductStockToPlatformsJob($ingredient->id, 9.0);
+        $staleJob->handle(app(EcommerceManager::class));
+
+        $mapping = EcommerceProductMapping::where('product_id', $ingredient->id)->first();
+        $this->assertEquals(8.0, (float) $mapping->last_known_external_stock);
+
+        // 2. Verificar que al vender/ajustar un ingrediente o anular venta se despacha para el producto y su Combo padre
+        Queue::fake();
+
+        $comboParent = Product::create([
+            'name' => 'Combo Padre',
+            'internal_code' => '00705',
+            'cost_price' => 200,
+            'selling_price' => 400,
+            'stock' => 0,
+            'is_combo' => true,
+            'active' => true,
+        ]);
+        $comboParent->children()->attach($ingredient->id, ['quantity' => 2]);
+
+        // Ajuste manual en StockController::adjust
+        $adjResp = $this->withHeaders($this->authHeaders())
+            ->postJson("/api/catalog/products/{$ingredient->id}/adjust-stock", [
+                'type' => 'in',
+                'quantity' => 4,
+                'notes' => 'Reposición test',
+            ]);
+        $adjResp->assertStatus(200);
+
+        Queue::assertPushed(SyncProductStockToPlatformsJob::class, fn ($j) => $j->productId === $ingredient->id);
+        Queue::assertPushed(SyncProductStockToPlatformsJob::class, fn ($j) => $j->productId === $comboParent->id);
+    }
+
+    public function test_f1_med_05_06_07_08_and_baja_10_financial_and_offer_validations(): void
+    {
+        $cashier = User::factory()->create([
+            'role' => 'cashier',
+            'permissions' => ['pos', 'collect_customer_debt'],
+            'session_token' => 'cashier-session-f1-med',
+        ]);
+
+        $register = CashRegister::create(['name' => 'Caja 1', 'is_active' => true]);
+        $closedShift = CashShift::create([
+            'user_id' => $cashier->id,
+            'cash_register_id' => $register->id,
+            'opening_balance' => 1000,
+            'status' => 'closed',
+            'opened_at' => now()->subHours(4),
+            'closed_at' => now()->subHour(),
+        ]);
+        $openShift = CashShift::create([
+            'user_id' => $cashier->id,
+            'cash_register_id' => $register->id,
+            'opening_balance' => 1000,
+            'status' => 'open',
+            'opened_at' => now(),
+        ]);
+
+        $cashMethod = PaymentMethod::firstOrCreate(
+            ['code' => 'cash'],
+            ['name' => 'Efectivo', 'is_cash' => true, 'is_active' => true]
+        );
+        $chequeMethod = PaymentMethod::firstOrCreate(
+            ['code' => 'cheque'],
+            ['name' => 'Cheque', 'is_cash' => false, 'is_active' => true]
+        );
+
+        $product = Product::create([
+            'name' => 'Amoladora Angular',
+            'internal_code' => '00706',
+            'cost_price' => 25000,
+            'selling_price' => 50000,
+            'stock' => 20,
+            'active' => true,
+        ]);
+
+        // F1-MED-05: Oferta fixed_price sin special_price pero con discount_amount = 5000 -> precio esperado = 45000
+        $offer = Offer::create([
+            'name' => 'Promo $5000 OFF',
+            'type' => 'fixed_price',
+            'discount_amount' => 5000,
+            'period_type' => 'daily',
+            'start_date' => now()->subHour(),
+            'end_date' => now()->addDay(),
+            'is_active' => true,
+        ]);
+        $offer->products()->attach($product->id, ['special_price' => null]);
+
+        // Si envía $5000 (el monto de descuento en vez de $45000), debe ser rechazado con 403
+        $badPromoResp = $this->withHeaders($this->authHeaders($cashier))
+            ->postJson('/api/pos/sales', [
+                'total' => 5000,
+                'total_surcharge' => 0,
+                'cash_shift_id' => $openShift->id,
+                'items' => [
+                    ['product_id' => $product->id, 'quantity' => 1, 'unit_price' => 5000, 'subtotal' => 5000],
+                ],
+                'payments' => [
+                    ['payment_method_id' => $cashMethod->id, 'base_amount' => 5000, 'surcharge_amount' => 0, 'total_amount' => 5000],
+                ],
+            ]);
+        $badPromoResp->assertStatus(403)
+            ->assertJsonPath('expected_price', 45000);
+
+        // Si envía $45000 (precio correcto de oferta), pasa sin requerir PIN (201)
+        $goodPromoResp = $this->withHeaders($this->authHeaders($cashier))
+            ->postJson('/api/pos/sales', [
+                'total' => 45000,
+                'total_surcharge' => 0,
+                'cash_shift_id' => $openShift->id,
+                'items' => [
+                    ['product_id' => $product->id, 'quantity' => 1, 'unit_price' => 45000, 'subtotal' => 45000],
+                ],
+                'payments' => [
+                    ['payment_method_id' => $cashMethod->id, 'base_amount' => 45000, 'surcharge_amount' => 0, 'total_amount' => 45000],
+                ],
+            ]);
+        $goodPromoResp->assertStatus(201);
+
+        // F1-MED-07: Sobrepago en payments (ej. enviar $50000 de pago para una venta de $45000) es rechazado con 422
+        $overpayResp = $this->withHeaders($this->authHeaders($this->admin))
+            ->postJson('/api/pos/sales', [
+                'total' => 45000,
+                'total_surcharge' => 0,
+                'cash_shift_id' => $openShift->id,
+                'items' => [
+                    ['product_id' => $product->id, 'quantity' => 1, 'unit_price' => 45000, 'subtotal' => 45000],
+                ],
+                'payments' => [
+                    ['payment_method_id' => $cashMethod->id, 'base_amount' => 50000, 'surcharge_amount' => 0, 'total_amount' => 50000],
+                ],
+            ]);
+        $overpayResp->assertStatus(422);
+
+        // F1-MED-08: Pago con cheque sin check_details es rechazado con 422
+        $missingCheckResp = $this->withHeaders($this->authHeaders($this->admin))
+            ->postJson('/api/pos/sales', [
+                'total' => 45000,
+                'total_surcharge' => 0,
+                'cash_shift_id' => $openShift->id,
+                'items' => [
+                    ['product_id' => $product->id, 'quantity' => 1, 'unit_price' => 45000, 'subtotal' => 45000],
+                ],
+                'payments' => [
+                    ['payment_method_id' => $chequeMethod->id, 'base_amount' => 45000, 'surcharge_amount' => 0, 'total_amount' => 45000],
+                ],
+            ]);
+        $missingCheckResp->assertStatus(422)
+            ->assertJsonValidationErrors(['check_details']);
+
+        // F1-MED-06: Venta pendiente creada en un turno que luego se cerró no puede cobrarse sin enviar el turno abierto actual
+        $pendingInClosedShift = Sale::create([
+            'total' => 45000,
+            'total_surcharge' => 0,
+            'payment_status' => 'pending',
+            'amount_due' => 45000,
+            'status' => 'pending',
+            'user_id' => $cashier->id,
+            'cashier_id' => $cashier->id,
+            'cash_shift_id' => $closedShift->id,
+        ]);
+
+        $closedShiftPayResp = $this->withHeaders($this->authHeaders($cashier))
+            ->putJson("/api/sales/{$pendingInClosedShift->id}/pay", [
+                'total_surcharge' => 0,
+                'payments' => [
+                    ['payment_method_id' => $cashMethod->id, 'base_amount' => 45000, 'surcharge_amount' => 0, 'total_amount' => 45000],
+                ],
+            ]);
+        $closedShiftPayResp->assertStatus(422)
+            ->assertJsonValidationErrors(['cash_shift_id']);
     }
 }

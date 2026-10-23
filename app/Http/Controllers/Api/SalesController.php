@@ -9,6 +9,7 @@ use App\Http\Requests\PaySaleRequest;
 use App\Http\Requests\VoidSaleRequest;
 use App\Models\BusinessSetting;
 use App\Models\Sale;
+use App\Services\DiscountAuthorizationService;
 use App\Services\SaleService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
@@ -106,14 +107,28 @@ class SalesController extends Controller
     /**
      * PUT /api/sales/{sale}/pay
      */
-    public function pay(PaySaleRequest $request, Sale $sale, SaleService $saleService)
+    public function pay(PaySaleRequest $request, Sale $sale, SaleService $saleService, DiscountAuthorizationService $discountAuthService)
     {
         $validated = $request->validated();
+
+        // Fix F1-CRIT-01: Validar autorización de descuentos en ítems modificados al cobrar tickets en espera
+        if (! empty($validated['items'])) {
+            $discountResponse = $discountAuthService->validateItemDiscounts($request, $validated['items'], $sale);
+            if ($discountResponse !== null) {
+                return $discountResponse;
+            }
+        }
+
+        $actingUser = $request->user() ?? $request->attributes->get('authenticated_user');
+        $authorizedByAdminId = $request->attributes->get('authorized_by_admin_id')
+            ?? ($actingUser?->isAdmin() ? $actingUser->id : null);
 
         $dto = PaySaleDTO::fromArray($validated);
         $context = SaleContextDTO::fromArray(
             $validated,
-            $request->user()?->id ?? $request->attributes->get('authenticated_user')?->id
+            $actingUser?->id,
+            false,
+            $authorizedByAdminId
         );
 
         try {

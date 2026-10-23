@@ -8,6 +8,7 @@ use App\DTOs\SaleContextDTO;
 use App\Events\SaleCompleted;
 use App\Jobs\SyncProductStockToPlatformsJob;
 use App\Models\CashMovement;
+use App\Models\CashShift;
 use App\Models\DeliveryNote;
 use App\Models\PaymentMethod;
 use App\Models\Quote;
@@ -16,7 +17,9 @@ use App\Models\ThirdPartyCheck;
 use App\Services\Afip\AfipHelper;
 use App\Services\Afip\AfipWsfeService;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class SaleService
@@ -27,9 +30,67 @@ class SaleService
         protected AfipWsfeService $afipWsfeService
     ) {}
 
+    protected function hasClientTransactionColumn(): bool
+    {
+        try {
+            return Schema::hasColumn('sales', 'client_transaction_id');
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    protected function findIdempotentSale(?string $clientTransactionId): ?Sale
+    {
+        if (empty($clientTransactionId)) {
+            return null;
+        }
+
+        if ($this->hasClientTransactionColumn()) {
+            $existing = Sale::where('client_transaction_id', $clientTransactionId)
+                ->where('status', '!=', 'voided')
+                ->first();
+            if ($existing) {
+                return $existing;
+            }
+        }
+
+        $cachedId = Cache::get("pos_sale_idemp:{$clientTransactionId}");
+        if ($cachedId) {
+            $existing = Sale::find($cachedId);
+            if ($existing && $existing->status !== 'voided') {
+                return $existing;
+            }
+        }
+
+        return null;
+    }
+
     public function executeSale(ProcessSaleDTO $dto, SaleContextDTO $context): Sale
     {
+        // F3-RESIL-01 / FN-F3-04: Idempotencia rápida previa a bloqueo de turno
+        $existingSale = $this->findIdempotentSale($dto->clientTransactionId);
+        if ($existingSale) {
+            return $existingSale;
+        }
+
         return DB::transaction(function () use ($dto, $context) {
+            // F3-CAJA-03 / FN-F3-03: Bloqueo pesimista de CashShift como PRIMER lock de la transacción
+            // para evitar carreras con closeShift y prevenir deadlocks AB-BA con productos.
+            if ($context->cashShiftId) {
+                $lockedShift = CashShift::where('id', $context->cashShiftId)->lockForUpdate()->first();
+                if (! $lockedShift || $lockedShift->status !== 'open') {
+                    throw ValidationException::withMessages([
+                        'cash_shift_id' => ['El turno de caja ya fue cerrado. Por favor, recargue la aplicación.'],
+                    ]);
+                }
+            }
+
+            // Re-verificar idempotencia dentro de la sección crítica serializada por el turno
+            $existingInsideLock = $this->findIdempotentSale($dto->clientTransactionId);
+            if ($existingInsideLock) {
+                return $existingInsideLock;
+            }
+
             $isPendingSale = $dto->status === 'pending';
 
             $ccPaymentTotal = 0;
@@ -58,6 +119,9 @@ class SaleService
                 }
             }
 
+            $productIds = array_column($dto->items, 'product_id');
+            $lockedProducts = $this->stockService->lockProducts($productIds);
+
             $total = $dto->total;
             $totalSurcharge = $dto->totalSurcharge;
 
@@ -65,7 +129,7 @@ class SaleService
                 ($isCuentaCorriente ? ($ccPaymentTotal >= ($total + $totalSurcharge + $dto->shippingCost - 0.1) ? 'pending' : 'partial') : 'paid');
             $amountDue = $isCuentaCorriente ? $ccPaymentTotal : ($isPendingSale ? $total + $totalSurcharge + $dto->shippingCost : 0);
 
-            $sale = Sale::create([
+            $saleAttributes = [
                 'total' => $total,
                 'total_surcharge' => $totalSurcharge,
                 'shipping_cost' => $dto->shippingCost,
@@ -82,13 +146,41 @@ class SaleService
                 'iibb_perception_amount' => $dto->iibbPerceptionAmount,
                 'iibb_perception_rate' => $dto->iibbPerceptionRate,
                 'status' => $dto->status,
-            ]);
+            ];
+
+            if (! empty($dto->clientTransactionId) && $this->hasClientTransactionColumn()) {
+                $saleAttributes['client_transaction_id'] = $dto->clientTransactionId;
+            }
+
+            $sale = Sale::create($saleAttributes);
+
+            if (! empty($dto->clientTransactionId)) {
+                Cache::put("pos_sale_idemp:{$dto->clientTransactionId}", $sale->id, now()->addHours(24));
+            }
 
             if ($context->quoteId) {
                 $quote = Quote::find($context->quoteId);
                 if ($quote) {
                     $quote->update(['status' => 'approved']);
                 }
+            }
+
+            // Fix F1-BAJA-10 + FN-4: Procesar ítems y reconciliar total autoritativo ANTES de validar y registrar pagos
+            $this->processItems($sale, $dto->items, $lockedProducts, $context);
+
+            $itemsSubtotal = round((float) $sale->items()->sum('subtotal'), 2);
+            $reconciledTotal = round($itemsSubtotal + (float) $dto->iibbPerceptionAmount, 2);
+            if (abs($reconciledTotal - (float) $sale->total) > 0.001) {
+                $total = $reconciledTotal;
+                $paymentStatus = $isPendingSale ? 'pending' :
+                    ($isCuentaCorriente ? ($ccPaymentTotal >= ($total + $totalSurcharge + $dto->shippingCost - 0.1) ? 'pending' : 'partial') : 'paid');
+                $amountDue = $isCuentaCorriente ? $ccPaymentTotal : ($isPendingSale ? $total + $totalSurcharge + $dto->shippingCost : 0);
+
+                $sale->update([
+                    'total' => $total,
+                    'payment_status' => $paymentStatus,
+                    'amount_due' => $amountDue,
+                ]);
             }
 
             if (! $isPendingSale && ! empty($dto->payments)) {
@@ -100,21 +192,14 @@ class SaleService
                 }
             }
 
-            $productIds = array_column($dto->items, 'product_id');
-            $lockedProducts = $this->stockService->lockProducts($productIds);
-
-            $this->processItems($sale, $dto->items, $lockedProducts, $context);
-
             $this->stockService->processCartStock($dto->items, $lockedProducts, $sale, $context, $dto->requiresDispatch, $dto->fulfillmentStatus);
 
             if ($dto->requiresDispatch) {
                 $this->createDeliveryNote($sale, $dto->items, $dto->fulfillmentStatus);
             }
 
-            // Enqueue asynchronous stock synchronization to online platforms
-            foreach ($lockedProducts as $lockedProduct) {
-                SyncProductStockToPlatformsJob::dispatch($lockedProduct->id, (float) $lockedProduct->stock)->afterCommit();
-            }
+            // Fix F1-ALTA-03 & FN-2: Enqueue asynchronous stock synchronization (including parent combos)
+            SyncProductStockToPlatformsJob::dispatchForProducts($lockedProducts->keys());
 
             event(new SaleCompleted($sale));
 
@@ -127,9 +212,28 @@ class SaleService
     public function payPendingSale(Sale $sale, PaySaleDTO $dto, SaleContextDTO $context): Sale
     {
         return DB::transaction(function () use ($sale, $dto, $context) {
+            // F3-CAJA-03 / FN-F3-03: Bloqueo pesimista del turno de caja antes de bloquear productos
+            if ($context->cashShiftId) {
+                $lockedShift = CashShift::where('id', $context->cashShiftId)->lockForUpdate()->first();
+                if (! $lockedShift || $lockedShift->status !== 'open') {
+                    throw ValidationException::withMessages([
+                        'cash_shift_id' => ['El turno de caja ya fue cerrado. Por favor, recargue la aplicación.'],
+                    ]);
+                }
+            }
+
             $lockedSale = Sale::with('items')->lockForUpdate()->find($sale->id);
             if (! $lockedSale) {
                 \Log::error('Sale not found! id='.$sale->id.', count='.Sale::count().', without lock='.(Sale::find($sale->id) ? 'yes' : 'no'));
+            }
+
+            if (! $context->cashShiftId && $lockedSale?->cash_shift_id) {
+                $lockedShift = CashShift::where('id', $lockedSale->cash_shift_id)->lockForUpdate()->first();
+                if (! $lockedShift || $lockedShift->status !== 'open') {
+                    throw ValidationException::withMessages([
+                        'cash_shift_id' => ['El turno de caja de esta venta pendiente ya fue cerrado. Debe enviar un cash_shift_id activo.'],
+                    ]);
+                }
             }
 
             if ($lockedSale->status !== 'pending') {
@@ -206,18 +310,12 @@ class SaleService
                 'customer_id' => $effectiveCustomerId,
             ]);
 
-            // Enqueue asynchronous stock synchronization to online platforms
+            // Enqueue asynchronous stock synchronization to online platforms (including parent combos)
             if (isset($lockedProducts) && $lockedProducts instanceof \Illuminate\Support\Collection) {
-                foreach ($lockedProducts as $lockedProduct) {
-                    SyncProductStockToPlatformsJob::dispatch($lockedProduct->id, (float) $lockedProduct->stock)->afterCommit();
-                }
+                SyncProductStockToPlatformsJob::dispatchForProducts($lockedProducts->keys());
             } else {
-                $lockedSale->loadMissing('items.product');
-                foreach ($lockedSale->items as $saleItem) {
-                    if ($saleItem->product) {
-                        SyncProductStockToPlatformsJob::dispatch($saleItem->product->id, (float) $saleItem->product->stock)->afterCommit();
-                    }
-                }
+                $lockedSale->loadMissing('items');
+                SyncProductStockToPlatformsJob::dispatchForProducts($lockedSale->items->pluck('product_id'));
             }
 
             event(new SaleCompleted($lockedSale));
@@ -391,13 +489,24 @@ class SaleService
                 }
             }
 
-            $lockedSale->update([
+            $voidPayload = [
                 'status' => 'voided',
                 'voided_by_user_id' => $context->userId,
                 'void_authorized_by_admin_id' => $context->authorizedByAdminId,
                 'voided_at' => now(),
                 'void_reason' => $context->voidReason,
-            ]);
+            ];
+
+            if ($this->hasClientTransactionColumn() && ! empty($lockedSale->client_transaction_id)) {
+                Cache::forget("pos_sale_idemp:{$lockedSale->client_transaction_id}");
+                $voidPayload['client_transaction_id'] = null;
+            }
+
+            $lockedSale->update($voidPayload);
+
+            // Fix F1-ALTA-04: Sincronizar stock restituido hacia plataformas e-commerce post-commit
+            $lockedSale->loadMissing('items');
+            SyncProductStockToPlatformsJob::dispatchForProducts($lockedSale->items->pluck('product_id'));
 
             event(new SaleCompleted($lockedSale)); // Opcional, podría ser SaleVoided
 
@@ -412,7 +521,8 @@ class SaleService
         foreach ($items as $itemData) {
             $product = $products[$itemData['product_id']] ?? null;
             if (! $product) {
-                continue;
+                // Fix F1-ALTA-02: No omitir silenciosamente productos dados de baja (SoftDeletes)
+                throw new \InvalidArgumentException("El producto con ID {$itemData['product_id']} ya no está disponible o fue dado de baja.");
             }
 
             $quantity = isset($itemData['quantity']) && is_numeric($itemData['quantity'])

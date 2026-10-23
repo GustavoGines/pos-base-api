@@ -28,12 +28,31 @@ class CashMovementController extends Controller
         $this->shiftService = $shiftService;
     }
 
+    /**
+     * Resuelve el turno de caja objetivo soportando entornos Multi-Caja (F3-CAJA-01 / FN-F3-02)
+     * con fallback retrocompatible a v1.8.5 cuando no se envían identificadores explícitos.
+     */
+    protected function resolveActiveShift(Request $request): ?CashShift
+    {
+        $shiftId = $request->input('cash_shift_id') ?? $request->query('cash_shift_id');
+        if (! empty($shiftId) && is_numeric($shiftId)) {
+            return CashShift::find((int) $shiftId);
+        }
+
+        $registerId = $request->input('cash_register_id') ?? $request->query('cash_register_id');
+        if (! empty($registerId) && is_numeric($registerId)) {
+            return $this->shiftService->getCurrentShift((int) $registerId);
+        }
+
+        return $this->shiftService->getCurrentShift();
+    }
+
     public function index(Request $request)
     {
         $query = CashMovement::with(['user', 'authorizer', 'supplier', 'check'])->latest();
 
         if ($request->query('all') !== '1') {
-            $shift = $this->shiftService->getCurrentShift();
+            $shift = $this->resolveActiveShift($request);
             if (! $shift) {
                 return response()->json([
                     'data' => [],
@@ -85,7 +104,7 @@ class CashMovementController extends Controller
     {
         $shiftId = null;
         if ($request->query('all') !== '1') {
-            $shift = $this->shiftService->getCurrentShift();
+            $shift = $this->resolveActiveShift($request);
             if (! $shift) {
                 return response()->json(['message' => 'No hay turno abierto para exportar.'], 400);
             }
@@ -105,7 +124,7 @@ class CashMovementController extends Controller
 
     public function store(StoreCashMovementRequest $request)
     {
-        $shift = $this->shiftService->getCurrentShift();
+        $shift = $this->resolveActiveShift($request);
 
         if (! $shift) {
             return response()->json(['message' => 'No hay turno abierto para registrar el movimiento.'], 403);
@@ -177,6 +196,12 @@ class CashMovementController extends Controller
             $batchUuid = (string) Str::uuid();
 
             DB::transaction(function () use ($validated, $shift, $user, $authorizedBy, &$createdMovements) {
+                // F3-CAJA-03 / FN-F3-03: Bloqueo pesimista del turno dentro de la transacción
+                $lockedShift = CashShift::where('id', $shift->id)->lockForUpdate()->first();
+                if (! $lockedShift || $lockedShift->status !== 'open') {
+                    throw new \RuntimeException('SHIFT_ALREADY_CLOSED');
+                }
+
                 $totalAmountPaid = 0;
 
                 foreach ($validated['payments'] as $payment) {
@@ -249,6 +274,10 @@ class CashMovementController extends Controller
                 ])->values(),
             ], 201);
         } catch (\Exception $e) {
+            if ($e->getMessage() === 'SHIFT_ALREADY_CLOSED') {
+                return response()->json(['message' => 'El turno actual se encuentra cerrado.'], 403);
+            }
+
             return response()->json([
                 'message' => 'Error crítico al procesar el movimiento.',
                 'error' => $e->getMessage(),

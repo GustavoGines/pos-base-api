@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\AdjustStockRequest;
+use App\Jobs\SyncProductStockToPlatformsJob;
 use App\Models\Product;
 use App\Models\StockMovement;
 use Illuminate\Http\Request;
@@ -54,6 +55,11 @@ class StockController extends Controller
             if (array_key_exists('min_stock', $validated)) {
                 $product->min_stock = $validated['min_stock'];
                 $product->save();
+            }
+
+            // Fix F1-ALTA-04: Sincronizar stock hacia plataformas e-commerce si hubo movimiento físico
+            if ($validated['quantity'] > 0) {
+                SyncProductStockToPlatformsJob::dispatchForProducts([$product->id]);
             }
         });
 

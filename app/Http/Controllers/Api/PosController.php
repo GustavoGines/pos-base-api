@@ -2,23 +2,21 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Constants\Permissions;
 use App\DTOs\ProcessSaleDTO;
 use App\DTOs\SaleContextDTO;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\ProcessSaleRequest;
-use App\Models\BusinessSetting;
-use App\Models\Offer;
 use App\Models\Product;
-use App\Models\User;
+use App\Services\DiscountAuthorizationService;
 use App\Services\SaleService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\RateLimiter;
 
 class PosController extends Controller
 {
+    public function __construct(
+        protected DiscountAuthorizationService $discountAuthService
+    ) {}
     public function searchProducts(Request $request)
     {
         $query = $request->query('query');
@@ -50,6 +48,12 @@ class PosController extends Controller
     public function processSale(ProcessSaleRequest $request, SaleService $saleService)
     {
         $validated = $request->validated();
+        if (empty($validated['client_transaction_id']) && $request->hasHeader('X-Idempotency-Key')) {
+            $headerKey = trim((string) $request->header('X-Idempotency-Key'));
+            if ($headerKey !== '' && strlen($headerKey) <= 64) {
+                $validated['client_transaction_id'] = $headerKey;
+            }
+        }
 
         // 1. Validar autorización de descuentos o rebajas manuales
         $discountResponse = $this->validateItemDiscounts($request, $validated['items']);
@@ -69,7 +73,11 @@ class PosController extends Controller
             $authorizedByAdminId
         );
 
-        $sale = $saleService->executeSale($dto, $context);
+        try {
+            $sale = $saleService->executeSale($dto, $context);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['error' => true, 'message' => $e->getMessage()], 422);
+        }
 
         return response()->json([
             'message' => 'Venta registrada correctamente',
@@ -83,188 +91,6 @@ class PosController extends Controller
      */
     protected function validateItemDiscounts(Request $request, array $items): ?JsonResponse
     {
-        $user = $request->user() ?? $request->attributes->get('authenticated_user');
-        if (! $user && $request->header('X-Session-Token')) {
-            $user = User::withoutGlobalScope('visible')
-                ->where('session_token', $request->header('X-Session-Token'))
-                ->first();
-        }
-        if (! $user && $request->input('user_id')) {
-            $user = User::withoutGlobalScope('visible')->find($request->input('user_id'));
-        }
-
-        if ($user && ($user->isAdmin() || $user->hasPermission('all') || $user->hasPermission(Permissions::APPLY_DISCOUNTS))) {
-            return null;
-        }
-
-        $throttleKey = 'pin_attempts:'.($user ? $user->id : 'guest').':'.$request->ip();
-        $authorizedAdmin = null;
-
-        // Pre-cargar ofertas vigentes hoy y configuración de listas de precios
-        $activeOffers = Offer::active()
-            ->with('products')
-            ->get()
-            ->filter(fn (Offer $offer) => $offer->isCurrentDayValid());
-
-        $advancedTiersEnabled = in_array(
-            BusinessSetting::where('key', 'enable_advanced_price_tiers')->value('value'),
-            ['1', 1, true, 'true'],
-            true
-        );
-        $rawWholesalePct = BusinessSetting::where('key', 'wholesale_percentage')->value('value');
-        $wholesalePct = is_numeric($rawWholesalePct) ? (float) $rawWholesalePct : -15.0;
-
-        $customTiers = [];
-        $rawCustomTiers = BusinessSetting::where('key', 'custom_price_tiers')->value('value');
-        if (is_string($rawCustomTiers) && $rawCustomTiers !== '') {
-            $decoded = json_decode($rawCustomTiers, true);
-            if (is_array($decoded)) {
-                $customTiers = $decoded;
-            }
-        }
-
-        foreach ($items as $item) {
-            /** @var Product|null $product */
-            $product = Product::with('priceTiers')->find($item['product_id']);
-            if (! $product) {
-                continue;
-            }
-
-            $quantity = (float) ($item['quantity'] ?? 1);
-            $unitPrice = (float) ($item['unit_price'] ?? 0);
-
-            // 1. Calcular precio esperado según tramo de volumen
-            $baseVolumetricPrice = (float) $product->getPriceForQuantity($quantity);
-            $expectedPrice = $baseVolumetricPrice;
-
-            // 2. Contemplar Ofertas / Promociones activas hoy para este producto
-            $baseSellingPrice = (float) $product->selling_price;
-            foreach ($activeOffers as $offer) {
-                $offerProduct = $offer->products->firstWhere('id', $product->id);
-                if (! $offerProduct) {
-                    continue;
-                }
-
-                $promoPrice = $baseSellingPrice;
-                if ($offer->type === 'percentage' && (float) $offer->discount_percentage > 0) {
-                    $discount = $baseSellingPrice * ((float) $offer->discount_percentage / 100.0);
-                    $promoPrice = round(max(0.0, $baseSellingPrice - $discount), 2);
-                } elseif ($offer->type === 'fixed_discount' && (float) $offer->discount_amount > 0) {
-                    $promoPrice = round(max(0.0, $baseSellingPrice - (float) $offer->discount_amount), 2);
-                } elseif ($offer->type === 'fixed_price') {
-                    $pivotPrice = $offerProduct->pivot?->special_price;
-                    if ($pivotPrice !== null && (float) $pivotPrice > 0) {
-                        $promoPrice = round((float) $pivotPrice, 2);
-                    } elseif ((float) $offer->discount_amount > 0) {
-                        $promoPrice = round((float) $offer->discount_amount, 2);
-                    }
-                }
-
-                if ($promoPrice > 0 && $promoPrice < $expectedPrice) {
-                    $expectedPrice = $promoPrice;
-                }
-            }
-
-            // 3. Verificar si el precio enviado corresponde a una Lista de Precios oficial (Mayorista / Personalizada)
-            if ($unitPrice < ($expectedPrice - 0.01)) {
-                $validTierPrices = [];
-
-                if ($product->price_wholesale !== null && (float) $product->price_wholesale > 0) {
-                    $validTierPrices[] = round((float) $product->price_wholesale, 2);
-                }
-
-                if ($advancedTiersEnabled) {
-                    $wholesaleFactor = 1.0 + ($wholesalePct / 100.0);
-                    $validTierPrices[] = round($baseVolumetricPrice * $wholesaleFactor, 2);
-                    $validTierPrices[] = round($baseSellingPrice * $wholesaleFactor, 2);
-
-                    foreach ($customTiers as $tier) {
-                        if (is_array($tier) && isset($tier['modifier']) && is_numeric($tier['modifier'])) {
-                            $customFactor = 1.0 + ((float) $tier['modifier'] / 100.0);
-                            $validTierPrices[] = round($baseVolumetricPrice * $customFactor, 2);
-                            $validTierPrices[] = round($baseSellingPrice * $customFactor, 2);
-                        }
-                    }
-                }
-
-                $matchesOfficialTier = false;
-                foreach ($validTierPrices as $tierPrice) {
-                    if ($tierPrice > 0 && abs($unitPrice - $tierPrice) <= 0.015) {
-                        $matchesOfficialTier = true;
-                        break;
-                    }
-                }
-
-                if ($matchesOfficialTier) {
-                    continue;
-                }
-            }
-
-            // Margen de tolerancia de 0.01
-            if ($unitPrice < ($expectedPrice - 0.01)) {
-                if ($authorizedAdmin !== null) {
-                    continue;
-                }
-
-                $rawHeaderPin = $request->header('X-Admin-Pin');
-                $rawDiscountPin = $request->input('discount_pin');
-                $rawBodyPin = $request->input('admin_pin');
-
-                $adminPin = (is_string($rawHeaderPin) && trim($rawHeaderPin) !== '')
-                    ? trim($rawHeaderPin)
-                    : ((is_string($rawDiscountPin) && trim($rawDiscountPin) !== '')
-                        ? trim($rawDiscountPin)
-                        : ((is_string($rawBodyPin) && trim($rawBodyPin) !== '') ? trim($rawBodyPin) : null));
-
-                if ($adminPin !== null) {
-                    if (RateLimiter::tooManyAttempts($throttleKey, 5)) {
-                        $seconds = RateLimiter::availableIn($throttleKey);
-
-                        return response()->json([
-                            'message' => "Demasiados intentos erróneos de PIN. Operación bloqueada temporalmente por {$seconds} segundos.",
-                            'error_code' => 'PIN_LOCKED_TEMPORARILY',
-                            'retry_after' => $seconds,
-                        ], 429);
-                    }
-
-                    $admins = User::withoutGlobalScope('visible')
-                        ->where('role', 'admin')
-                        ->whereNotNull('pin')
-                        ->get();
-
-                    foreach ($admins as $admin) {
-                        if (Hash::check($adminPin, $admin->pin)) {
-                            $authorizedAdmin = $admin;
-                            break;
-                        }
-                    }
-
-                    if ($authorizedAdmin) {
-                        RateLimiter::clear($throttleKey);
-                        $request->attributes->set('authorized_by_admin_id', $authorizedAdmin->id);
-                        $request->attributes->set('authorized_by_admin', $authorizedAdmin);
-
-                        continue;
-                    }
-
-                    RateLimiter::hit($throttleKey, 300);
-
-                    return response()->json([
-                        'message' => 'El PIN de administrador ingresado es incorrecto.',
-                        'error_code' => 'INVALID_ADMIN_PIN',
-                    ], 403);
-                }
-
-                return response()->json([
-                    'message' => "Se aplicaron descuentos o rebajas de precio manuales no autorizadas en el producto '{$product->name}' (esperado: \${$expectedPrice}, enviado: \${$unitPrice}). Se requiere permiso 'apply_discounts' o PIN de supervisor.",
-                    'error_code' => 'UNAUTHORIZED_PRICE_DISCOUNT',
-                    'product_id' => $product->id,
-                    'expected_price' => $expectedPrice,
-                    'submitted_price' => $unitPrice,
-                ], 403);
-            }
-        }
-
-        return null;
+        return $this->discountAuthService->validateItemDiscounts($request, $items);
     }
 }

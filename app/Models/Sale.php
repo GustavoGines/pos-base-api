@@ -13,6 +13,7 @@ class Sale extends Model
     use HasFactory;
 
     protected $fillable = [
+        'client_transaction_id',
         'total', 'total_surcharge', 'payment_status', 'amount_due',
         'status', 'invoice_status', 'cash_shift_id', 'tendered_amount', 'change_amount',
         'user_id', 'cashier_id', 'customer_id', 'shipping_cost', 'delivery_address',
@@ -101,13 +102,14 @@ class Sale extends Model
     }
 
     /**
-     * Determina si la venta ya dedujo stock físico durante el checkout.
+     * Determina si la venta ya dedujo stock físico durante el checkout en mostrador.
+     * Utiliza StockMovement::CHECKOUT_NOTE_TOKEN para distinguirlo de entregas parciales de remitos diferidos.
      */
     public function hasDeductedStock(): bool
     {
         return StockMovement::where('sale_id', $this->id)
             ->where('type', 'sale')
-            ->where('notes', 'like', '%Ticket #'.$this->id.'%')
+            ->where('notes', 'like', '%'.StockMovement::CHECKOUT_NOTE_TOKEN.$this->id.'%')
             ->exists();
     }
 }

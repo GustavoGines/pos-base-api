@@ -21,16 +21,51 @@ class CashShiftController extends Controller
         $this->cashShiftService = $cashShiftService;
     }
 
+    /**
+     * Determina si el usuario solicitante posee privilegios para visualizar totales
+     * teóricos en vivo de un turno abierto (F3-CAJA-02 / FN-F3-05: Arqueo Ciego).
+     */
+    protected function canViewLiveTotals(Request $request): bool
+    {
+        $user = $request->user() ?? $request->attributes->get('authenticated_user');
+
+        if (! $user) {
+            $token = $request->header('X-Session-Token') ?? $request->bearerToken();
+            if (! empty($token)) {
+                $user = User::withoutGlobalScope('visible')->where('session_token', $token)->first();
+            }
+        }
+
+        if (! $user) {
+            return false;
+        }
+
+        $perms = is_array($user->permissions)
+            ? $user->permissions
+            : (json_decode($user->permissions ?? '[]', true) ?: []);
+
+        return $user->isAdmin()
+            || in_array('manage_shifts', $perms, true)
+            || in_array('view_reports', $perms, true)
+            || in_array('all', $perms, true);
+    }
+
     public function index(Request $request)
     {
         $shifts = CashShift::with('cashRegister', 'user', 'closedByUser')
             ->orderBy('opened_at', 'desc')
             ->paginate(50);
 
+        $canViewLive = $this->canViewLiveTotals($request);
+
         foreach ($shifts as $shift) {
             if ($shift->status === 'open') {
-                $liveTotals = $this->cashShiftService->calculateLiveTotals($shift);
-                $shift->forceFill($liveTotals);
+                if ($canViewLive) {
+                    $liveTotals = $this->cashShiftService->calculateLiveTotals($shift);
+                    $shift->forceFill($liveTotals);
+                } else {
+                    $shift->makeHidden(['expected_balance', 'difference', 'cash_sales', 'non_cash_sales', 'cash_in', 'cash_out']);
+                }
             }
         }
 
@@ -46,12 +81,18 @@ class CashShiftController extends Controller
             return response()->json(['message' => 'No hay caja abierta.'], 404);
         }
 
+        $shift->load('cashRegister', 'user');
+
         if ($shift->status === 'open') {
-            $liveTotals = $this->cashShiftService->calculateLiveTotals($shift);
-            $shift->forceFill($liveTotals);
+            if ($this->canViewLiveTotals($request)) {
+                $liveTotals = $this->cashShiftService->calculateLiveTotals($shift);
+                $shift->forceFill($liveTotals);
+            } else {
+                $shift->makeHidden(['expected_balance', 'difference', 'cash_sales', 'non_cash_sales', 'cash_in', 'cash_out']);
+            }
         }
 
-        return response()->json($shift->load('cashRegister', 'user'));
+        return response()->json($shift);
     }
 
     public function open(Request $request)
@@ -129,12 +170,11 @@ class CashShiftController extends Controller
                     : ((is_string($rawBodyPin) && trim($rawBodyPin) !== '') ? trim($rawBodyPin) : null);
 
                 if ($adminPin === null) {
+                    // F3-CAJA-02: Omitir expected_balance y difference para preservar Arqueo Ciego
                     return response()->json([
                         'message' => 'La diferencia de caja requiere autorización de un supervisor.',
                         'error_code' => 'DIFFERENCE_REQUIRES_ADMIN',
-                        'expected_balance' => $expectedBalance,
                         'actual_balance' => (float) $validated['actual_balance'],
-                        'difference' => $difference,
                     ], 403);
                 }
 

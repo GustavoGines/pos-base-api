@@ -200,8 +200,8 @@ class AfipHelper
     }
 
     /**
-     * Resuelve el ID de la Condición Frente al IVA del Receptor
-     * según la Resolución General Nro 5616.
+     * Resuelve el ID de la CondiciÃ³n Frente al IVA del Receptor
+     * segÃºn la ResoluciÃ³n General Nro 5616.
      *
      * @param string
      */
