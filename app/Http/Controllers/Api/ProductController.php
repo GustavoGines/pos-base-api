@@ -24,6 +24,22 @@ class ProductController extends Controller
             $query->matchingSearch($search);
         }
 
+        if ($request->filled('category_id')) {
+            $query->where('products.category_id', (int) $request->query('category_id'));
+        }
+
+        if ($request->filled('brand_id')) {
+            $query->where('products.brand_id', (int) $request->query('brand_id'));
+        }
+
+        if ($request->filled('supplier_id')) {
+            $query->where('products.supplier_id', (int) $request->query('supplier_id'));
+        }
+
+        if ($request->filled('active')) {
+            $query->where('products.active', filter_var($request->query('active'), FILTER_VALIDATE_BOOLEAN));
+        }
+
         $allowedSorts = [
             'id', 'name', 'selling_price', 'cost_price', 'stock',
             'barcode', 'internal_code', 'category_id', 'brand_id', 'supplier_id', 'is_sold_by_weight', 'active', 'sales_count', 'vencimiento_dias',
