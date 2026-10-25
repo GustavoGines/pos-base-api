@@ -101,6 +101,11 @@ class ProductController extends Controller
                 $syncData[$ingredient['id']] = ['quantity' => $ingredient['quantity']];
             }
             $product->children()->sync($syncData);
+            $product->load('children');
+            $product->update([
+                'cost_price' => $product->calculateComboCostPrice(),
+                'stock' => $product->calculateComboAvailableStock(),
+            ]);
         }
 
         // Sincronizar tramos de precio si vienen en el payload
@@ -183,6 +188,11 @@ class ProductController extends Controller
                         $syncData[$ingredient['id']] = ['quantity' => $ingredient['quantity']];
                     }
                     $product->children()->sync($syncData);
+                    $product->load('children');
+                    $product->update([
+                        'cost_price' => $product->calculateComboCostPrice(),
+                        'stock' => $product->calculateComboAvailableStock(),
+                    ]);
                 } elseif (empty($validated['is_combo'])) {
                     $product->children()->detach();
                 }
@@ -242,9 +252,44 @@ class ProductController extends Controller
         // Cap de seguridad: máximo 200 IDs por llamada
         $ids = array_slice($ids, 0, 200);
 
-        $stocks = Product::whereIn('id', $ids)
-            ->select('id', 'stock')
-            ->get();
+        // Expandir IDs para incluir ingredientes hijos de combos vendidos
+        // y combos padres afectados cuando se vende un ingrediente suelto.
+        $childIds = DB::table('product_combos')
+            ->whereIn('parent_product_id', $ids)
+            ->pluck('child_product_id')
+            ->toArray();
+
+        $allAffectedChildIds = array_unique(array_merge($ids, $childIds));
+
+        $parentComboIds = DB::table('product_combos')
+            ->whereIn('child_product_id', $allAffectedChildIds)
+            ->pluck('parent_product_id')
+            ->toArray();
+
+        $expandedIds = array_values(array_unique(array_merge($allAffectedChildIds, $parentComboIds)));
+
+        $stocks = Product::with('children')
+            ->whereIn('id', $expandedIds)
+            ->select('id', 'stock', 'is_combo')
+            ->get()
+            ->map(function (Product $p) {
+                if ($p->is_combo) {
+                    $avail = $p->calculateComboAvailableStock();
+                    if ((float) $p->stock !== $avail) {
+                        Product::where('id', $p->id)->update(['stock' => $avail]);
+                    }
+
+                    return [
+                        'id' => $p->id,
+                        'stock' => number_format($avail, 3, '.', ''),
+                    ];
+                }
+
+                return [
+                    'id' => $p->id,
+                    'stock' => $p->stock,
+                ];
+            });
 
         return response()->json($stocks);
     }

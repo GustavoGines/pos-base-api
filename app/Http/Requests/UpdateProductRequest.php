@@ -2,8 +2,10 @@
 
 namespace App\Http\Requests;
 
+use App\Models\Product;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 
 class UpdateProductRequest extends FormRequest
 {
@@ -18,6 +20,10 @@ class UpdateProductRequest extends FormRequest
             $this->merge([
                 'internal_code' => str_pad(trim((string) $this->input('internal_code')), 5, '0', STR_PAD_LEFT),
             ]);
+        }
+
+        if ($this->boolean('is_combo')) {
+            $this->merge(['cost_price' => 0]);
         }
     }
 
@@ -64,5 +70,54 @@ class UpdateProductRequest extends FormRequest
                 Rule::unique('products', 'internal_code')->ignore($productId)->whereNull('deleted_at'),
             ],
         ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'name.required' => 'El nombre del producto es obligatorio.',
+            'name.unique' => 'Ya existe otro producto registrado con este nombre.',
+            'barcode.unique' => 'Este código de barras (EAN) ya está asignado a otro producto.',
+            'internal_code.unique' => 'Este código interno (PLU) ya está asignado a otro producto.',
+            'selling_price.gte' => 'El precio de venta no puede ser menor al precio de costo.',
+            'combo_ingredients.required_if' => 'Debes añadir al menos un producto incluido en el Combo / Receta.',
+            'combo_ingredients.*.id.exists' => 'Uno de los productos seleccionados para el combo no existe.',
+            'combo_ingredients.*.quantity.min' => 'La cantidad de cada producto del combo debe ser mayor a 0.',
+        ];
+    }
+
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $validator) {
+            if (! $this->boolean('is_combo') || ! is_array($this->input('combo_ingredients'))) {
+                return;
+            }
+
+            $ingredients = $this->input('combo_ingredients');
+            $ids = array_values(array_filter(array_column($ingredients, 'id')));
+            if (empty($ids)) {
+                return;
+            }
+
+            $products = Product::whereIn('id', $ids)->get()->keyBy('id');
+            foreach ($ingredients as $ing) {
+                $childId = $ing['id'] ?? null;
+                $reqQty = (float) ($ing['quantity'] ?? 0);
+                if (! $childId || $reqQty <= 0 || ! isset($products[$childId])) {
+                    continue;
+                }
+
+                $child = $products[$childId];
+                $availStock = (float) $child->stock;
+                if ($reqQty > $availStock) {
+                    $reqFmt = rtrim(rtrim(number_format($reqQty, 3, '.', ''), '0'), '.');
+                    $availFmt = rtrim(rtrim(number_format($availStock, 3, '.', ''), '0'), '.');
+                    $validator->errors()->add(
+                        'combo_ingredients',
+                        "La cantidad requerida de «{$child->name}» ({$reqFmt}) supera su stock disponible actual ({$availFmt})."
+                    );
+                }
+            }
+        });
     }
 }

@@ -201,7 +201,7 @@ class SaleService
             // Fix F1-ALTA-03 & FN-2: Enqueue asynchronous stock synchronization (including parent combos)
             SyncProductStockToPlatformsJob::dispatchForProducts($lockedProducts->keys());
 
-            event(new SaleCompleted($sale));
+            $this->broadcastSaleCompletedSafely($sale);
 
             ReportCacheService::flush();
 
@@ -318,7 +318,7 @@ class SaleService
                 SyncProductStockToPlatformsJob::dispatchForProducts($lockedSale->items->pluck('product_id'));
             }
 
-            event(new SaleCompleted($lockedSale));
+            $this->broadcastSaleCompletedSafely($lockedSale);
 
             ReportCacheService::flush();
 
@@ -508,7 +508,7 @@ class SaleService
             $lockedSale->loadMissing('items');
             SyncProductStockToPlatformsJob::dispatchForProducts($lockedSale->items->pluck('product_id'));
 
-            event(new SaleCompleted($lockedSale)); // Opcional, podría ser SaleVoided
+            $this->broadcastSaleCompletedSafely($lockedSale); // Opcional, podría ser SaleVoided
 
             ReportCacheService::flush();
 
@@ -571,6 +571,21 @@ class SaleService
                 'product_id' => $itemData['product_id'],
                 'quantity_purchased' => $qty,
                 'quantity_delivered' => $fulfillmentStatus === 'delivered' ? $qty : 0,
+            ]);
+        }
+    }
+
+    /**
+     * Dispara el evento de WebSocket hacia Reverb sin abortar la transacción de venta
+     * si el servicio local en el puerto 8080 se encuentra temporalmente inactivo.
+     */
+    protected function broadcastSaleCompletedSafely(Sale $sale): void
+    {
+        try {
+            event(new SaleCompleted($sale));
+        } catch (\Throwable $e) {
+            \Log::warning('No se pudo emitir evento WebSocket SaleCompleted (Reverb 8080 inactivo): ' . $e->getMessage(), [
+                'sale_id' => $sale->id,
             ]);
         }
     }

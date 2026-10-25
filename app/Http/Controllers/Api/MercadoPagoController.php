@@ -265,13 +265,17 @@ class MercadoPagoController extends Controller
                 'processed_at' => now(),
             ]);
 
-            event(new PaymentApprovedEvent(
-                externalReference: $externalRef ?? $tx?->external_reference ?? '',
-                mpPaymentId: (string) ($mpPaymentId ?? $tx?->mp_payment_id),
-                amount: (float) ($amount ?? $tx?->amount ?? 0),
-                posId: $tx?->pos_id,
-                transaction: $tx
-            ));
+            try {
+                event(new PaymentApprovedEvent(
+                    externalReference: $externalRef ?? $tx?->external_reference ?? '',
+                    mpPaymentId: (string) ($mpPaymentId ?? $tx?->mp_payment_id),
+                    amount: (float) ($amount ?? $tx?->amount ?? 0),
+                    posId: $tx?->pos_id,
+                    transaction: $tx
+                ));
+            } catch (\Throwable $e) {
+                Log::warning('No se pudo emitir evento WebSocket PaymentApprovedEvent (Reverb 8080 inactivo): ' . $e->getMessage());
+            }
         }
 
         return response()->json(['status' => 'ok']);

@@ -166,4 +166,60 @@ class Product extends Model
             ->withPivot('special_price')
             ->withTimestamps();
     }
+
+    /**
+     * Calcula el costo total de un combo sumando (costo_hijo * cantidad_receta).
+     */
+    public function calculateComboCostPrice(): float
+    {
+        $children = $this->relationLoaded('children') ? $this->children : $this->children()->get();
+        if ($children->isEmpty()) {
+            return 0.0;
+        }
+
+        $totalCost = 0.0;
+        foreach ($children as $child) {
+            $qty = (float) ($child->pivot->quantity ?? 1);
+            $totalCost += ((float) $child->cost_price) * $qty;
+        }
+
+        return round($totalCost, 2);
+    }
+
+    /**
+     * Calcula cuántos combos enteros se pueden armar según el stock actual de sus ingredientes.
+     */
+    public function calculateComboAvailableStock(): float
+    {
+        $children = $this->relationLoaded('children') ? $this->children : $this->children()->get();
+        if ($children->isEmpty()) {
+            return 0.0;
+        }
+
+        $limiting = null;
+        foreach ($children as $child) {
+            $pivotQty = (float) ($child->pivot->quantity ?? 1);
+            if ($pivotQty <= 0) {
+                continue;
+            }
+            $availableForChild = floor(max(0.0, (float) $child->stock) / $pivotQty);
+            if ($limiting === null || $availableForChild < $limiting) {
+                $limiting = $availableForChild;
+            }
+        }
+
+        return (float) max(0, $limiting ?? 0);
+    }
+
+    public function toArray(): array
+    {
+        $array = parent::toArray();
+
+        if ($this->is_combo && $this->relationLoaded('children')) {
+            $array['cost_price'] = number_format($this->calculateComboCostPrice(), 2, '.', '');
+            $array['stock'] = number_format($this->calculateComboAvailableStock(), 3, '.', '');
+        }
+
+        return $array;
+    }
 }
