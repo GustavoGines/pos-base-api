@@ -73,13 +73,13 @@ class OfferController extends Controller
             'description' => 'nullable|string|max:255',
             'type' => 'required|in:percentage,fixed_price',
             'discount_percentage' => 'required_if:type,percentage|nullable|numeric|gt:0|max:100',
-            'discount_amount' => 'nullable|numeric|min:0',
+            'discount_amount' => 'nullable|numeric|gt:0',
             'period_type' => 'required|in:daily,weekly,monthly,custom',
             'days_of_week' => 'nullable|array',
             'start_date' => 'nullable|date',
             'end_date' => 'nullable|date',
             'products' => 'required|array|min:1',
-            'products.*.product_id' => 'required|exists:products,id',
+            'products.*.product_id' => 'required|exists:products,id,deleted_at,NULL',
             'products.*.special_price' => 'nullable|numeric|min:0',
         ]);
 
@@ -87,33 +87,55 @@ class OfferController extends Controller
         $startDate = ! empty($validated['start_date']) ? Carbon::parse($validated['start_date']) : $now->copy();
         $endDate = ! empty($validated['end_date']) ? Carbon::parse($validated['end_date']) : null;
 
-        // Auto-calcular rango si es diario, semanal o mensual y no se proveyó end_date explícito
+        // Auto-calcular rango tomando como base $startDate si no se proveyó end_date explícito
         if (! $endDate) {
             switch ($validated['period_type']) {
                 case 'daily':
-                    $startDate = $now->copy()->startOfDay();
-                    $endDate = $now->copy()->endOfDay();
+                    $startDate = $startDate->copy()->startOfDay();
+                    $endDate = $startDate->copy()->endOfDay();
                     break;
                 case 'weekly':
-                    $endDate = $now->copy()->addDays(7)->endOfDay();
+                    $endDate = $startDate->copy()->addDays(7)->endOfDay();
                     break;
                 case 'monthly':
-                    $endDate = $now->copy()->addDays(30)->endOfDay();
+                    $endDate = $startDate->copy()->addDays(30)->endOfDay();
                     break;
                 default:
-                    $endDate = $now->copy()->addDay()->endOfDay();
+                    $endDate = $startDate->copy()->addDay()->endOfDay();
                     break;
+            }
+        }
+
+        if (($validated['type'] ?? '') === 'fixed_price' && ! empty($validated['discount_amount'])) {
+            $discAmt = (float) $validated['discount_amount'];
+            $productIdsWithoutSpecial = collect($validated['products'])
+                ->filter(fn ($p) => empty($p['special_price']))
+                ->pluck('product_id')
+                ->all();
+            if (! empty($productIdsWithoutSpecial)) {
+                $invalidProd = \App\Models\Product::whereIn('id', $productIdsWithoutSpecial)
+                    ->where('selling_price', '<=', $discAmt)
+                    ->first();
+                if ($invalidProd) {
+                    $msg = "El descuento fijo (\${$discAmt}) iguala o supera el precio de venta de '{$invalidProd->name}' (\${$invalidProd->selling_price}). Quitalo de la lista o reducí el monto.";
+                    return response()->json([
+                        'success' => false,
+                        'message' => $msg,
+                        'errors' => ['discount_amount' => [$msg]],
+                    ], 422);
+                }
             }
         }
 
         DB::beginTransaction();
         try {
+            $isPercentage = $validated['type'] === 'percentage';
             $offer = Offer::create([
                 'name' => $validated['name'],
                 'description' => $validated['description'] ?? null,
                 'type' => $validated['type'],
-                'discount_percentage' => $validated['discount_percentage'] ?? null,
-                'discount_amount' => $validated['discount_amount'] ?? null,
+                'discount_percentage' => $isPercentage ? ($validated['discount_percentage'] ?? null) : null,
+                'discount_amount' => ! $isPercentage ? ($validated['discount_amount'] ?? null) : null,
                 'period_type' => $validated['period_type'],
                 'days_of_week' => $validated['days_of_week'] ?? null,
                 'start_date' => $startDate,
@@ -159,13 +181,13 @@ class OfferController extends Controller
             'description' => 'nullable|string|max:255',
             'type' => 'required|in:percentage,fixed_price',
             'discount_percentage' => 'required_if:type,percentage|nullable|numeric|gt:0|max:100',
-            'discount_amount' => 'nullable|numeric|min:0',
+            'discount_amount' => 'nullable|numeric|gt:0',
             'period_type' => 'required|in:daily,weekly,monthly,custom',
             'days_of_week' => 'nullable|array',
             'start_date' => 'nullable|date',
             'end_date' => 'nullable|date',
             'products' => 'required|array|min:1',
-            'products.*.product_id' => 'required|exists:products,id',
+            'products.*.product_id' => 'required|exists:products,id,deleted_at,NULL',
             'products.*.special_price' => 'nullable|numeric|min:0',
         ]);
 
@@ -186,30 +208,52 @@ class OfferController extends Controller
             if ($endDate === null) {
                 switch ($validated['period_type']) {
                     case 'daily':
-                        $startDate = $now->copy()->startOfDay();
-                        $endDate = $now->copy()->endOfDay();
+                        $startDate = $startDate->copy()->startOfDay();
+                        $endDate = $startDate->copy()->endOfDay();
                         break;
                     case 'weekly':
-                        $endDate = $now->copy()->addDays(7)->endOfDay();
+                        $endDate = $startDate->copy()->addDays(7)->endOfDay();
                         break;
                     case 'monthly':
-                        $endDate = $now->copy()->addDays(30)->endOfDay();
+                        $endDate = $startDate->copy()->addDays(30)->endOfDay();
                         break;
                     default:
-                        $endDate = $now->copy()->addDay()->endOfDay();
+                        $endDate = $startDate->copy()->addDay()->endOfDay();
                         break;
+                }
+            }
+        }
+
+        if (($validated['type'] ?? '') === 'fixed_price' && ! empty($validated['discount_amount'])) {
+            $discAmt = (float) $validated['discount_amount'];
+            $productIdsWithoutSpecial = collect($validated['products'])
+                ->filter(fn ($p) => empty($p['special_price']))
+                ->pluck('product_id')
+                ->all();
+            if (! empty($productIdsWithoutSpecial)) {
+                $invalidProd = \App\Models\Product::whereIn('id', $productIdsWithoutSpecial)
+                    ->where('selling_price', '<=', $discAmt)
+                    ->first();
+                if ($invalidProd) {
+                    $msg = "El descuento fijo (\${$discAmt}) iguala o supera el precio de venta de '{$invalidProd->name}' (\${$invalidProd->selling_price}). Quitalo de la lista o reducí el monto.";
+                    return response()->json([
+                        'success' => false,
+                        'message' => $msg,
+                        'errors' => ['discount_amount' => [$msg]],
+                    ], 422);
                 }
             }
         }
 
         DB::beginTransaction();
         try {
+            $isPercentage = $validated['type'] === 'percentage';
             $offer->update([
                 'name' => $validated['name'],
                 'description' => $validated['description'] ?? null,
                 'type' => $validated['type'],
-                'discount_percentage' => $validated['discount_percentage'] ?? null,
-                'discount_amount' => $validated['discount_amount'] ?? null,
+                'discount_percentage' => $isPercentage ? ($validated['discount_percentage'] ?? null) : null,
+                'discount_amount' => ! $isPercentage ? ($validated['discount_amount'] ?? null) : null,
                 'period_type' => $validated['period_type'],
                 'days_of_week' => $validated['days_of_week'] ?? null,
                 'start_date' => $startDate,
@@ -265,18 +309,42 @@ class OfferController extends Controller
         if (! $endDate) {
             switch ($validated['period_type']) {
                 case 'daily':
-                    $startDate = $now->copy()->startOfDay();
-                    $endDate = $now->copy()->endOfDay();
+                    $startDate = $startDate->copy()->startOfDay();
+                    $endDate = $startDate->copy()->endOfDay();
                     break;
                 case 'weekly':
-                    $endDate = $now->copy()->addDays(7)->endOfDay();
+                    $endDate = $startDate->copy()->addDays(7)->endOfDay();
                     break;
                 case 'monthly':
-                    $endDate = $now->copy()->addDays(30)->endOfDay();
+                    $endDate = $startDate->copy()->addDays(30)->endOfDay();
                     break;
                 default:
-                    $endDate = $now->copy()->addDay()->endOfDay();
+                    $endDate = $startDate->copy()->addDay()->endOfDay();
                     break;
+            }
+        }
+
+        // Candado Anti-$0 en Relanzar: verificar que ningún producto actual quede en <= $0 con el monto fijo
+        $offer->loadMissing('products');
+        if ($offer->type === 'fixed_price' && (float) $offer->discount_amount > 0) {
+            $discAmt = (float) $offer->discount_amount;
+            $invalidProd = $offer->products->first(function ($p) use ($discAmt) {
+                $special = $p->pivot?->special_price;
+                if ($special !== null && (float) $special > 0) {
+                    return false;
+                }
+
+                return (float) $p->selling_price <= $discAmt;
+            });
+
+            if ($invalidProd) {
+                $msg = "No se puede relanzar la oferta: el descuento fijo (\${$discAmt}) iguala o supera el precio de venta actual de '{$invalidProd->name}' (\${$invalidProd->selling_price}). Editá la oferta para ajustar el monto o quitar el producto.";
+
+                return response()->json([
+                    'success' => false,
+                    'message' => $msg,
+                    'errors' => ['discount_amount' => [$msg]],
+                ], 422);
             }
         }
 
@@ -346,6 +414,30 @@ class OfferController extends Controller
             ], 422);
         }
 
+        // Si se va a reanudar una oferta pausada de monto fijo, validar que ningún producto actual quede en <= $0
+        if (! $offer->is_active && $offer->type === 'fixed_price' && (float) $offer->discount_amount > 0) {
+            $offer->loadMissing('products');
+            $discAmt = (float) $offer->discount_amount;
+            $invalidProd = $offer->products->first(function ($p) use ($discAmt) {
+                $special = $p->pivot?->special_price;
+                if ($special !== null && (float) $special > 0) {
+                    return false;
+                }
+
+                return (float) $p->selling_price <= $discAmt;
+            });
+
+            if ($invalidProd) {
+                $msg = "No se puede reanudar la oferta: el descuento fijo (\${$discAmt}) iguala o supera el precio de venta actual de '{$invalidProd->name}' (\${$invalidProd->selling_price}). Editá la oferta para ajustar el monto o quitar el producto.";
+
+                return response()->json([
+                    'success' => false,
+                    'message' => $msg,
+                    'errors' => ['discount_amount' => [$msg]],
+                ], 422);
+            }
+        }
+
         $offer->is_active = ! $offer->is_active;
         $offer->save();
 
@@ -378,12 +470,13 @@ class OfferController extends Controller
             }
 
             if ($cost > 0 && $discounted < $cost) {
+                $roundedDiscounted = round($discounted, 2);
                 $warnings[] = [
                     'product_id' => $product->id,
                     'product_name' => $product->name,
                     'cost_price' => $cost,
-                    'discounted_price' => round($discounted, 2),
-                    'message' => "El precio de oferta (\${$discounted}) es inferior al costo de reposición (\${$cost}).",
+                    'discounted_price' => $roundedDiscounted,
+                    'message' => "El precio de oferta (\${$roundedDiscounted}) es inferior al costo de reposición (\${$cost}).",
                 ];
             }
         }

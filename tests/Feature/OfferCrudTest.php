@@ -183,4 +183,104 @@ class OfferCrudTest extends TestCase
         $this->assertEquals($originalStart->timestamp, $offer->start_date->timestamp);
         $this->assertEquals($originalEnd->timestamp, $offer->end_date->timestamp);
     }
+
+    public function test_fixed_price_offer_rejects_products_with_selling_price_less_or_equal_to_discount_amount()
+    {
+        // Product 2 has selling_price = 800; discount_amount = 800 should be rejected (422)
+        $resIncompatible = $this->postJson('/api/offers', [
+            'name' => 'Oferta Monto Fijo Incompatible',
+            'type' => 'fixed_price',
+            'discount_amount' => 800,
+            'period_type' => 'daily',
+            'products' => [
+                ['product_id' => $this->product1->id],
+                ['product_id' => $this->product2->id],
+            ],
+        ]);
+        $resIncompatible->assertStatus(422)
+            ->assertJsonValidationErrors(['discount_amount']);
+
+        // Valid fixed_price offer (discount_amount = 200 < 800)
+        $resValid = $this->postJson('/api/offers', [
+            'name' => 'Oferta $200 OFF',
+            'type' => 'fixed_price',
+            'discount_amount' => 200,
+            'discount_percentage' => 15, // Should be nullified by controller
+            'period_type' => 'daily',
+            'products' => [
+                ['product_id' => $this->product1->id],
+                ['product_id' => $this->product2->id],
+            ],
+        ]);
+        $resValid->assertStatus(201);
+        $offerId = $resValid->json('data.id');
+        $this->assertNull($resValid->json('data.discount_percentage'));
+        $this->assertEquals(200, (float) $resValid->json('data.discount_amount'));
+
+        // Switch back to percentage on update: discount_amount should be nullified
+        $resUpdate = $this->putJson("/api/offers/{$offerId}", [
+            'name' => 'Oferta 10% OFF',
+            'type' => 'percentage',
+            'discount_percentage' => 10,
+            'discount_amount' => 200,
+            'period_type' => 'daily',
+            'products' => [
+                ['product_id' => $this->product1->id],
+            ],
+        ]);
+        $resUpdate->assertStatus(200);
+        $this->assertNull($resUpdate->json('data.discount_amount'));
+        $this->assertEquals(10, (float) $resUpdate->json('data.discount_percentage'));
+    }
+
+    public function test_rejects_soft_deleted_products_and_zero_discount_amount()
+    {
+        $this->product2->delete(); // Soft delete
+
+        $resDeleted = $this->postJson('/api/offers', [
+            'name' => 'Oferta con Producto Eliminado',
+            'type' => 'percentage',
+            'discount_percentage' => 10,
+            'period_type' => 'daily',
+            'products' => [
+                ['product_id' => $this->product2->id],
+            ],
+        ]);
+        $resDeleted->assertStatus(422)
+            ->assertJsonValidationErrors(['products.0.product_id']);
+
+        $resZeroAmt = $this->postJson('/api/offers', [
+            'name' => 'Oferta $0 OFF',
+            'type' => 'fixed_price',
+            'discount_amount' => 0,
+            'period_type' => 'daily',
+            'products' => [
+                ['product_id' => $this->product1->id],
+            ],
+        ]);
+        $resZeroAmt->assertStatus(422)
+            ->assertJsonValidationErrors(['discount_amount']);
+    }
+
+    public function test_scheduled_offer_calculates_end_date_from_start_date_not_now()
+    {
+        $futureStart = now()->addDays(10)->startOfDay();
+
+        $resWeekly = $this->postJson('/api/offers', [
+            'name' => 'Oferta Semanal Futura',
+            'type' => 'percentage',
+            'discount_percentage' => 15,
+            'period_type' => 'weekly',
+            'start_date' => $futureStart->toIso8601String(),
+            'products' => [
+                ['product_id' => $this->product1->id],
+            ],
+        ]);
+
+        $resWeekly->assertStatus(201);
+        $offer = Offer::find($resWeekly->json('data.id'));
+        $this->assertEquals('scheduled', $offer->status);
+        $this->assertEquals($futureStart->toDateString(), $offer->start_date->toDateString());
+        $this->assertEquals($futureStart->copy()->addDays(7)->toDateString(), $offer->end_date->toDateString());
+    }
 }

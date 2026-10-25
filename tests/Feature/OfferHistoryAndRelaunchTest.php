@@ -256,4 +256,81 @@ class OfferHistoryAndRelaunchTest extends TestCase
         $this->assertEquals(560, (float) $warnings[0]['discounted_price']);
         $this->assertEquals(700, (float) $warnings[0]['cost_price']);
     }
+
+    public function test_relaunch_and_toggle_resume_reject_fixed_price_offer_when_product_price_dropped_below_discount()
+    {
+        // Product 2 starts at $800; offer has $850 fixed discount (simulating a product price drop after offer was created)
+        $offer = Offer::create([
+            'name' => 'Promo Monto Fijo Desactualizada',
+            'type' => 'fixed_price',
+            'discount_amount' => 850,
+            'period_type' => 'weekly',
+            'start_date' => now()->subDays(1),
+            'end_date' => now()->addDays(5),
+            'is_active' => false,
+        ]);
+        $offer->products()->sync([$this->product2->id]);
+
+        // 1. Intentar reanudar con toggleStatus debe rechazar con 422
+        $resResume = $this->patchJson("/api/offers/{$offer->id}/toggle-status");
+        $resResume->assertStatus(422)
+            ->assertJsonValidationErrors(['discount_amount']);
+
+        // 2. Intentar relanzar (in-place o duplicado) debe rechazar con 422
+        $resRelaunch = $this->postJson("/api/offers/{$offer->id}/relaunch", [
+            'period_type' => 'daily',
+            'duplicate' => true,
+        ]);
+        $resRelaunch->assertStatus(422)
+            ->assertJsonValidationErrors(['discount_amount']);
+    }
+
+    public function test_discount_authorization_service_honors_quote_prices_when_offer_later_expired()
+    {
+        $cashier = User::factory()->create([
+            'role' => 'cashier',
+            'permissions' => [],
+        ]);
+
+        // Presupuesto emitido ayer cuando existía una oferta de 20% OFF ($800 sobre $1000)
+        $quote = \App\Models\Quote::create([
+            'quote_number' => 'PRE-000999',
+            'status' => 'pending',
+            'subtotal' => 800,
+            'total' => 800,
+            'price_list' => 'base',
+        ]);
+        \App\Models\QuoteItem::create([
+            'quote_id' => $quote->id,
+            'product_id' => $this->product1->id,
+            'product_name' => $this->product1->name,
+            'unit_price' => 800,
+            'quantity' => 1,
+            'subtotal' => 800,
+        ]);
+
+        $service = app(\App\Services\DiscountAuthorizationService::class);
+
+        // 1. Con quote_id válido, el precio de $800 está autorizado aunque hoy no haya oferta activa
+        $reqWithQuote = \Illuminate\Http\Request::create('/api/pos/sale', 'POST', [
+            'user_id' => $cashier->id,
+            'quote_id' => $quote->id,
+            'items' => [
+                ['product_id' => $this->product1->id, 'quantity' => 1, 'unit_price' => 800],
+            ],
+        ]);
+        $this->assertNull($service->validateItemDiscounts($reqWithQuote, $reqWithQuote->input('items')));
+
+        // 2. Sin quote_id (o con un precio menor al del presupuesto, ej. $700), exige autorización (403)
+        $reqLowerThanQuote = \Illuminate\Http\Request::create('/api/pos/sale', 'POST', [
+            'user_id' => $cashier->id,
+            'quote_id' => $quote->id,
+            'items' => [
+                ['product_id' => $this->product1->id, 'quantity' => 1, 'unit_price' => 700],
+            ],
+        ]);
+        $resForbidden = $service->validateItemDiscounts($reqLowerThanQuote, $reqLowerThanQuote->input('items'));
+        $this->assertNotNull($resForbidden);
+        $this->assertEquals(403, $resForbidden->getStatusCode());
+    }
 }

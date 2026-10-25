@@ -55,6 +55,7 @@ class DiscountAuthorizationService
             ->keyBy('id');
 
         // Mapa de precios previamente autorizados en el ticket en espera (Salvaguarda v1.8.5)
+        // o en un Presupuesto formal recuperado (quote_id)
         $previouslyAuthorizedPrices = [];
         if ($existingSale !== null) {
             $existingSale->loadMissing('items');
@@ -63,6 +64,23 @@ class DiscountAuthorizationService
                 $oldPrice = round((float) $oldItem->unit_price, 2);
                 if (! isset($previouslyAuthorizedPrices[$pid]) || $oldPrice < $previouslyAuthorizedPrices[$pid]) {
                     $previouslyAuthorizedPrices[$pid] = $oldPrice;
+                }
+            }
+        }
+
+        $quoteId = $request->input('quote_id');
+        if ($quoteId && is_numeric($quoteId)) {
+            $quote = \App\Models\Quote::with('items')->find((int) $quoteId);
+            if ($quote) {
+                foreach ($quote->items as $quoteItem) {
+                    if (! $quoteItem->product_id) {
+                        continue;
+                    }
+                    $pid = (int) $quoteItem->product_id;
+                    $qPrice = round((float) $quoteItem->unit_price, 2);
+                    if (! isset($previouslyAuthorizedPrices[$pid]) || $qPrice < $previouslyAuthorizedPrices[$pid]) {
+                        $previouslyAuthorizedPrices[$pid] = $qPrice;
+                    }
                 }
             }
         }
