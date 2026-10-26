@@ -109,6 +109,73 @@ class MercadoPagoController extends Controller
     }
 
     /**
+     * List all Point physical terminals available on the Mercado Pago account.
+     * GET /api/pos/mp/devices
+     */
+    public function devices(Request $request): JsonResponse
+    {
+        $inputToken = $request->input('mp_access_token');
+        $token = ($request->filled('mp_access_token') && ! str_contains((string) $inputToken, '****'))
+            ? trim((string) $inputToken)
+            : null;
+
+        try {
+            $devices = $this->mpService->listPointDevices($token);
+
+            return response()->json([
+                'success' => true,
+                'devices' => $devices,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'devices' => [],
+            ], 400);
+        }
+    }
+
+    /**
+     * Update operating mode of a Point device (PDV or STANDALONE).
+     * PATCH /api/pos/mp/devices/operating-mode
+     */
+    public function updateDeviceOperatingMode(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'device_id' => 'required|string',
+            'operating_mode' => 'nullable|string|in:PDV,STANDALONE,pdv,standalone',
+            'mp_access_token' => 'nullable|string',
+        ]);
+
+        $inputToken = $validated['mp_access_token'] ?? null;
+        $token = (! empty($inputToken) && ! str_contains((string) $inputToken, '****'))
+            ? trim((string) $inputToken)
+            : null;
+
+        $mode = strtoupper($validated['operating_mode'] ?? 'PDV');
+
+        try {
+            $result = $this->mpService->updatePointDeviceOperatingMode(
+                deviceId: $validated['device_id'],
+                operatingMode: $mode,
+                tokenOverride: $token
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Modo operativo actualizado correctamente.',
+                'device_id' => $validated['device_id'],
+                'operating_mode' => $mode,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
+        }
+    }
+
+    /**
      * Check status of a Mercado Pago transaction (polling fallback).
      * GET /api/pos/mp/status/{external_reference}
      */

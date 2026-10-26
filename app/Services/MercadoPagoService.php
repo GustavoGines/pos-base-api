@@ -298,6 +298,141 @@ class MercadoPagoService
     }
 
     /**
+     * List all Point physical terminals available on the account.
+     * Tries legacy Point Integration API first, then modern Terminals v1 API.
+     */
+    public function listPointDevices(?string $tokenOverride = null): array
+    {
+        $token = $tokenOverride ?: $this->getAccessToken();
+        if (empty($token)) {
+            throw new \RuntimeException('No hay un Access Token de Mercado Pago configurado.');
+        }
+
+        $devices = [];
+
+        // 1. Try Point Integration API
+        try {
+            $resp = Http::withToken($token)
+                ->timeout(15)
+                ->get('https://api.mercadopago.com/point/integration-api/devices');
+
+            if ($resp->successful()) {
+                $rawList = $resp->json()['devices'] ?? $resp->json() ?? [];
+                if (is_array($rawList)) {
+                    foreach ($rawList as $d) {
+                        if (is_array($d) && ! empty($d['id'])) {
+                            $devices[] = [
+                                'id' => (string) $d['id'],
+                                'operating_mode' => strtoupper($d['operating_mode'] ?? 'PDV'),
+                                'pos_id' => $d['pos_id'] ?? null,
+                                'store_id' => $d['store_id'] ?? null,
+                                'external_pos_id' => $d['external_pos_id'] ?? null,
+                            ];
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // Fallback to Terminals API
+        }
+
+        // 2. If empty, try modern Terminals v1 API
+        if (empty($devices)) {
+            try {
+                $resp = Http::withToken($token)
+                    ->timeout(15)
+                    ->get('https://api.mercadopago.com/terminals/v1/list?limit=50');
+
+                if ($resp->successful()) {
+                    $json = $resp->json();
+                    $rawList = $json['terminals'] ?? $json['data']['terminals'] ?? [];
+                    if (is_array($rawList)) {
+                        foreach ($rawList as $d) {
+                            $id = $d['id'] ?? $d['terminal_id'] ?? '';
+                            if (! empty($id)) {
+                                $devices[] = [
+                                    'id' => (string) $id,
+                                    'operating_mode' => strtoupper($d['operating_mode'] ?? 'PDV'),
+                                    'pos_id' => $d['pos_id'] ?? null,
+                                    'store_id' => $d['store_id'] ?? null,
+                                    'external_pos_id' => $d['external_pos_id'] ?? null,
+                                ];
+                            }
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Return what we have
+            }
+        }
+
+        return $devices;
+    }
+
+    /**
+     * Update operating mode of a Point physical terminal (PDV or STANDALONE).
+     */
+    public function updatePointDeviceOperatingMode(
+        string $deviceId,
+        string $operatingMode = 'PDV',
+        ?string $tokenOverride = null
+    ): array {
+        $token = $tokenOverride ?: $this->getAccessToken();
+        if (empty($token)) {
+            throw new \RuntimeException('No hay un Access Token de Mercado Pago configurado.');
+        }
+
+        $mode = strtoupper($operatingMode) === 'STANDALONE' ? 'STANDALONE' : 'PDV';
+
+        // 1. Try legacy Point Integration API
+        try {
+            $resp = Http::withToken($token)
+                ->timeout(15)
+                ->patch("https://api.mercadopago.com/point/integration-api/devices/{$deviceId}", [
+                    'operating_mode' => $mode,
+                ]);
+
+            if ($resp->successful()) {
+                return [
+                    'success' => true,
+                    'device_id' => $deviceId,
+                    'operating_mode' => $mode,
+                    'raw' => $resp->json(),
+                ];
+            }
+        } catch (\Throwable $e) {
+            // Fallback to Terminals API
+        }
+
+        // 2. Try modern Terminals v1 API
+        try {
+            $resp = Http::withToken($token)
+                ->timeout(15)
+                ->patch('https://api.mercadopago.com/terminals/v1/setup', [
+                    'terminals' => [
+                        [
+                            'id' => $deviceId,
+                            'operating_mode' => $mode,
+                        ],
+                    ],
+                ]);
+
+            if ($resp->successful()) {
+                return [
+                    'success' => true,
+                    'device_id' => $deviceId,
+                    'operating_mode' => $mode,
+                    'raw' => $resp->json(),
+                ];
+            }
+
+            throw new \RuntimeException("Mercado Pago respondió con error ({$resp->status()}): {$resp->body()}");
+        } catch (\Throwable $e) {
+            throw new \RuntimeException("Error al cambiar modo operativo: {$e->getMessage()}");
+        }
+    }
+
+    /**
      * Query order or intent status from local database and Mercado Pago.
      */
     public function checkOrderStatus(string $orderOrIntentId, ?string $externalRef = null): array
@@ -370,6 +505,15 @@ class MercadoPagoService
                 }
 
                 if ($isSuccessful && is_array($data)) {
+                    // Soporte Point API: mapear 'state' (OPEN, ON_TERMINAL, FINISHED, CANCELED, ABANDONED, ERROR)
+                    $rawState = strtoupper((string) ($data['state'] ?? ''));
+                    if (in_array($rawState, ['CANCELED', 'ABANDONED', 'ERROR'])) {
+                        $status = strtolower($rawState);
+                        if ($tx) {
+                            $tx->update(['status' => MpTransaction::STATUS_CANCELLED]);
+                        }
+                    }
+
                     if (! empty($data['payments']) && is_array($data['payments'])) {
                         foreach ($data['payments'] as $payment) {
                             if (($payment['status'] ?? '') === 'approved') {
@@ -384,6 +528,19 @@ class MercadoPagoService
                         if (($data['payment']['status'] ?? '') === 'approved') {
                             $isApproved = true;
                             $mpPaymentId = (string) ($data['payment']['id'] ?? '');
+                        } elseif (! empty($data['payment']['id']) && $token) {
+                            // En Point API, payment puede tener solo el ID; verificamos /v1/payments/{id}
+                            try {
+                                $pResp = Http::withToken($token)
+                                    ->timeout(10)
+                                    ->get("https://api.mercadopago.com/v1/payments/{$data['payment']['id']}");
+                                if ($pResp->successful() && ($pResp->json()['status'] ?? '') === 'approved') {
+                                    $isApproved = true;
+                                    $mpPaymentId = (string) $data['payment']['id'];
+                                }
+                            } catch (\Throwable $e) {
+                                // Continuar
+                            }
                         }
                     }
 
@@ -410,7 +567,7 @@ class MercadoPagoService
                             ));
                         }
                     } else {
-                        $status = strtolower($data['status'] ?? 'pending');
+                        $status = strtolower($data['status'] ?? $data['state'] ?? 'pending');
                     }
                 }
             } catch (\Throwable $e) {
@@ -433,10 +590,23 @@ class MercadoPagoService
     public function cancelInStoreOrder(string $externalRef): bool
     {
         $tx = MpTransaction::where('external_reference', $externalRef)->first();
+        $token = $this->getAccessToken();
 
-        if ($tx && $tx->mp_order_id && $this->getAccessToken()) {
+        if ($tx && $tx->mp_order_id && $token) {
+            // 1. Si es una intención de Posnet Point (pos_id es device_id y mp_order_id no es numérico)
+            if ($tx->pos_id && ! is_numeric($tx->mp_order_id)) {
+                try {
+                    Http::withToken($token)
+                        ->timeout(10)
+                        ->delete("https://api.mercadopago.com/point/integration-api/devices/{$tx->pos_id}/payment-intents/{$tx->mp_order_id}");
+                } catch (\Throwable $e) {
+                    // Continuar cancelación local
+                }
+            }
+
+            // 2. Si es una orden QR instore
             try {
-                Http::withToken($this->getAccessToken())
+                Http::withToken($token)
                     ->timeout(10)
                     ->post("https://api.mercadopago.com/v1/orders/{$tx->mp_order_id}/cancel");
             } catch (\Throwable $e) {

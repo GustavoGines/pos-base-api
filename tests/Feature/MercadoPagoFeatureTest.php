@@ -222,6 +222,65 @@ class MercadoPagoFeatureTest extends TestCase
         ]);
     }
 
+    public function test_devices_endpoint_lists_point_terminals(): void
+    {
+        Http::fake([
+            'https://api.mercadopago.com/point/integration-api/devices' => Http::response([
+                'devices' => [
+                    [
+                        'id' => 'PAX_A910__TEST001',
+                        'operating_mode' => 'STANDALONE',
+                        'pos_id' => 12345,
+                    ],
+                    [
+                        'id' => 'NEWLAND_N950__TEST002',
+                        'operating_mode' => 'PDV',
+                        'pos_id' => 12346,
+                    ],
+                ],
+            ], 200),
+        ]);
+
+        $response = $this->actingAsAdmin()->getJson('/api/pos/mp/devices');
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+                'devices' => [
+                    [
+                        'id' => 'PAX_A910__TEST001',
+                        'operating_mode' => 'STANDALONE',
+                    ],
+                    [
+                        'id' => 'NEWLAND_N950__TEST002',
+                        'operating_mode' => 'PDV',
+                    ],
+                ],
+            ]);
+    }
+
+    public function test_update_device_operating_mode_endpoint_switches_mode(): void
+    {
+        Http::fake([
+            'https://api.mercadopago.com/point/integration-api/devices/PAX_A910__TEST001' => Http::response([
+                'id' => 'PAX_A910__TEST001',
+                'operating_mode' => 'PDV',
+            ], 200),
+        ]);
+
+        $response = $this->actingAsAdmin()->patchJson('/api/pos/mp/devices/operating-mode', [
+            'device_id' => 'PAX_A910__TEST001',
+            'operating_mode' => 'PDV',
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+                'device_id' => 'PAX_A910__TEST001',
+                'operating_mode' => 'PDV',
+            ]);
+    }
+
     public function test_webhook_rejects_invalid_signature_with_403(): void
     {
         $response = $this->postJson('/api/webhooks/mercadopago', [

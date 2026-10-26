@@ -152,6 +152,8 @@ Route::middleware(['session.validate', 'license.active'])->group(function () {
     Route::prefix('pos/mp')->group(function () {
         Route::post('/create-order', [MercadoPagoController::class, 'createOrder']);
         Route::post('/create-point-intent', [MercadoPagoController::class, 'createPointIntent']);
+        Route::get('/devices', [MercadoPagoController::class, 'devices']);
+        Route::patch('/devices/operating-mode', [MercadoPagoController::class, 'updateDeviceOperatingMode']);
         Route::get('/status/{external_reference}', [MercadoPagoController::class, 'status']);
         Route::post('/cancel-order', [MercadoPagoController::class, 'cancelOrder']);
     });
