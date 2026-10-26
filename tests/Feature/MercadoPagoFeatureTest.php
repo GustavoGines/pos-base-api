@@ -281,6 +281,110 @@ class MercadoPagoFeatureTest extends TestCase
             ]);
     }
 
+    public function test_point_status_detects_physical_cancellation_even_when_merchant_order_is_open(): void
+    {
+        MpTransaction::create([
+            'external_reference' => 'POS-POINT-CANC-01',
+            'pos_id' => 'PAX_A910__TEST001',
+            'amount' => 1500.00,
+            'status' => MpTransaction::STATUS_OPENED,
+            'mp_order_id' => 'intent_uuid_canc_01',
+        ]);
+
+        Http::fake([
+            'https://api.mercadopago.com/merchant_orders/search*' => Http::response([
+                'elements' => [
+                    [
+                        'id' => 999111,
+                        'status' => 'opened',
+                        'payments' => [],
+                    ],
+                ],
+            ], 200),
+            'https://api.mercadopago.com/point/integration-api/payment-intents/intent_uuid_canc_01' => Http::response([
+                'id' => 'intent_uuid_canc_01',
+                'state' => 'CANCELED',
+            ], 200),
+        ]);
+
+        $response = $this->actingAsAdmin()->getJson('/api/pos/mp/status/POS-POINT-CANC-01');
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+                'external_reference' => 'POS-POINT-CANC-01',
+                'status' => MpTransaction::STATUS_CANCELLED,
+            ]);
+    }
+
+    public function test_point_status_verifies_payment_id_when_state_is_finished(): void
+    {
+        Event::fake([PaymentApprovedEvent::class]);
+
+        MpTransaction::create([
+            'external_reference' => 'POS-POINT-FIN-01',
+            'pos_id' => 'PAX_A910__TEST001',
+            'amount' => 3200.00,
+            'status' => MpTransaction::STATUS_OPENED,
+            'mp_order_id' => 'intent_uuid_fin_01',
+        ]);
+
+        Http::fake([
+            'https://api.mercadopago.com/merchant_orders/search*' => Http::response(['elements' => []], 200),
+            'https://api.mercadopago.com/point/integration-api/payment-intents/intent_uuid_fin_01' => Http::response([
+                'id' => 'intent_uuid_fin_01',
+                'state' => 'FINISHED',
+                'payment' => [
+                    'id' => 88776655,
+                ],
+            ], 200),
+            'https://api.mercadopago.com/v1/payments/88776655' => Http::response([
+                'id' => 88776655,
+                'status' => 'approved',
+            ], 200),
+        ]);
+
+        $response = $this->actingAsAdmin()->getJson('/api/pos/mp/status/POS-POINT-FIN-01');
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+                'external_reference' => 'POS-POINT-FIN-01',
+                'status' => 'approved',
+                'mp_payment_id' => '88776655',
+            ]);
+
+        Event::assertDispatched(PaymentApprovedEvent::class);
+    }
+
+    public function test_point_cancel_order_deletes_payment_intent_from_physical_terminal(): void
+    {
+        MpTransaction::create([
+            'external_reference' => 'POS-POINT-DEL-01',
+            'pos_id' => 'PAX_A910__TEST001',
+            'amount' => 1800.00,
+            'status' => MpTransaction::STATUS_OPENED,
+            'mp_order_id' => 'intent_uuid_del_01',
+        ]);
+
+        Http::fake([
+            'https://api.mercadopago.com/point/integration-api/devices/PAX_A910__TEST001/payment-intents/intent_uuid_del_01' => Http::response([], 200),
+            'https://api.mercadopago.com/v1/orders/*/cancel' => Http::response([], 200),
+        ]);
+
+        $response = $this->actingAsAdmin()->postJson('/api/pos/mp/cancel-order', [
+            'external_reference' => 'POS-POINT-DEL-01',
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson(['success' => true]);
+
+        Http::assertSent(function ($request) {
+            return $request->method() === 'DELETE'
+                && str_contains($request->url(), '/point/integration-api/devices/PAX_A910__TEST001/payment-intents/intent_uuid_del_01');
+        });
+    }
+
     public function test_webhook_rejects_invalid_signature_with_403(): void
     {
         $response = $this->postJson('/api/webhooks/mercadopago', [

@@ -261,8 +261,17 @@ class MercadoPagoService
             ],
         ];
 
+        $existingTx = MpTransaction::where('external_reference', $externalRef)->first();
+        $idempotencyKey = ($existingTx && in_array($existingTx->status, [
+            MpTransaction::STATUS_CANCELLED,
+            MpTransaction::STATUS_REJECTED,
+            MpTransaction::STATUS_EXPIRED,
+        ], true))
+            ? $externalRef.'-R'.time()
+            : $externalRef;
+
         $response = Http::withToken($token)
-            ->withHeaders(['X-Idempotency-Key' => $externalRef])
+            ->withHeaders(['X-Idempotency-Key' => $idempotencyKey])
             ->timeout(20)
             ->post("https://api.mercadopago.com/point/integration-api/devices/{$deviceId}/payment-intents", $body);
 
@@ -469,14 +478,29 @@ class MercadoPagoService
 
                 // 1. Search by external_reference (QR orders)
                 $extRefToSearch = $externalRef ?? $tx?->external_reference ?? $orderOrIntentId;
+                $isPointIntent = ! is_numeric($orderOrIntentId) && $orderOrIntentId !== $extRefToSearch;
+
                 if ($extRefToSearch) {
                     $response = Http::withToken($token)
                         ->timeout(15)
                         ->get("https://api.mercadopago.com/merchant_orders/search?external_reference={$extRefToSearch}");
 
                     if ($response->successful() && ! empty($response->json()['elements'])) {
-                        $data = $response->json()['elements'][0];
-                        $isSuccessful = true;
+                        $candidate = $response->json()['elements'][0];
+                        $hasApprovedInMo = in_array(strtolower($candidate['status'] ?? ''), ['approved', 'closed', 'processed']);
+                        if (! $hasApprovedInMo && ! empty($candidate['payments']) && is_array($candidate['payments'])) {
+                            foreach ($candidate['payments'] as $p) {
+                                if (($p['status'] ?? '') === 'approved') {
+                                    $hasApprovedInMo = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if ($hasApprovedInMo || ! $isPointIntent) {
+                            $data = $candidate;
+                            $isSuccessful = true;
+                        }
                     }
                 }
 
@@ -505,12 +529,19 @@ class MercadoPagoService
                 }
 
                 if ($isSuccessful && is_array($data)) {
+                    $isRejected = false;
+                    $isCancelled = false;
+
                     // Soporte Point API: mapear 'state' (OPEN, ON_TERMINAL, FINISHED, CANCELED, ABANDONED, ERROR)
                     $rawState = strtoupper((string) ($data['state'] ?? ''));
                     if (in_array($rawState, ['CANCELED', 'ABANDONED', 'ERROR'])) {
+                        $isCancelled = true;
                         $status = strtolower($rawState);
                         if ($tx) {
-                            $tx->update(['status' => MpTransaction::STATUS_CANCELLED]);
+                            $tx->update([
+                                'status' => MpTransaction::STATUS_CANCELLED,
+                                'payload_received' => $data,
+                            ]);
                         }
                     }
 
@@ -525,18 +556,26 @@ class MercadoPagoService
                     }
 
                     if (! $isApproved && ! empty($data['payment']) && is_array($data['payment'])) {
-                        if (($data['payment']['status'] ?? '') === 'approved') {
+                        $directPayStatus = strtolower((string) ($data['payment']['status'] ?? ''));
+                        if ($directPayStatus === 'approved') {
                             $isApproved = true;
                             $mpPaymentId = (string) ($data['payment']['id'] ?? '');
+                        } elseif (in_array($directPayStatus, ['rejected', 'cancelled', 'canceled'])) {
+                            $isRejected = true;
                         } elseif (! empty($data['payment']['id']) && $token) {
                             // En Point API, payment puede tener solo el ID; verificamos /v1/payments/{id}
                             try {
                                 $pResp = Http::withToken($token)
                                     ->timeout(10)
                                     ->get("https://api.mercadopago.com/v1/payments/{$data['payment']['id']}");
-                                if ($pResp->successful() && ($pResp->json()['status'] ?? '') === 'approved') {
-                                    $isApproved = true;
-                                    $mpPaymentId = (string) $data['payment']['id'];
+                                if ($pResp->successful()) {
+                                    $pStatus = strtolower((string) ($pResp->json()['status'] ?? ''));
+                                    if ($pStatus === 'approved') {
+                                        $isApproved = true;
+                                        $mpPaymentId = (string) $data['payment']['id'];
+                                    } elseif (in_array($pStatus, ['rejected', 'cancelled', 'canceled'])) {
+                                        $isRejected = true;
+                                    }
                                 }
                             } catch (\Throwable $e) {
                                 // Continuar
@@ -566,7 +605,15 @@ class MercadoPagoService
                                 transaction: $tx
                             ));
                         }
-                    } else {
+                    } elseif ($isRejected) {
+                        $status = 'rejected';
+                        if ($tx) {
+                            $tx->update([
+                                'status' => MpTransaction::STATUS_REJECTED,
+                                'payload_received' => $data,
+                            ]);
+                        }
+                    } elseif (! $isCancelled) {
                         $status = strtolower($data['status'] ?? $data['state'] ?? 'pending');
                     }
                 }
