@@ -345,6 +345,7 @@ Route::middleware(['session.validate', 'license.active'])->group(function () {
         Route::get('/monthly-balance/export', [ReportController::class, 'exportMonthlyBalanceExcel']);
         Route::get('/monthly-balance/pdf', [ReportController::class, 'exportMonthlyBalancePdf']);
         Route::get('/monthly-balance', [ReportController::class, 'monthlyBalance']);
+        Route::get('/vat-sales', [ReportController::class, 'vatSales']);
 
         Route::middleware(['feature:expenses'])->group(function () {
             Route::get('/expenses-analysis/export', [ReportController::class, 'exportExpensesAnalysisExcel']);

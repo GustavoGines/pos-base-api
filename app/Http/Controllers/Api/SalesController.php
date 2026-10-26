@@ -8,6 +8,8 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\PaySaleRequest;
 use App\Http\Requests\VoidSaleRequest;
 use App\Models\BusinessSetting;
+use App\Models\CashRegister;
+use App\Models\CashShift;
 use App\Models\Sale;
 use App\Services\DiscountAuthorizationService;
 use App\Services\SaleService;
@@ -23,6 +25,7 @@ class SalesController extends Controller
     public function index(Request $request)
     {
         $shiftId = $request->query('shift_id');
+        $cashRegisterId = $request->query('cash_register_id');
         $period = $request->query('period', 'shift');
         $userId = $request->query('user_id');
 
@@ -30,6 +33,7 @@ class SalesController extends Controller
             'items.product:id,name,internal_code,stock,is_sold_by_weight',
             'user:id,name',
             'cashier:id,name',
+            'cashShift.cashRegister:id,name',
             'payments.paymentMethod:id,name,code,is_cash',
             'electronicInvoice',
         ])
@@ -52,11 +56,34 @@ class SalesController extends Controller
             // Comportamiento por defecto ('shift')
             if ($shiftId) {
                 $query->where('cash_shift_id', $shiftId);
+            } elseif (! empty($cashRegisterId) && is_numeric($cashRegisterId)) {
+                $openShiftForRegister = CashShift::where('cash_register_id', (int) $cashRegisterId)
+                    ->where('status', 'open')
+                    ->latest('id')
+                    ->first();
+                if ($openShiftForRegister) {
+                    $query->where('cash_shift_id', $openShiftForRegister->id);
+                } else {
+                    return response()->json([]);
+                }
+            } elseif (CashRegister::where('is_active', true)->count() === 1) {
+                // COL-08: En instalaciones Mono-Caja (1 sola caja activa), si un cliente legacy no envía shift_id,
+                // resolvemos el turno abierto de esa única caja sin riesgo de mezclar terminales.
+                $singleOpenShift = CashShift::where('status', 'open')->latest('id')->first();
+                if ($singleOpenShift) {
+                    $query->where('cash_shift_id', $singleOpenShift->id);
+                } else {
+                    return response()->json([]);
+                }
             } else {
-                // En un entorno Multi-Caja, si no envían shiftId, significa que la terminal
+                // En un entorno Multi-Caja, si no envían shiftId ni cash_register_id, significa que la terminal
                 // actual no tiene un turno abierto. No debemos adivinar usando el último turno global.
                 return response()->json([]);
             }
+        }
+
+        if ($period !== 'shift' && ! empty($cashRegisterId) && is_numeric($cashRegisterId)) {
+            $query->whereHas('cashShift', fn ($q) => $q->where('cash_register_id', (int) $cashRegisterId));
         }
 
         if ($userId) {
@@ -76,6 +103,7 @@ class SalesController extends Controller
             'items.product:id,name,internal_code,is_sold_by_weight',
             'user:id,name',
             'cashier:id,name',
+            'cashShift.cashRegister:id,name',
             'customer:id,name,document_number',
             'payments.paymentMethod:id,name,code,is_cash',
             'electronicInvoice',
@@ -88,18 +116,26 @@ class SalesController extends Controller
      * GET /api/sales/pending
      * Devuelve todos los tickets en espera (status = 'pending').
      */
-    public function pending()
+    public function pending(Request $request)
     {
-        $sales = Sale::with([
+        $query = Sale::with([
             'items.product:id,name,internal_code,stock,is_sold_by_weight,selling_price,cost_price,price_wholesale,price_card',
             'user:id,name',
             'cashier:id,name',
+            'cashShift.cashRegister:id,name',
             'customer',
             'payments.paymentMethod:id,name,code,is_cash',
         ])->select('sales.*')
-            ->where('status', 'pending')
-            ->latest()
-            ->get();
+            ->where('status', 'pending');
+
+        if ($request->filled('cash_shift_id') && is_numeric($request->query('cash_shift_id'))) {
+            $query->where('cash_shift_id', (int) $request->query('cash_shift_id'));
+        } elseif ($request->filled('cash_register_id') && is_numeric($request->query('cash_register_id'))) {
+            $regId = (int) $request->query('cash_register_id');
+            $query->whereHas('cashShift', fn ($q) => $q->where('cash_register_id', $regId));
+        }
+
+        $sales = $query->latest()->get();
 
         return response()->json($sales);
     }
@@ -149,6 +185,23 @@ class SalesController extends Controller
     public function void(VoidSaleRequest $request, Sale $sale, SaleService $saleService)
     {
         $validated = $request->validated();
+
+        // COL-03: Compatibilidad con clientes v1.8.5 que invocan POST /api/sales/{sale}/void sin cash_shift_id
+        if (empty($validated['cash_shift_id']) && $sale->status === 'completed') {
+            $originShift = $sale->cash_shift_id ? CashShift::find($sale->cash_shift_id) : null;
+            if ($originShift && $originShift->status === 'open') {
+                $validated['cash_shift_id'] = $originShift->id;
+            } elseif ($originShift && $originShift->cash_register_id) {
+                $validated['cash_shift_id'] = CashShift::where('cash_register_id', $originShift->cash_register_id)
+                    ->where('status', 'open')
+                    ->latest('id')
+                    ->value('id');
+            }
+
+            if (empty($validated['cash_shift_id'])) {
+                $validated['cash_shift_id'] = CashShift::where('status', 'open')->latest('id')->value('id');
+            }
+        }
 
         $actingUser = $request->user() ?? $request->attributes->get('authenticated_user');
         $authorizedByAdminId = $request->attributes->get('authorized_by_admin_id')

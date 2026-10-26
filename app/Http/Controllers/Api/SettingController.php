@@ -478,6 +478,10 @@ class SettingController extends Controller
      */
     public function updateLicense(Request $request, LicenseSyncService $licenseService)
     {
+        if (! $request->filled('license_key') && $request->filled('license_api_key')) {
+            $request->merge(['license_key' => $request->input('license_api_key')]);
+        }
+
         $request->validate([
             'license_key' => 'required|string|max:50',
         ]);

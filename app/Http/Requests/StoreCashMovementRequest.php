@@ -17,6 +17,53 @@ class StoreCashMovementRequest extends FormRequest
     }
 
     /**
+     * REP-01: Retrocompatibilidad con terminales v1.8.5 que envían estructura plana
+     * {"type": "expense", "amount": 250.00, "payment_method": "cash"} sin array 'payments'.
+     */
+    protected function prepareForValidation(): void
+    {
+        $methodMap = [
+            'efectivo' => 'cash',
+            'cash' => 'cash',
+            'transferencia' => 'transfer',
+            'transfer' => 'transfer',
+            'cheque' => 'check',
+            'check' => 'check',
+        ];
+
+        if (! $this->has('payments') && $this->has('amount')) {
+            $rawMethod = strtolower(trim((string) $this->input('payment_method', 'cash')));
+            $normalizedMethod = $methodMap[$rawMethod] ?? $rawMethod;
+
+            $singlePayment = [
+                'amount' => $this->input('amount'),
+                'payment_method' => $normalizedMethod,
+            ];
+            if ($this->filled('check_id')) {
+                $singlePayment['check_id'] = $this->input('check_id');
+            }
+
+            $this->merge([
+                'payments' => [$singlePayment],
+            ]);
+
+            return;
+        }
+
+        if (is_array($this->input('payments'))) {
+            $normalizedPayments = [];
+            foreach ($this->input('payments') as $payment) {
+                if (is_array($payment) && isset($payment['payment_method'])) {
+                    $rawMethod = strtolower(trim((string) $payment['payment_method']));
+                    $payment['payment_method'] = $methodMap[$rawMethod] ?? $rawMethod;
+                }
+                $normalizedPayments[] = $payment;
+            }
+            $this->merge(['payments' => $normalizedPayments]);
+        }
+    }
+
+    /**
      * Get the validation rules that apply to the request.
      *
      * @return array<string, ValidationRule|array<mixed>|string>

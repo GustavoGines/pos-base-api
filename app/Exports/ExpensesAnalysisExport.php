@@ -24,6 +24,10 @@ class ExpensesAnalysisExport implements FromCollection, WithCustomStartCell, Wit
 
     protected $minAmount;
 
+    protected $includeWithdrawals;
+
+    protected $cashRegisterId;
+
     protected $totalExpenses;
 
     public function __construct(
@@ -31,7 +35,9 @@ class ExpensesAnalysisExport implements FromCollection, WithCustomStartCell, Wit
         $endDate,
         $includeSuppliers = true,
         $paymentMethod = null,
-        $minAmount = null
+        $minAmount = null,
+        $includeWithdrawals = true,
+        $cashRegisterId = null
     ) {
         $this->startDate = $startDate;
         $this->endDate = $endDate;
@@ -41,6 +47,16 @@ class ExpensesAnalysisExport implements FromCollection, WithCustomStartCell, Wit
         } else {
             $this->includeSuppliers = filter_var($includeSuppliers, FILTER_VALIDATE_BOOLEAN);
         }
+
+        if (is_bool($includeWithdrawals)) {
+            $this->includeWithdrawals = $includeWithdrawals;
+        } else {
+            $this->includeWithdrawals = filter_var($includeWithdrawals, FILTER_VALIDATE_BOOLEAN);
+        }
+
+        $this->cashRegisterId = ($cashRegisterId !== null && is_numeric($cashRegisterId) && (int) $cashRegisterId > 0)
+            ? (int) $cashRegisterId
+            : null;
 
         if (! empty($paymentMethod) && $paymentMethod !== 'all') {
             $normalized = strtolower(trim((string) $paymentMethod));
@@ -64,16 +80,31 @@ class ExpensesAnalysisExport implements FromCollection, WithCustomStartCell, Wit
 
     public function collection()
     {
-        $types = $this->includeSuppliers ? ['expense', 'supplier_payment'] : ['expense'];
+        $types = ['expense'];
+        if ($this->includeSuppliers) {
+            $types[] = 'supplier_payment';
+        }
+        if ($this->includeWithdrawals) {
+            $types[] = 'withdrawal';
+        }
 
         $query = DB::table('cash_movements')
             ->leftJoin('expense_categories', 'cash_movements.expense_category_id', '=', 'expense_categories.id')
+            ->leftJoin('cash_shifts', 'cash_movements.cash_shift_id', '=', 'cash_shifts.id')
             ->whereIn('cash_movements.type', $types)
+            ->where(function ($q) {
+                $q->whereNull('cash_movements.category')
+                    ->orWhere('cash_movements.category', '!=', 'refund');
+            })
             ->whereNull('cash_movements.deleted_at')
             ->whereBetween('cash_movements.created_at', [
                 Carbon::parse($this->startDate)->startOfDay(),
                 Carbon::parse($this->endDate)->endOfDay(),
             ]);
+
+        if ($this->cashRegisterId !== null) {
+            $query->where('cash_shifts.cash_register_id', $this->cashRegisterId);
+        }
 
         if ($this->paymentMethod !== null) {
             $query->where('cash_movements.payment_method', $this->paymentMethod);
@@ -87,6 +118,12 @@ class ExpensesAnalysisExport implements FromCollection, WithCustomStartCell, Wit
             ->selectRaw("
                 CASE 
                     WHEN cash_movements.type = 'supplier_payment' THEN 'Pago a Proveedor'
+                    WHEN cash_movements.type = 'withdrawal' THEN
+                        CASE
+                            WHEN cash_movements.category IS NULL OR TRIM(cash_movements.category) = '' OR cash_movements.category = 'Retiro'
+                            THEN 'Retiro de Caja'
+                            ELSE cash_movements.category
+                        END
                     ELSE COALESCE(expense_categories.name, 'Sin Categoría')
                 END as category_name,
                 SUM(cash_movements.amount) as total_amount,
@@ -95,6 +132,12 @@ class ExpensesAnalysisExport implements FromCollection, WithCustomStartCell, Wit
             ->groupBy(DB::raw("
                 CASE 
                     WHEN cash_movements.type = 'supplier_payment' THEN 'Pago a Proveedor'
+                    WHEN cash_movements.type = 'withdrawal' THEN
+                        CASE
+                            WHEN cash_movements.category IS NULL OR TRIM(cash_movements.category) = '' OR cash_movements.category = 'Retiro'
+                            THEN 'Retiro de Caja'
+                            ELSE cash_movements.category
+                        END
                     ELSE COALESCE(expense_categories.name, 'Sin Categoría')
                 END
             "))

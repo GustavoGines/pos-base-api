@@ -49,7 +49,7 @@ class CashMovementController extends Controller
 
     public function index(Request $request)
     {
-        $query = CashMovement::with(['user', 'authorizer', 'supplier', 'check'])->latest();
+        $query = CashMovement::with(['user', 'authorizer', 'supplier', 'check', 'cashShift.cashRegister:id,name'])->latest();
 
         if ($request->query('all') !== '1') {
             $shift = $this->resolveActiveShift($request);
@@ -62,11 +62,27 @@ class CashMovementController extends Controller
                 ]);
             }
             $query->where('cash_shift_id', $shift->id);
+        } elseif ($request->filled('cash_register_id') && is_numeric($request->query('cash_register_id'))) {
+            $registerId = (int) $request->query('cash_register_id');
+            $query->whereHas('cashShift', fn ($q) => $q->where('cash_register_id', $registerId));
         }
 
-        // Optional filtering by category
-        if ($request->has('category')) {
-            $query->where('category', $request->query('category'));
+        // Optional filtering by category (smart mapping for UI filter groups + custom categories)
+        if ($request->filled('category')) {
+            $cat = $request->query('category');
+            if ($cat === 'Retiro de Caja' || $cat === 'Retiro') {
+                $query->where(fn ($q) => $q->where('type', 'withdrawal')->orWhereIn('category', ['Retiro', 'Retiro de Caja']));
+            } elseif ($cat === 'Gasto') {
+                $query->where(fn ($q) => $q
+                    ->where(fn ($sq) => $sq->where('type', 'expense')->where(fn ($rq) => $rq->whereNull('category')->orWhere('category', '!=', 'refund')))
+                    ->orWhere('category', 'Gasto'));
+            } elseif ($cat === 'Ingreso Manual') {
+                $query->where(fn ($q) => $q->where('type', 'deposit')->orWhere('category', 'Ingreso Manual'));
+            } elseif ($cat === 'Pago a Proveedor') {
+                $query->where(fn ($q) => $q->where('type', 'supplier_payment')->orWhere('category', 'Pago a Proveedor'));
+            } else {
+                $query->where('category', $cat);
+            }
         }
 
         // Optional filtering by expense_category_id
@@ -103,12 +119,15 @@ class CashMovementController extends Controller
     public function export(Request $request)
     {
         $shiftId = null;
+        $cashRegisterId = null;
         if ($request->query('all') !== '1') {
             $shift = $this->resolveActiveShift($request);
             if (! $shift) {
                 return response()->json(['message' => 'No hay turno abierto para exportar.'], 400);
             }
             $shiftId = $shift->id;
+        } elseif ($request->filled('cash_register_id') && is_numeric($request->query('cash_register_id'))) {
+            $cashRegisterId = (int) $request->query('cash_register_id');
         }
 
         $category = $request->query('category');
@@ -117,7 +136,7 @@ class CashMovementController extends Controller
         $endDate = $request->query('end_date');
 
         return Excel::download(
-            new CashMovementsExport($shiftId, $category, $expenseCategoryId, $startDate, $endDate),
+            new CashMovementsExport($shiftId, $category, $expenseCategoryId, $startDate, $endDate, $cashRegisterId),
             'cash_movements_'.now()->format('Ymd_His').'.xlsx'
         );
     }
@@ -202,6 +221,12 @@ class CashMovementController extends Controller
                     throw new \RuntimeException('SHIFT_ALREADY_CLOSED');
                 }
 
+                // CP-09: Bloquear proveedor en orden canónico antes de iterar pagos/cheques
+                $lockedSupplier = null;
+                if (! empty($validated['supplier_id'])) {
+                    $lockedSupplier = Supplier::where('id', $validated['supplier_id'])->lockForUpdate()->first();
+                }
+
                 $totalAmountPaid = 0;
 
                 foreach ($validated['payments'] as $payment) {
@@ -244,20 +269,22 @@ class CashMovementController extends Controller
                     }
                 }
 
-                // Si es pago o reembolso de proveedor, actualizar deuda total
-                if (! empty($validated['supplier_id'])) {
-                    $supplier = Supplier::find($validated['supplier_id']);
-                    if ($supplier) {
-                        if (in_array($validated['type'], ['supplier_payment', 'expense'])) {
-                            $supplier->decrement('balance', $totalAmountPaid);
-                        } elseif ($validated['type'] === 'deposit') {
-                            $supplier->increment('balance', $totalAmountPaid);
+                // Si es pago o reembolso de proveedor, actualizar deuda total bajo lock (CP-03 / CP-09)
+                if ($lockedSupplier) {
+                    if (in_array($validated['type'], ['supplier_payment', 'expense'])) {
+                        $lockedSupplier->decrement('balance', $totalAmountPaid);
+                        if ((float) $lockedSupplier->fresh()->balance <= 0.009) {
+                            $lockedSupplier->invoices()
+                                ->whereIn('status', ['pending', 'partial'])
+                                ->update(['status' => 'paid']);
                         }
+                    } elseif ($validated['type'] === 'deposit') {
+                        $lockedSupplier->increment('balance', $totalAmountPaid);
                     }
                 }
             });
 
-            if (in_array($validated['type'], ['expense', 'supplier_payment'])) {
+            if (in_array($validated['type'], ['expense', 'supplier_payment', 'withdrawal'])) {
                 ReportCacheService::flush();
             }
 
@@ -298,7 +325,15 @@ class CashMovementController extends Controller
             ], 403);
         }
 
-        // Candado de Seguridad 2: El turno al que pertenece el movimiento debe seguir abierto (multi-caja safe)
+        // Candado de Seguridad 2: No permitir anular manualmente devoluciones automáticas de ventas anuladas
+        if ($movement->category === 'refund') {
+            return response()->json([
+                'message' => 'Movimiento protegido del sistema.',
+                'error' => 'Las devoluciones automáticas generadas por anulación de ventas no pueden eliminarse manualmente.',
+            ], 403);
+        }
+
+        // Candado de Seguridad 3: El turno al que pertenece el movimiento debe seguir abierto (multi-caja safe)
         $movementShift = CashShift::find($movement->cash_shift_id);
         if (! $movementShift || $movementShift->status !== 'open') {
             return response()->json([
@@ -309,9 +344,13 @@ class CashMovementController extends Controller
 
         try {
             DB::transaction(function () use ($movement, $user) {
-                // Revertir balance de proveedor
+                $lockedShift = CashShift::where('id', $movement->cash_shift_id)->lockForUpdate()->first();
+                if (! $lockedShift || $lockedShift->status !== 'open') {
+                    throw new \RuntimeException('SHIFT_ALREADY_CLOSED');
+                }
+                // Revertir balance de proveedor con lockForUpdate (CP-09)
                 if ($movement->supplier_id) {
-                    $supplier = Supplier::find($movement->supplier_id);
+                    $supplier = Supplier::where('id', $movement->supplier_id)->lockForUpdate()->first();
                     if ($supplier) {
                         if (in_array($movement->type, ['supplier_payment', 'expense'])) {
                             $supplier->increment('balance', $movement->amount);
@@ -340,7 +379,7 @@ class CashMovementController extends Controller
                 $movement->delete();
             });
 
-            if (in_array($movement->type, ['expense', 'supplier_payment'])) {
+            if (in_array($movement->type, ['expense', 'supplier_payment', 'withdrawal'])) {
                 ReportCacheService::flush();
             }
 

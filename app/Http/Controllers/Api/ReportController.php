@@ -559,4 +559,139 @@ class ReportController extends Controller
             ],
         ]);
     }
+
+    /**
+     * REP-11: Libro IVA Ventas consolidado para contabilidad fiscal AFIP/ARCA.
+     * GET /api/reports/vat-sales?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
+     */
+    public function vatSales(Request $request): JsonResponse
+    {
+        $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
+        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        [$startDate, $endDate] = $this->normalizeDateRange($startDate, $endDate);
+
+        $startBound = Carbon::parse($startDate)->startOfDay();
+        $endBound = Carbon::parse($endDate)->endOfDay();
+
+        $invoices = \App\Models\ElectronicInvoice::where('status', 'authorized')
+            ->whereNotNull('cae')
+            ->where(function ($q) use ($startBound, $endBound) {
+                $q->whereBetween('issued_at', [$startBound, $endBound])
+                    ->orWhere(function ($sq) use ($startBound, $endBound) {
+                        $sq->whereNull('issued_at')
+                            ->whereBetween('created_at', [$startBound, $endBound]);
+                    })
+                    ->orWhereBetween('credit_note_issued_at', [$startBound, $endBound]);
+            })
+            ->orderBy('point_of_sale', 'asc')
+            ->orderBy('voucher_type', 'asc')
+            ->orderBy('voucher_number', 'asc')
+            ->get();
+
+        $vouchers = [];
+        $totalNet = 0.0;
+        $totalIva = 0.0;
+        $totalTributes = 0.0;
+        $totalExempt = 0.0;
+        $totalUntaxed = 0.0;
+        $totalInvoiced = 0.0;
+        $totalCreditNotes = 0.0;
+
+        foreach ($invoices as $inv) {
+            $issuedAt = $inv->issued_at ?? $inv->created_at;
+            if ($issuedAt && $issuedAt->between($startBound, $endBound)) {
+                $net = (float) $inv->net_amount;
+                $iva = (float) $inv->iva_amount;
+                $trib = (float) $inv->tribute_amount;
+                $ex = (float) $inv->exempt_amount;
+                $untax = (float) $inv->untaxed_amount;
+                $tot = (float) $inv->total_amount;
+
+                $totalNet += $net;
+                $totalIva += $iva;
+                $totalTributes += $trib;
+                $totalExempt += $ex;
+                $totalUntaxed += $untax;
+                $totalInvoiced += $tot;
+
+                $vouchers[] = [
+                    'id' => $inv->id,
+                    'sale_id' => $inv->sale_id,
+                    'kind' => 'invoice',
+                    'voucher_type' => $inv->voucher_type,
+                    'voucher_letter' => $inv->voucher_letter,
+                    'point_of_sale' => $inv->point_of_sale,
+                    'voucher_number' => $inv->voucher_number,
+                    'formatted_number' => $inv->formatted_number,
+                    'cae' => $inv->cae,
+                    'issued_at' => $issuedAt->toIso8601String(),
+                    'doc_type' => $inv->doc_type,
+                    'doc_number' => $inv->doc_number,
+                    'receiver_name' => $inv->receiver_name,
+                    'receiver_tax_condition' => $inv->receiver_tax_condition,
+                    'net_amount' => round($net, 2),
+                    'iva_amount' => round($iva, 2),
+                    'tribute_amount' => round($trib, 2),
+                    'exempt_amount' => round($ex, 2),
+                    'untaxed_amount' => round($untax, 2),
+                    'total_amount' => round($tot, 2),
+                ];
+            }
+
+            if (! empty($inv->credit_note_cae) && $inv->credit_note_issued_at && $inv->credit_note_issued_at->between($startBound, $endBound)) {
+                $net = (float) $inv->net_amount;
+                $iva = (float) $inv->iva_amount;
+                $trib = (float) $inv->tribute_amount;
+                $ex = (float) $inv->exempt_amount;
+                $untax = (float) $inv->untaxed_amount;
+                $tot = (float) $inv->total_amount;
+
+                $totalNet -= $net;
+                $totalIva -= $iva;
+                $totalTributes -= $trib;
+                $totalExempt -= $ex;
+                $totalUntaxed -= $untax;
+                $totalCreditNotes += $tot;
+
+                $vouchers[] = [
+                    'id' => $inv->id,
+                    'sale_id' => $inv->sale_id,
+                    'kind' => 'credit_note',
+                    'voucher_type' => $inv->credit_note_voucher_type,
+                    'voucher_letter' => $inv->voucher_letter,
+                    'point_of_sale' => $inv->point_of_sale,
+                    'voucher_number' => $inv->credit_note_number,
+                    'formatted_number' => sprintf('%05d-%08d', (int) $inv->point_of_sale, (int) $inv->credit_note_number),
+                    'cae' => $inv->credit_note_cae,
+                    'issued_at' => $inv->credit_note_issued_at->toIso8601String(),
+                    'doc_type' => $inv->doc_type,
+                    'doc_number' => $inv->doc_number,
+                    'receiver_name' => $inv->receiver_name,
+                    'receiver_tax_condition' => $inv->receiver_tax_condition,
+                    'net_amount' => round(-$net, 2),
+                    'iva_amount' => round(-$iva, 2),
+                    'tribute_amount' => round(-$trib, 2),
+                    'exempt_amount' => round(-$ex, 2),
+                    'untaxed_amount' => round(-$untax, 2),
+                    'total_amount' => round(-$tot, 2),
+                ];
+            }
+        }
+
+        return response()->json([
+            'start_date' => $startDate,
+            'end_date' => $endDate,
+            'summary' => [
+                'total_net' => round($totalNet, 2),
+                'total_iva' => round($totalIva, 2),
+                'total_tributes' => round($totalTributes, 2),
+                'total_exempt' => round($totalExempt, 2),
+                'total_untaxed' => round($totalUntaxed, 2),
+                'total_invoiced' => round($totalInvoiced, 2),
+                'total_credit_notes' => round($totalCreditNotes, 2),
+                'net_fiscal_total' => round($totalInvoiced - $totalCreditNotes, 2),
+            ],
+            'vouchers' => $vouchers,
+        ]);
+    }
 }

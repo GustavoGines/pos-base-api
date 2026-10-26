@@ -7,6 +7,7 @@ use App\Models\CashMovement;
 use App\Models\Supplier;
 use App\Models\SupplierInvoice;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 
@@ -85,16 +86,21 @@ class SupplierController extends Controller
 
     public function destroy(Supplier $supplier)
     {
-        if ($supplier->balance != 0) {
-            return response()->json(['message' => 'No se puede eliminar un proveedor con saldo pendiente.'], 422);
-        }
-        if ($supplier->products()->count() > 0) {
-            return response()->json(['message' => 'No se puede eliminar un proveedor que tiene productos asociados.'], 422);
-        }
+        return DB::transaction(function () use ($supplier) {
+            // CP-09: Bloqueo pesimista antes de validar saldo y eliminar
+            $lockedSupplier = Supplier::where('id', $supplier->id)->lockForUpdate()->firstOrFail();
 
-        $supplier->delete();
+            if (abs((float) $lockedSupplier->balance) > 0.009) {
+                return response()->json(['message' => 'No se puede eliminar un proveedor con saldo pendiente.'], 422);
+            }
+            if ($lockedSupplier->products()->count() > 0) {
+                return response()->json(['message' => 'No se puede eliminar un proveedor que tiene productos asociados.'], 422);
+            }
 
-        return response()->json(['message' => 'Proveedor eliminado con éxito'], 200);
+            $lockedSupplier->delete();
+
+            return response()->json(['message' => 'Proveedor eliminado con éxito'], 200);
+        });
     }
 
     public function currentAccount(Supplier $supplier)

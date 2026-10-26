@@ -168,15 +168,13 @@ class LicenseSyncService
             $features['cheques'] = $features['checks'];
             $features['predictive_alerts'] = $features['predictive_alerts'] ?? true;
             $features['multi_rubro'] = $features['multi_rubro'] ?? true;
+            $features['ecommerce_sync'] = $features['ecommerce_sync'] ?? true;
+            $features['quotes'] = $features['quotes'] ?? true;
 
             $isHardwareStore = $businessType === 'hardware_store';
             if ($isHardwareStore) {
-                $features['quotes'] = $features['quotes'] ?? true;
                 $features['logistics'] = $features['logistics'] ?? true;
             } else {
-                if (! isset($rawFeatures['quotes']) || $rawFeatures['quotes'] !== true) {
-                    $features['quotes'] = false;
-                }
                 if (! isset($rawFeatures['logistics']) || $rawFeatures['logistics'] !== true) {
                     $features['logistics'] = false;
                 }
@@ -194,6 +192,7 @@ class LicenseSyncService
 
         if ($licenseKey !== null) {
             $this->setSetting('license_key', $licenseKey);
+            $this->setSetting('license_api_key', $licenseKey);
         }
 
         $this->setSetting('app_plan', $plan);
@@ -219,13 +218,16 @@ class LicenseSyncService
             }
         }
         $this->setSetting('last_license_check', $referenceTime);
+        $this->setSetting('license_last_sync', $referenceTime);
 
         // L-09: Guardar sello de integridad criptográfica local
         $seal = self::computeLocalIntegritySeal($plan, $planMode, $isLifetime, $featuresJson);
         $this->setSetting('license_integrity_hash', $seal);
 
-        // LIMPIEZA EXTREMA: Eliminar keys de legado de la base de datos local
-        BusinessSetting::whereIn('key', ['license_addons', 'license_allowed_addons'])->delete();
+        // LIC-08: Mantener license_allowed_addons sincronizado para clientes v1.8.5 en producción
+        $enabledAddons = array_values(array_keys(array_filter($features, fn ($v) => (bool) $v)));
+        $this->setSetting('license_allowed_addons', json_encode($enabledAddons));
+        BusinessSetting::where('key', 'license_addons')->delete();
 
         return $plan;
     }
@@ -249,12 +251,13 @@ class LicenseSyncService
      */
     public function syncHeartbeat(): void
     {
-        $licenseKey = $this->getSetting('license_key');
+        $licenseKey = $this->getSetting('license_key') ?: $this->getSetting('license_api_key');
         if (! $licenseKey) {
             $this->setSetting('app_plan', 'basic'); // Sin clave = básico/restringido
 
             return;
         }
+        $this->setSetting('license_key', $licenseKey);
 
         $installationId = $this->getInstallationId();
         $nonce = Str::random(32);
@@ -273,7 +276,10 @@ class LicenseSyncService
                 $this->verifyServerSignature($data, $installationId, $nonce);
                 $this->applyValidatedLicenseData($data);
             } elseif ($response->status() === 401 || $response->status() === 403 || $response->status() === 404) {
-                // 401/403/404: Licencia suspendida, revocada o inválida
+                // 401/403/404: Licencia suspendida, expirada, revocada o inválida
+                if (($response->json('status') ?? '') === 'expired') {
+                    $this->setSetting('license_expires_at', now()->subSecond()->toIso8601String());
+                }
                 $this->markLicenseBlocked();
                 throw new \Exception('La licencia ha sido suspendida, revocada o es inválida.');
             } else {
@@ -318,7 +324,7 @@ class LicenseSyncService
             }
         }
 
-        $lastCheck = $this->getSetting('last_license_check');
+        $lastCheck = $this->getSetting('last_license_check') ?: $this->getSetting('license_last_sync');
 
         if (! $lastCheck) {
             $this->markLicenseBlocked();
@@ -340,10 +346,11 @@ class LicenseSyncService
      */
     public function syncManualForce(): void
     {
-        $licenseKey = $this->getSetting('license_key');
+        $licenseKey = $this->getSetting('license_key') ?: $this->getSetting('license_api_key');
         if (! $licenseKey) {
             throw new \Exception('No hay ninguna clave de licencia activa configurada para sincronizar.');
         }
+        $this->setSetting('license_key', $licenseKey);
 
         // L-04: Evitar estampida de workers concurrentes hacia Render en cold-start
         $lock = Cache::lock('pos_license_sync_lock', 65);
@@ -369,6 +376,9 @@ class LicenseSyncService
                     $this->verifyServerSignature($data, $installationId, $nonce);
                     $this->applyValidatedLicenseData($data);
                 } elseif ($response->status() === 401 || $response->status() === 403 || $response->status() === 404) {
+                    if (($response->json('status') ?? '') === 'expired') {
+                        $this->setSetting('license_expires_at', now()->subSecond()->toIso8601String());
+                    }
                     $this->markLicenseBlocked();
                     throw new \Exception('La licencia ha sido suspendida, revocada o es inválida.');
                 } else {

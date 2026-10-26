@@ -23,7 +23,7 @@ class VoidSaleRequest extends FormRequest
         return [
             'user_id' => 'nullable|integer|exists:users,id',
             'cash_shift_id' => [
-                'required',
+                'nullable',
                 'integer',
                 Rule::exists('cash_shifts', 'id')->where('status', 'open'),
             ],

@@ -28,6 +28,11 @@ class SupplierInvoice extends Model
 
     protected $casts = [
         'issue_date' => 'datetime',
+        'due_date' => 'date',
+        'amount' => 'float',
+        'tax_amount' => 'float',
+        'freight_amount' => 'float',
+        'discount_amount' => 'float',
     ];
 
     public function supplier()

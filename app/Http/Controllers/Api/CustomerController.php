@@ -10,6 +10,7 @@ use App\Models\Customer;
 use App\Models\CustomerTransaction;
 use App\Models\Sale;
 use App\Models\ThirdPartyCheck;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -80,9 +81,13 @@ class CustomerController extends Controller
      */
     public function destroy(Customer $customer)
     {
-        if ($customer->balance > 0) {
+        if (abs((float) $customer->balance) > 0.001) {
+            $msg = (float) $customer->balance > 0
+                ? 'No se puede eliminar un cliente con saldo pendiente (deudor).'
+                : 'No se puede eliminar un cliente con saldo a favor pendiente de reintegro.';
+
             return response()->json([
-                'message' => 'No se puede eliminar un cliente con saldo pendiente (deudor).',
+                'message' => $msg,
             ], 403);
         }
 
@@ -118,22 +123,23 @@ class CustomerController extends Controller
     {
         $request->validate([
             'payments' => 'sometimes|array',
-            'payments.*.method' => 'required_with:payments|string|in:cash,card,transfer,cheque',
+            'payments.*.method' => 'required_with:payments|string|in:cash,card,transfer,cheque,efectivo,tarjeta,transferencia',
             'payments.*.amount' => 'required_with:payments|numeric|gt:0',
             'payments.*.check_details' => 'nullable|array',
             'amount' => 'required_without:payments|numeric|gt:0',
-            'payment_method' => 'required_without:payments|string|in:cash,card,transfer,cheque',
+            'payment_method' => 'required_without:payments|string|in:cash,card,transfer,cheque,efectivo,tarjeta,transferencia',
             'description' => 'nullable|string|max:255',
             'sale_ids' => 'nullable|array',
             'sale_ids.*' => 'integer|exists:sales,id',
             'check_details' => 'nullable|array|required_if:payment_method,cheque',
             'cash_shift_id' => 'nullable|integer|exists:cash_shifts,id',
+            'cash_register_id' => 'nullable|integer|exists:cash_registers,id',
             'is_refund' => 'nullable|boolean',
         ]);
 
         $isRefund = $request->input('is_refund', false);
 
-        $payments = $request->filled('payments') ? $request->payments : [
+        $rawPayments = $request->filled('payments') ? $request->payments : [
             [
                 'method' => $request->payment_method,
                 'amount' => (float) $request->amount,
@@ -141,10 +147,59 @@ class CustomerController extends Controller
             ],
         ];
 
+        $methodMap = [
+            'efectivo' => 'cash',
+            'tarjeta' => 'card',
+            'transferencia' => 'transfer',
+        ];
+
+        $payments = [];
+        foreach ($rawPayments as $idx => $p) {
+            $rawMethod = strtolower(trim((string) ($p['method'] ?? 'cash')));
+            $normalizedMethod = $methodMap[$rawMethod] ?? $rawMethod;
+
+            // CC-05: Exigir datos obligatorios del cheque para impedir pérdida de trazabilidad en cartera
+            if ($normalizedMethod === 'cheque') {
+                $cd = $p['check_details'] ?? $request->check_details;
+                if (
+                    ! is_array($cd)
+                    || empty(trim((string) ($cd['bank_name'] ?? '')))
+                    || empty(trim((string) ($cd['check_number'] ?? '')))
+                ) {
+                    return response()->json([
+                        'message' => 'Debe completar los datos obligatorios del cheque (banco y número).',
+                        'errors' => [
+                            "payments.{$idx}.check_details" => ['Debe completar los datos obligatorios del cheque (banco y número).'],
+                        ],
+                    ], 422);
+                }
+                $p['check_details'] = $cd;
+            }
+
+            $p['method'] = $normalizedMethod;
+            $payments[] = $p;
+        }
+
         $totalAmount = array_sum(array_column($payments, 'amount'));
 
         try {
             $transaction = DB::transaction(function () use ($customer, $totalAmount, $payments, $request, $isRefund) {
+                // COL-02 / CC-01: Adquirir lock pesimista en orden canónico estricto:
+                // 1° CashShift -> 2° Customer -> 3° Sale (idéntico a SaleService para evitar Deadlocks InnoDB)
+                if ($request->filled('cash_shift_id')) {
+                    $activeShift = CashShift::where('id', $request->cash_shift_id)->where('status', 'open')->lockForUpdate()->first();
+                } elseif ($request->filled('cash_register_id')) {
+                    $activeShift = CashShift::where('cash_register_id', $request->cash_register_id)->where('status', 'open')->latest('id')->lockForUpdate()->first();
+                } else {
+                    $activeShift = CashShift::where('status', 'open')->latest('id')->lockForUpdate()->first();
+                }
+
+                if (! $activeShift) {
+                    throw ValidationException::withMessages([
+                        'cash_shift_id' => ['No hay turno de caja abierto para registrar este movimiento.'],
+                    ]);
+                }
+
                 $lockedCustomer = Customer::where('id', $customer->id)->lockForUpdate()->first();
 
                 if ($isRefund) {
@@ -164,18 +219,6 @@ class CustomerController extends Controller
                             'amount' => ["El monto del abono (\${$totalAmount}) no puede superar el saldo actual de la deuda (\${$lockedCustomer->balance})."],
                         ]);
                     }
-                }
-
-                if ($request->filled('cash_shift_id')) {
-                    $activeShift = CashShift::where('id', $request->cash_shift_id)->where('status', 'open')->lockForUpdate()->first();
-                } else {
-                    $activeShift = CashShift::where('status', 'open')->latest('id')->lockForUpdate()->first();
-                }
-
-                if (! $activeShift) {
-                    throw ValidationException::withMessages([
-                        'cash_shift_id' => ['No hay turno de caja abierto para registrar este movimiento.'],
-                    ]);
                 }
 
                 $description = $request->filled('description') ? $request->description : ($isRefund ? 'Devolución de saldo a favor' : 'Abono en caja');
@@ -218,6 +261,36 @@ class CustomerController extends Controller
                         }
                     }
 
+                    // CC-03: Si se seleccionaron sale_ids específicos pero el abono los supera, imputar
+                    // el excedente por orden FIFO a los demás tickets pendientes para evitar desincronizar
+                    // customer.balance respecto a sum(sales.amount_due).
+                    if ($request->filled('sale_ids') && $remainingAmount > 0.001) {
+                        $otherPendingSales = Sale::where('customer_id', $lockedCustomer->id)
+                            ->whereNotIn('id', $request->sale_ids)
+                            ->where('status', 'completed')
+                            ->whereIn('payment_status', ['pending', 'partial'])
+                            ->where('amount_due', '>', 0)
+                            ->lockForUpdate()
+                            ->orderBy('created_at', 'asc')
+                            ->get();
+
+                        foreach ($otherPendingSales as $extraSale) {
+                            if ($remainingAmount <= 0) {
+                                break;
+                            }
+
+                            $payExtra = min((float) $extraSale->amount_due, $remainingAmount);
+                            if ($payExtra > 0) {
+                                $extraSale->amount_due -= $payExtra;
+                                $extraSale->payment_status = $extraSale->amount_due <= 0 ? 'paid' : 'partial';
+                                $extraSale->save();
+
+                                $remainingAmount -= $payExtra;
+                                $processedSales[] = $extraSale->id;
+                            }
+                        }
+                    }
+
                     if (! empty($processedSales) && ! $request->filled('description')) {
                         if ($request->filled('sale_ids')) {
                             $description = 'Pago de Tickets: #'.implode(', #', $processedSales);
@@ -227,28 +300,31 @@ class CustomerController extends Controller
                     }
                 }
 
-                // ── Siempre reducir el balance global del cliente (o aumentarlo si es refund) ────────────
-                if ($isRefund) {
-                    $lockedCustomer->balance += $totalAmount;
-                } else {
-                    $lockedCustomer->balance -= $totalAmount;
-                }
-                $lockedCustomer->save();
+                // ── CC-07: Actualizar el balance progresivamente por cada método de pago ──
+                // Así cada registro en el Ledger refleja su balance_after cronológico exacto.
+                $runningBalance = (float) $lockedCustomer->balance;
+                $actingUserId = $request->user()?->id ?? $request->attributes->get('authenticated_user')?->id ?? User::first()?->id ?? 1;
+                $trx = null;
 
-                // ── Crear registros inmutables en el Ledger por cada método de pago ──
                 foreach ($payments as $payment) {
                     $paymentAmount = (float) $payment['amount'];
                     $paymentMethod = $payment['method'];
 
+                    if ($isRefund) {
+                        $runningBalance = round($runningBalance + $paymentAmount, 2);
+                    } else {
+                        $runningBalance = round($runningBalance - $paymentAmount, 2);
+                    }
+
                     $trx = CustomerTransaction::create([
                         'customer_id' => $lockedCustomer->id,
-                        'user_id' => $request->user()?->id ?? $request->attributes->get('authenticated_user')?->id ?? User::first()?->id ?? 1,
+                        'user_id' => $actingUserId,
                         'cash_shift_id' => $activeShift ? $activeShift->id : null,
                         'sale_id' => count($processedSales) === 1 ? $processedSales[0] : null,
                         'type' => $isRefund ? 'refund' : 'payment',
                         'payment_method' => $paymentMethod,
                         'amount' => $paymentAmount,
-                        'balance_after' => $lockedCustomer->balance, // Refleja el final
+                        'balance_after' => $runningBalance,
                         'description' => $description,
                     ]);
 
@@ -263,13 +339,16 @@ class CustomerController extends Controller
                             'check_number' => $cd['check_number'] ?? '',
                             'issuer_cuit' => $cd['issuer_cuit'] ?? '',
                             'issuer_name' => $cd['issuer_name'] ?? '',
-                            'issue_date' => $cd['issue_date'] ?? now()->toDateString(),
-                            'payment_date' => $cd['payment_date'] ?? now()->toDateString(),
+                            'issue_date' => ! empty($cd['issue_date']) ? $cd['issue_date'] : now()->toDateString(),
+                            'payment_date' => ! empty($cd['payment_date']) ? $cd['payment_date'] : now()->toDateString(),
                             'amount' => $paymentAmount,
                             'status' => 'in_wallet',
                         ]);
                     }
                 }
+
+                $lockedCustomer->balance = $runningBalance;
+                $lockedCustomer->save();
 
                 return $trx;
             });

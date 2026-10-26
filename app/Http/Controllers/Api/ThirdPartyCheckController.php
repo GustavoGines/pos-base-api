@@ -4,7 +4,11 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\CashMovement;
+use App\Models\Customer;
+use App\Models\CustomerTransaction;
+use App\Models\Sale;
 use App\Models\ThirdPartyCheck;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -51,20 +55,95 @@ class ThirdPartyCheckController extends Controller
                 ], 422);
             }
 
-            $lockedCheck->status = $request->status;
-            if ($request->status === 'in_wallet') {
+            $previousStatus = $lockedCheck->status;
+            $newStatus = $request->status;
+
+            $lockedCheck->status = $newStatus;
+            if ($newStatus === 'in_wallet') {
                 $lockedCheck->endorsement_note = null;
                 $lockedCheck->supplier_id = null;
-            } elseif ($request->status === 'endorsed' && $request->has('endorsement_note')) {
+            } elseif ($newStatus === 'endorsed' && $request->has('endorsement_note')) {
                 $lockedCheck->endorsement_note = $request->endorsement_note;
             }
 
             $user = $request->user() ?? $request->attributes->get('authenticated_user');
+            $actingUserId = $user?->id ?? User::first()?->id ?? 1;
             $lockedCheck->status_changed_by_user_id = $user?->id;
             $lockedCheck->status_authorized_by_admin_id = $request->attributes->get('authorized_by_admin_id')
                 ?? ($user?->isAdmin() ? $user->id : null);
 
             $lockedCheck->save();
+
+            // CC-11: Si el cheque pertenece a un cliente y pasa a estado 'rejected' (o se revierte desde 'rejected'),
+            // re-imputar (o des-imputar) la deuda en su Cuenta Corriente y actualizar el asiento en el Ledger.
+            if ($lockedCheck->customer_id !== null && $previousStatus !== $newStatus) {
+                $lockedCustomer = Customer::where('id', $lockedCheck->customer_id)->lockForUpdate()->first();
+                if ($lockedCustomer) {
+                    $checkAmount = round((float) $lockedCheck->amount, 2);
+
+                    if ($previousStatus !== 'rejected' && $newStatus === 'rejected') {
+                        $lockedCustomer->balance = round((float) $lockedCustomer->balance + $checkAmount, 2);
+                        $lockedCustomer->save();
+
+                        if ($lockedCheck->sale_id) {
+                            $linkedSale = Sale::where('id', $lockedCheck->sale_id)
+                                ->where('customer_id', $lockedCustomer->id)
+                                ->where('status', 'completed')
+                                ->lockForUpdate()
+                                ->first();
+                            if ($linkedSale) {
+                                $saleGrandTotal = round((float) $linkedSale->total + (float) $linkedSale->total_surcharge + (float) $linkedSale->shipping_cost, 2);
+                                $newAmountDue = min($saleGrandTotal, round((float) $linkedSale->amount_due + $checkAmount, 2));
+                                $linkedSale->amount_due = $newAmountDue;
+                                $linkedSale->payment_status = $newAmountDue >= ($saleGrandTotal - 0.1) ? 'pending' : 'partial';
+                                $linkedSale->save();
+                            }
+                        }
+
+                        CustomerTransaction::create([
+                            'customer_id' => $lockedCustomer->id,
+                            'user_id' => $actingUserId,
+                            'cash_shift_id' => $lockedCheck->cash_shift_id,
+                            'sale_id' => $lockedCheck->sale_id,
+                            'type' => 'charge',
+                            'payment_method' => 'cheque',
+                            'amount' => $checkAmount,
+                            'balance_after' => $lockedCustomer->balance,
+                            'description' => "Rechazo bancario de Cheque #{$lockedCheck->check_number} ({$lockedCheck->bank_name})",
+                        ]);
+                    } elseif ($previousStatus === 'rejected' && $newStatus !== 'rejected') {
+                        $lockedCustomer->balance = round((float) $lockedCustomer->balance - $checkAmount, 2);
+                        $lockedCustomer->save();
+
+                        if ($lockedCheck->sale_id) {
+                            $linkedSale = Sale::where('id', $lockedCheck->sale_id)
+                                ->where('customer_id', $lockedCustomer->id)
+                                ->where('status', 'completed')
+                                ->lockForUpdate()
+                                ->first();
+                            if ($linkedSale && (float) $linkedSale->amount_due > 0) {
+                                $newAmountDue = max(0.0, round((float) $linkedSale->amount_due - $checkAmount, 2));
+                                $linkedSale->amount_due = $newAmountDue;
+                                $linkedSale->payment_status = $newAmountDue <= 0.001 ? 'paid' : 'partial';
+                                $linkedSale->save();
+                            }
+                        }
+
+                        CustomerTransaction::create([
+                            'customer_id' => $lockedCustomer->id,
+                            'user_id' => $actingUserId,
+                            'cash_shift_id' => $lockedCheck->cash_shift_id,
+                            'sale_id' => $lockedCheck->sale_id,
+                            'type' => 'payment',
+                            'payment_method' => 'cheque',
+                            'amount' => $checkAmount,
+                            'balance_after' => $lockedCustomer->balance,
+                            'description' => "Reversión de rechazo bancario de Cheque #{$lockedCheck->check_number} ({$lockedCheck->bank_name})",
+                        ]);
+                    }
+                }
+            }
+
             $lockedCheck->load(['customer:id,name', 'supplier:id,name']);
 
             return response()->json([

@@ -212,12 +212,18 @@ class SaleService
     public function payPendingSale(Sale $sale, PaySaleDTO $dto, SaleContextDTO $context): Sale
     {
         return DB::transaction(function () use ($sale, $dto, $context) {
-            // F3-CAJA-03 / FN-F3-03: Bloqueo pesimista del turno de caja antes de bloquear productos
-            if ($context->cashShiftId) {
-                $lockedShift = CashShift::where('id', $context->cashShiftId)->lockForUpdate()->first();
+            // F3-CAJA-03 / FN-F3-03 / CC-04: Bloqueo pesimista del turno de caja SIEMPRE en primer término
+            // (incluso si el cliente v1.8.5 omitió cash_shift_id y se usa el turno original de la venta)
+            // para respetar el orden canónico 1° CashShift -> 2° Sale -> 3° Product -> 4° Customer.
+            $shiftIdToLock = $context->cashShiftId ?? $sale->cash_shift_id;
+            if ($shiftIdToLock) {
+                $lockedShift = CashShift::where('id', $shiftIdToLock)->lockForUpdate()->first();
                 if (! $lockedShift || $lockedShift->status !== 'open') {
+                    $msg = $context->cashShiftId
+                        ? 'El turno de caja ya fue cerrado. Por favor, recargue la aplicación.'
+                        : 'El turno de caja de esta venta pendiente ya fue cerrado. Debe enviar un cash_shift_id activo.';
                     throw ValidationException::withMessages([
-                        'cash_shift_id' => ['El turno de caja ya fue cerrado. Por favor, recargue la aplicación.'],
+                        'cash_shift_id' => [$msg],
                     ]);
                 }
             }
@@ -227,7 +233,7 @@ class SaleService
                 \Log::error('Sale not found! id='.$sale->id.', count='.Sale::count().', without lock='.(Sale::find($sale->id) ? 'yes' : 'no'));
             }
 
-            if (! $context->cashShiftId && $lockedSale?->cash_shift_id) {
+            if (! $shiftIdToLock && $lockedSale?->cash_shift_id) {
                 $lockedShift = CashShift::where('id', $lockedSale->cash_shift_id)->lockForUpdate()->first();
                 if (! $lockedShift || $lockedShift->status !== 'open') {
                     throw ValidationException::withMessages([
@@ -237,6 +243,21 @@ class SaleService
             }
 
             if ($lockedSale->status !== 'pending') {
+                // COL-07: Retorno idempotente cuando un reintento de red vuelve a enviar el cobro
+                // de una orden en espera que acaba de completarse en este mismo turno.
+                $targetShiftId = $context->cashShiftId ?? $lockedSale->cash_shift_id;
+                if (
+                    $lockedSale->status === 'completed'
+                    && (int) $lockedSale->cash_shift_id === (int) $targetShiftId
+                    && abs((float) $lockedSale->total_surcharge - (float) $dto->totalSurcharge) <= 0.05
+                    && abs((float) $lockedSale->shipping_cost - (float) $dto->shippingCost) <= 0.05
+                    && $lockedSale->payments()->exists()
+                ) {
+                    $lockedSale->load(['items.product', 'user', 'cashier', 'customer', 'payments.paymentMethod']);
+
+                    return $lockedSale;
+                }
+
                 throw new \InvalidArgumentException('Esta venta ya no está en estado pendiente.');
             }
 
@@ -472,20 +493,31 @@ class SaleService
             $this->paymentService->revertCustomerTransactionsForVoid($lockedSale, $context);
 
             if ($lockedSale->cash_shift_id !== $context->cashShiftId) {
-                $cashRefundAmount = $lockedSale->payments()
-                    ->whereHas('paymentMethod', fn ($q) => $q->where('is_cash', true))
-                    ->sum('total_amount');
+                $originShift = $lockedSale->cash_shift_id
+                    ? CashShift::where('id', $lockedSale->cash_shift_id)->lockForUpdate()->first()
+                    : null;
 
-                if ($cashRefundAmount > 0) {
-                    CashMovement::create([
-                        'cash_shift_id' => $context->cashShiftId,
-                        'user_id' => $context->userId,
-                        'amount' => $cashRefundAmount,
-                        'payment_method' => 'cash',
-                        'type' => 'expense',
-                        'category' => 'refund',
-                        'description' => "Devolución en efectivo por anulación de Venta #{$lockedSale->id} (Turno anterior)",
-                    ]);
+                // MC-05: Solo generar egreso compensatorio ("Devolución Turno anterior") cuando el turno original
+                // de la venta YA ESTÁ CERRADO (su balance quedó congelado). Si el turno original sigue ABIERTO
+                // (ej. anulación desde Caja 1 de una venta del turno actual abierto de Caja 2), el cambio de
+                // status a 'voided' YA descuenta automáticamente el efectivo de calculateLiveTotals($originShift),
+                // por lo que crear además un CashMovement en Caja 1 duplicaría el descuento de efectivo.
+                if (! $originShift || $originShift->status !== 'open') {
+                    $cashRefundAmount = $lockedSale->payments()
+                        ->whereHas('paymentMethod', fn ($q) => $q->where('is_cash', true))
+                        ->sum('total_amount');
+
+                    if ($cashRefundAmount > 0 && $context->cashShiftId) {
+                        CashMovement::create([
+                            'cash_shift_id' => $context->cashShiftId,
+                            'user_id' => $context->userId,
+                            'amount' => $cashRefundAmount,
+                            'payment_method' => 'cash',
+                            'type' => 'expense',
+                            'category' => 'refund',
+                            'description' => "Devolución en efectivo por anulación de Venta #{$lockedSale->id} (Turno anterior)",
+                        ]);
+                    }
                 }
             }
 

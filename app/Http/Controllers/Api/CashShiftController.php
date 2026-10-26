@@ -132,28 +132,35 @@ class CashShiftController extends Controller
         $authUser = $request->user() ?? $request->attributes->get('authenticated_user');
         $closerUserId = $authUser?->id ?? $validated['closer_user_id'] ?? null;
 
-        if (empty($validated['pin'])) {
-            return response()->json(['message' => 'El PIN de seguridad es obligatorio para cerrar el turno de caja.'], 403);
-        }
-
-        $user = User::withoutGlobalScope('visible')->find($closerUserId);
-        if (! $user || ! Hash::check($validated['pin'], $user->pin)) {
-            return response()->json(['message' => 'PIN de autorización incorrecto.'], 403);
-        }
-
-        // ── Pre-calcular diferencia para exigir autorización si hay discrepancia ──
         $shift = CashShift::where('id', $id)->where('status', 'open')->first();
         if (! $shift) {
             return response()->json(['message' => 'El turno no existe o ya está cerrado.'], 404);
         }
 
+        // COL-01: Compatibilidad con terminales legacy v1.8.5 que no enviaban el campo 'pin' en el payload
+        $isLegacyNoPinRequest = ! $request->has('pin');
+
+        if (! $isLegacyNoPinRequest && empty($validated['pin'])) {
+            return response()->json(['message' => 'El PIN de seguridad es obligatorio para cerrar el turno de caja.'], 403);
+        }
+
+        $user = User::withoutGlobalScope('visible')->find($closerUserId ?? $shift->user_id);
+        if (! $isLegacyNoPinRequest) {
+            if (! $user || ! Hash::check($validated['pin'], $user->pin)) {
+                return response()->json(['message' => 'PIN de autorización incorrecto.'], 403);
+            }
+        } elseif (! $user) {
+            return response()->json(['message' => 'Usuario de cierre no válido.'], 403);
+        }
+
+        // ── Pre-calcular diferencia para exigir autorización si hay discrepancia ──
         $totals = $this->cashShiftService->calculateLiveTotals($shift);
         $expectedBalance = $totals['expected_balance'];
         $difference = (float) $validated['actual_balance'] - $expectedBalance;
 
         $authorizedByAdminId = null;
 
-        if (abs($difference) > 0.01) {
+        if (abs($difference) > 0.01 && ! $isLegacyNoPinRequest) {
             // Hay faltante o sobrante → se necesita autorización de admin
             $userPermissions = is_array($user->permissions) ? $user->permissions : json_decode($user->permissions ?? '[]', true);
             $hasManageShifts = $user->isAdmin() || in_array('manage_shifts', $userPermissions ?: []) || in_array('all', $userPermissions ?: []);

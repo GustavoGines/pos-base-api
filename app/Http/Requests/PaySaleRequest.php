@@ -69,6 +69,7 @@ class PaySaleRequest extends FormRequest
             // Autorización de descuento puntual (F1-CRIT-01)
             'discount_pin' => 'nullable|string|size:4|regex:/^[0-9]{4}$/',
             'admin_pin' => 'nullable|string|min:4|max:10',
+            'client_transaction_id' => 'nullable|string|max:100',
         ];
     }
 

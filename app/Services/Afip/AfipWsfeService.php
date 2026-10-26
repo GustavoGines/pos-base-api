@@ -149,6 +149,8 @@ class AfipWsfeService
         preg_match('/<FchVto>(\d{8})<\/FchVto>/', $xml, $vtoMatch);
         preg_match('/<Resultado>([A-Z])<\/Resultado>/', $xml, $resMatch);
         preg_match('/<ImpTotal>([\d\.]+)<\/ImpTotal>/', $xml, $impMatch);
+        preg_match('/<DocTipo>(\d+)<\/DocTipo>/', $xml, $docTipoMatch);
+        preg_match('/<DocNro>(\d+)<\/DocNro>/', $xml, $docNroMatch);
 
         $rawVto = $vtoMatch[1] ?? '';
         $caeExpiration = ! empty($rawVto)
@@ -161,6 +163,8 @@ class AfipWsfeService
             'resultado' => $resMatch[1] ?? 'A',
             'cbte_nro' => $voucherNumber,
             'imp_total' => isset($impMatch[1]) ? (float) $impMatch[1] : 0.0,
+            'doc_type' => isset($docTipoMatch[1]) ? (int) $docTipoMatch[1] : null,
+            'doc_nro' => isset($docNroMatch[1]) ? (int) $docNroMatch[1] : null,
         ];
     }
 
@@ -461,11 +465,16 @@ class AfipWsfeService
                 if ($pendingCbteNro > 0) {
                     try {
                         $recovered = $this->consultVoucher($ptoVta, $voucherType, $pendingCbteNro);
+                        $docMatches = ($recovered['doc_type'] === null || $recovered['doc_type'] === (int) $docType)
+                            && ($recovered['doc_nro'] === null || (int) $recovered['doc_nro'] === (int) $numericDocNro);
+
                         if (
                             $recovered !== null
                             && ($recovered['resultado'] ?? '') === 'A'
                             && ! empty($recovered['cae'])
-                            && ($recovered['imp_total'] <= 0.0 || abs($recovered['imp_total'] - $totalAmount) <= 0.05)
+                            && $recovered['imp_total'] > 0.0
+                            && abs($recovered['imp_total'] - $totalAmount) <= 0.05
+                            && $docMatches
                         ) {
                             Cache::store($cacheDriver)->forget($pendingCacheKey);
 
@@ -491,6 +500,11 @@ class AfipWsfeService
                                 issuerCuit: $issuerCuit,
                                 resultado: (string) $recovered['resultado'],
                             );
+                        }
+
+                        // COL-06: Si el comprobante en AFIP pertenece a otro receptor o monto, limpiar la caché pendiente
+                        if ($recovered !== null && ! $docMatches) {
+                            Cache::store($cacheDriver)->forget($pendingCacheKey);
                         }
                     } catch (\Throwable) {
                         // Si falla la consulta preventiva, procedemos con la emisión normal
@@ -566,14 +580,19 @@ class AfipWsfeService
                     throw new RuntimeException("AFIP WSFEv1 Error HTTP {$response->status()}: {$response->body()}");
                 }
             } catch (\Throwable $requestException) {
-                // F3-AFIP-01: Reconciliación inmediata ante timeout o error HTTP 5xx en FECAESolicitar
+                // F3-AFIP-01 / COL-06: Reconciliación inmediata ante timeout o error HTTP 5xx en FECAESolicitar
                 try {
                     $recovered = $this->consultVoucher($ptoVta, $voucherType, $cbteNro);
+                    $docMatches = ($recovered['doc_type'] === null || $recovered['doc_type'] === (int) $docType)
+                        && ($recovered['doc_nro'] === null || (int) $recovered['doc_nro'] === (int) $numericDocNro);
+
                     if (
                         $recovered !== null
                         && ($recovered['resultado'] ?? '') === 'A'
                         && ! empty($recovered['cae'])
-                        && ($recovered['imp_total'] <= 0.0 || abs($recovered['imp_total'] - $totalAmount) <= 0.05)
+                        && $recovered['imp_total'] > 0.0
+                        && abs($recovered['imp_total'] - $totalAmount) <= 0.05
+                        && $docMatches
                     ) {
                         if ($pendingCacheKey !== null) {
                             Cache::store($cacheDriver)->forget($pendingCacheKey);

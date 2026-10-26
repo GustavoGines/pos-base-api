@@ -227,9 +227,14 @@ class SalesAnalyticsRepository
         $months = $rows->map(function ($row) {
             $date = Carbon::parse($row->period.'-01');
 
-            // Buscar gastos (expenses) para este mes
+            // Buscar gastos operativos (expenses) para este mes
+            // REP-03: Excluir devoluciones automáticas de ventas anuladas ('refund') para no duplicar pérdida
             $expenses = DB::table('cash_movements')
                 ->where('type', 'expense')
+                ->where(function ($q) {
+                    $q->whereNull('category')
+                        ->orWhere('category', '!=', 'refund');
+                })
                 ->whereNull('deleted_at')
                 ->whereBetween('created_at', [
                     $date->copy()->startOfMonth()->toDateTimeString(),

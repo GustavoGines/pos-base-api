@@ -131,7 +131,9 @@ class ReportExportService
                 $filters['endDate'],
                 $filters['includeSuppliers'],
                 $filters['paymentMethod'],
-                $filters['minAmount']
+                $filters['minAmount'],
+                $filters['includeWithdrawals'] ?? true,
+                $filters['cashRegisterId'] ?? null
             ),
             'analisis_gastos_'.str_replace('-', '', $filters['startDate']).'_al_'.str_replace('-', '', $filters['endDate']).'.xlsx'
         );
@@ -147,11 +149,19 @@ class ReportExportService
             $filters['endDate'],
             $filters['includeSuppliers'],
             $filters['paymentMethod'],
-            $filters['minAmount']
+            $filters['minAmount'],
+            $filters['includeWithdrawals'] ?? true,
+            $filters['cashRegisterId'] ?? null
         )
             ->selectRaw("
             CASE 
                 WHEN cash_movements.type = 'supplier_payment' THEN 'Pago a Proveedor'
+                WHEN cash_movements.type = 'withdrawal' THEN
+                    CASE
+                        WHEN cash_movements.category IS NULL OR TRIM(cash_movements.category) = '' OR cash_movements.category = 'Retiro'
+                        THEN 'Retiro de Caja'
+                        ELSE cash_movements.category
+                    END
                 ELSE COALESCE(expense_categories.name, 'Sin Categoría')
             END as category_name,
             SUM(cash_movements.amount) as total_amount,
@@ -160,6 +170,12 @@ class ReportExportService
             ->groupBy(DB::raw("
             CASE 
                 WHEN cash_movements.type = 'supplier_payment' THEN 'Pago a Proveedor'
+                WHEN cash_movements.type = 'withdrawal' THEN
+                    CASE
+                        WHEN cash_movements.category IS NULL OR TRIM(cash_movements.category) = '' OR cash_movements.category = 'Retiro'
+                        THEN 'Retiro de Caja'
+                        ELSE cash_movements.category
+                    END
                 ELSE COALESCE(expense_categories.name, 'Sin Categoría')
             END
         "))

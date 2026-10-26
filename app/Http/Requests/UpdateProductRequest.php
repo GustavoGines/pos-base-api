@@ -24,6 +24,13 @@ class UpdateProductRequest extends FormRequest
 
         if ($this->boolean('is_combo')) {
             $this->merge(['cost_price' => 0]);
+        } elseif ($this->has('selling_price') && ! $this->has('cost_price')) {
+            // CP-07: En actualizaciones parciales que sólo envían selling_price, inyectar el cost_price actual
+            // para que la regla gte:cost_price tenga contra qué comparar sin fallar por campo ausente.
+            $routeProduct = $this->route('product');
+            if ($routeProduct instanceof Product) {
+                $this->merge(['cost_price' => (float) $routeProduct->cost_price]);
+            }
         }
     }
 

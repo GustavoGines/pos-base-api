@@ -143,20 +143,26 @@ class CashShiftService
         $shiftId = $shift->id;
 
         // Sumatoria Financiera: Solo ventas COMPLETADAS
-        $cashSales = SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+        $directCashSales = (float) SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
             ->whereHas('paymentMethod', fn ($q) => $q->where('is_cash', true))
             ->sum('total_amount');
-        $cashSales += CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'cash')->sum('amount');
+        $ccCollectionsCash = (float) CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'cash')->sum('amount');
+        // Blindaje v1.8.5: mantener cash_sales incluyendo cobros en efectivo para que el arqueo en pantallas legacy cuadre
+        $cashSales = $directCashSales + $ccCollectionsCash;
 
-        $cardSales = SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+        $directCardSales = (float) SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
             ->whereHas('paymentMethod', fn ($q) => $q->where('code', 'like', 'card_%'))
             ->sum('total_amount');
-        $cardSales += CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'card')->sum('amount');
+        $ccCollectionsCard = (float) CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'card')->sum('amount');
+        $cardSales = $directCardSales + $ccCollectionsCard;
 
-        $transferSales = SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+        $directTransferSales = (float) SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
             ->whereHas('paymentMethod', fn ($q) => $q->where('code', 'transfer'))
             ->sum('total_amount');
-        $transferSales += CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'transfer')->sum('amount');
+        $ccCollectionsTransfer = (float) CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'transfer')->sum('amount');
+        $transferSales = $directTransferSales + $ccCollectionsTransfer;
+
+        $customerCollectionsTotal = $ccCollectionsCash + $ccCollectionsCard + $ccCollectionsTransfer;
 
         $totalSurcharge = Sale::where('cash_shift_id', $shiftId)
             ->where('status', 'completed')
@@ -200,15 +206,21 @@ class CashShiftService
         // El efectivo esperado
         $expectedBalance = $shift->opening_balance + $cashSales + $cashDeposits - $cashExpenses - $cashWithdrawals - $cashSupplierPayments - $cashRefunds;
 
-        // Total Ventas Neto (Cálculo total de ventas para la UI)
-        // NOTA: No sumamos $totalSurcharge porque el monto de los pagos (cashSales, checkSales, etc) YA INCLUYE el recargo que pagó el cliente.
-        $totalSales = $cashSales + $cardSales + $transferSales + $checkSales + $ccSales + $mpSales;
+        // Total Ventas Neto Comercial (REP-02: suma solo las ventas reales del turno sin duplicar cobros de deudas de Cta. Cte.)
+        $directCheckSales = (float) SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+            ->whereHas('paymentMethod', fn ($q) => $q->whereIn('code', ['check', 'cheque']))
+            ->sum('total_amount');
+        $totalSales = $directCashSales + $directCardSales + $directTransferSales + $directCheckSales + $ccSales + $mpSales;
 
         return [
             'expected_balance' => $expectedBalance,
             'cash_sales' => $cashSales,
             'card_sales' => $cardSales,
             'transfer_sales' => $transferSales,
+            'cc_collections_cash' => $ccCollectionsCash,
+            'cc_collections_card' => $ccCollectionsCard,
+            'cc_collections_transfer' => $ccCollectionsTransfer,
+            'customer_collections_total' => $customerCollectionsTotal,
             'mp_sales' => $mpSales,
             'mp_sales_count' => $mpSalesCount,
             'total_surcharge' => $totalSurcharge,

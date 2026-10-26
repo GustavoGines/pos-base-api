@@ -72,9 +72,9 @@ class ElectronicInvoiceController extends Controller
 
                 $saleUpdates = ['invoice_status' => 'invoiced'];
 
-                // Fix F1-MED-09: Si se auto-calculó o aplicó una percepción IIBB al emitir la factura
-                // que no estaba registrada en la cabecera de la venta, sincronizarla en `sales` para
-                // evitar divergencia contable entre el comprobante fiscal y los registros de venta.
+                // Fix F1-MED-09 / REP-06: Si se auto-calculó o aplicó una percepción IIBB al emitir la factura
+                // que no estaba registrada en la cabecera de la venta, sincronizarla en `sales` (y en la deuda
+                // exigible si la venta fue en Cuenta Corriente) para evitar divergencia contable.
                 $tributeAmount = round((float) ($invoiceData['tribute_amount'] ?? 0.0), 2);
                 if ($tributeAmount > 0.0 && round((float) ($lockedSale->iibb_perception_amount ?? 0.0), 2) <= 0.0) {
                     $saleUpdates['iibb_perception_amount'] = $tributeAmount;
@@ -83,6 +83,14 @@ class ElectronicInvoiceController extends Controller
                         $saleUpdates['iibb_perception_rate'] = (float) $tributeAlic;
                     }
                     $saleUpdates['total'] = round((float) $lockedSale->total + $tributeAmount, 2);
+
+                    if (in_array($lockedSale->payment_status, ['pending', 'partial'], true) && $lockedSale->customer_id) {
+                        $saleUpdates['amount_due'] = round((float) $lockedSale->amount_due + $tributeAmount, 2);
+                        $lockedCustomer = \App\Models\Customer::where('id', $lockedSale->customer_id)->lockForUpdate()->first();
+                        if ($lockedCustomer) {
+                            $lockedCustomer->increment('balance', $tributeAmount);
+                        }
+                    }
                 }
 
                 $lockedSale->update($saleUpdates);

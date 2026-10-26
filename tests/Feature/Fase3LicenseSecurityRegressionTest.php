@@ -239,5 +239,88 @@ class Fase3LicenseSecurityRegressionTest extends TestCase
         $this->assertTrue($features['cheques']);
         $this->assertTrue($features['multiple_prices']);
         $this->assertTrue($features['predictive_alerts']);
+        $this->assertTrue($features['ecommerce_sync']);
+        $this->assertTrue($features['quotes']);
+        $this->assertFalse($features['logistics']);
+    }
+
+    /**
+     * Bloque 5 (LIC-01, LIC-02, LIC-03, LIC-05, LIC-08):
+     * - Soporta clientes v1.8.5 que tienen license_api_key y license_last_sync y esperan license_allowed_addons.
+     * - Soporta respuestas del main de Render en producción (sin firma ni expires_at).
+     * - Cuando Render devuelve 403 con status='expired', marca license_expires_at vencido y bloquea el plan.
+     */
+    public function test_bloque5_lic01_to_lic08_legacy_v185_keys_render_main_compat_and_pro_features(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $service = app(LicenseSyncService::class);
+
+        // 1. Simular instalación v1.8.5 que solo tiene license_api_key en BD
+        BusinessSetting::updateOrCreate(['key' => 'license_api_key'], ['value' => 'LEGACY-V185-PRO-KEY']);
+
+        // Respuesta idéntica al main actual en producción de pos-license-server en Render (sin signature ni expires_at)
+        Http::fake([
+            '*/api/validate' => Http::Sequence()
+                ->push([
+                    'status' => 'active',
+                    'plan' => 'pro',
+                    'plan_type' => 'saas',
+                    'server_time' => '2026-10-26T15:00:00+00:00',
+                    'client_name' => 'Comercio v1.8.5',
+                    'business_type' => 'retail',
+                    'plan_espanol' => 'premium',
+                    'features' => [
+                        'fast_pos' => true,
+                        'z_reports' => true,
+                        'quotes' => true,
+                        'current_accounts' => true,
+                        'multiple_prices' => true,
+                        'multi_caja' => true,
+                        'advanced_reports' => true,
+                        'predictive_alerts' => true,
+                        'logistics' => false,
+                        'checks' => true,
+                        'mobile_app' => true,
+                        'remote_access' => false,
+                        'suppliers' => true,
+                        'expenses' => true,
+                        'multi_rubro' => true,
+                        'mercadopago_qr' => true,
+                        'arca_afip' => true,
+                        'ecommerce_sync' => true,
+                    ],
+                ], 200)
+                ->push([
+                    'status' => 'expired',
+                    'message' => 'La licencia ha expirado.',
+                ], 403),
+        ]);
+
+        // LIC-01: syncHeartbeat encuentra license_api_key y la migra a license_key
+        $service->syncHeartbeat();
+
+        $this->assertEquals('LEGACY-V185-PRO-KEY', BusinessSetting::where('key', 'license_key')->value('value'));
+        $this->assertEquals('pro', BusinessSetting::where('key', 'app_plan')->value('value'));
+
+        // LIC-08: license_allowed_addons se mantiene poblado para clientes v1.8.5
+        $allowedAddons = json_decode(BusinessSetting::where('key', 'license_allowed_addons')->value('value'), true);
+        $this->assertIsArray($allowedAddons);
+        $this->assertContains('ecommerce_sync', $allowedAddons);
+        $this->assertContains('quotes', $allowedAddons);
+        $this->assertNotContains('logistics', $allowedAddons);
+
+        // LIC-01: SettingController::updateLicense acepta license_api_key de clientes v1.8.5
+        // Segundo llamado en la secuencia devuelve 403 status=expired (LIC-03)
+        try {
+            $service->syncHeartbeat();
+            $this->fail('Debió lanzar excepción al recibir 403 expired');
+        } catch (\Exception $e) {
+            $this->assertStringContainsString('suspendida', $e->getMessage());
+        }
+
+        $this->assertEquals('blocked', BusinessSetting::where('key', 'app_plan')->value('value'));
+        $expiresAt = BusinessSetting::where('key', 'license_expires_at')->value('value');
+        $this->assertNotEmpty($expiresAt);
+        $this->assertTrue(Carbon::parse($expiresAt)->isPast());
     }
 }
