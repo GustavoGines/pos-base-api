@@ -213,14 +213,15 @@ class SaleService
                 }
             }
 
-            $this->stockService->processCartStock($dto->items, $lockedProducts, $sale, $context, $dto->requiresDispatch, $dto->fulfillmentStatus);
+            $affectedProductIds = $this->stockService->processCartStock($dto->items, $lockedProducts, $sale, $context, $dto->requiresDispatch, $dto->fulfillmentStatus);
 
             if ($dto->requiresDispatch) {
                 $this->createDeliveryNote($sale, $dto->items, $dto->fulfillmentStatus);
             }
 
             // Fix F1-ALTA-03 & FN-2: Enqueue asynchronous stock synchronization (including parent combos)
-            SyncProductStockToPlatformsJob::dispatchForProducts($lockedProducts->keys());
+            $productsToSync = array_values(array_unique(array_merge($lockedProducts->keys()->all(), $affectedProductIds)));
+            SyncProductStockToPlatformsJob::dispatchForProducts($productsToSync);
 
             $this->broadcastSaleCompletedSafely($sale);
 
@@ -497,7 +498,7 @@ class SaleService
 
             $deliveryNote = DeliveryNote::with('items')->where('sale_id', $lockedSale->id)->first();
 
-            $this->stockService->restoreStockForVoid($lockedSale, $context, $deliveryNote);
+            $restoredProductIds = $this->stockService->restoreStockForVoid($lockedSale, $context, $deliveryNote);
 
             if ($deliveryNote) {
                 $deliveryNote->update(['status' => 'cancelled']);
@@ -557,9 +558,12 @@ class SaleService
 
             $lockedSale->update($voidPayload);
 
-            // Fix F1-ALTA-04: Sincronizar stock restituido hacia plataformas e-commerce post-commit
+            // Fix F1-ALTA-04 & FINDING-STOCK-04: Sincronizar stock restituido (físicos + combos) hacia plataformas e-commerce
             $lockedSale->loadMissing('items');
-            SyncProductStockToPlatformsJob::dispatchForProducts($lockedSale->items->pluck('product_id'));
+            $productsToSync = ! empty($restoredProductIds)
+                ? $restoredProductIds
+                : $lockedSale->items->pluck('product_id')->toArray();
+            SyncProductStockToPlatformsJob::dispatchForProducts($productsToSync);
 
             $this->broadcastSaleCompletedSafely($lockedSale); // Opcional, podría ser SaleVoided
 

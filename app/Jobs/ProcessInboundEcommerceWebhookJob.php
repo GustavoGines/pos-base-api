@@ -301,6 +301,15 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
                     ]);
                 }
 
+                // FINDING-STOCK-02: Propagar recálculo de combos virtuales que contienen a los productos deducidos
+                $affectedCombos = app(\App\Services\StockService::class)->recalculateAndGetAffectedParentCombos(array_keys($affectedProductsToPropagate));
+                foreach ($affectedCombos as $comboId) {
+                    $comboProd = Product::find($comboId);
+                    if ($comboProd) {
+                        $affectedProductsToPropagate[$comboId] = (float) $comboProd->stock;
+                    }
+                }
+
                 // 5. Cross-Platform Propagation (excluding origin integration to prevent loops)
                 foreach ($affectedProductsToPropagate as $prodId => $newStock) {
                     SyncProductStockToPlatformsJob::dispatch(

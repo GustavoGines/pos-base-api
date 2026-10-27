@@ -23,25 +23,29 @@ class StockController extends Controller
         $validated = $request->validated();
 
         DB::transaction(function () use ($validated, $product, $request) {
+            $lockedProduct = Product::where('id', $product->id)->lockForUpdate()->firstOrFail();
+
             // Solo registramos movimiento si la cantidad es realmente mayor a cero
             if ($validated['quantity'] > 0) {
                 // Mapeo de tipos para consistencia (in/increment -> in, out/decrement -> out)
                 $type = in_array($validated['type'], ['in', 'increment']) ? 'in' : 'out';
 
                 if ($type === 'in') {
-                    $product->increment('stock', $validated['quantity']);
+                    $lockedProduct->stock += $validated['quantity'];
+                    $lockedProduct->save();
                 } else {
-                    // Validar stock para egresos (opcional según reglas de negocio, lo mantenemos por seguridad)
-                    if ($product->stock < $validated['quantity']) {
-                        abort(422, "Stock insuficiente. Stock actual: {$product->stock}");
+                    // Validar stock para egresos
+                    if ($lockedProduct->stock < $validated['quantity']) {
+                        abort(422, "Stock insuficiente. Stock actual: {$lockedProduct->stock}");
                     }
-                    $product->decrement('stock', $validated['quantity']);
+                    $lockedProduct->stock -= $validated['quantity'];
+                    $lockedProduct->save();
                 }
 
                 // Registrar el movimiento solo si hubo cambio físico de stock
                 $actorUser = $request->user() ?? $request->attributes->get('authenticated_user');
                 StockMovement::create([
-                    'product_id' => $product->id,
+                    'product_id' => $lockedProduct->id,
                     'user_id' => $actorUser?->id ?? ($validated['user_id'] ?? null),
                     'authorized_by_admin_id' => $request->attributes->get('authorized_by_admin_id')
                         ?? ($actorUser?->isAdmin() ? $actorUser->id : null),
@@ -53,13 +57,15 @@ class StockController extends Controller
 
             // Si se envió un nuevo stock mínimo, lo actualizamos siempre (independiente de la cantidad)
             if (array_key_exists('min_stock', $validated)) {
-                $product->min_stock = $validated['min_stock'];
-                $product->save();
+                $lockedProduct->min_stock = $validated['min_stock'];
+                $lockedProduct->save();
             }
 
-            // Fix F1-ALTA-04: Sincronizar stock hacia plataformas e-commerce si hubo movimiento físico
+            // FINDING-STOCK-01: Sincronizar stock y propagar combos padres hacia plataformas e-commerce
             if ($validated['quantity'] > 0) {
-                SyncProductStockToPlatformsJob::dispatchForProducts([$product->id]);
+                $affectedCombos = app(\App\Services\StockService::class)->recalculateAndGetAffectedParentCombos([$lockedProduct->id]);
+                $allToSync = array_values(array_unique(array_merge([$lockedProduct->id], $affectedCombos)));
+                SyncProductStockToPlatformsJob::dispatchForProducts($allToSync);
             }
         });
 

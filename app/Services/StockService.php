@@ -48,16 +48,17 @@ class StockService
     /**
      * Deduct stock for a brand new sale or checkout.
      */
-    public function processCartStock(array $items, Collection $products, Sale $sale, SaleContextDTO $context, bool $requiresDispatch, string $fulfillmentStatus): void
+    public function processCartStock(array $items, Collection $products, Sale $sale, SaleContextDTO $context, bool $requiresDispatch, string $fulfillmentStatus): array
     {
         $shouldDeductStock = (! $requiresDispatch) || ($requiresDispatch && $fulfillmentStatus === 'delivered');
 
         if (! $shouldDeductStock) {
-            return; // Stock will be deducted upon delivery
+            return []; // Stock will be deducted upon delivery
         }
 
         $metric = $this->getPopularityMetric();
         $countedInTicket = [];
+        $allDeductedIds = [];
 
         foreach ($items as $itemData) {
             if (! isset($products[$itemData['product_id']])) {
@@ -77,15 +78,21 @@ class StockService
                 }
             }
 
-            $this->deductProductStock($product, $qty, $sale, $context, false, $products, $trackPopularity);
+            $deducted = $this->deductProductStock($product, $qty, $sale, $context, false, $products, $trackPopularity);
+            $allDeductedIds = array_merge($allDeductedIds, $deducted);
         }
+
+        $affectedCombos = $this->recalculateAndGetAffectedParentCombos($allDeductedIds);
+
+        return array_values(array_unique(array_merge($allDeductedIds, $affectedCombos)));
     }
 
     /**
      * Deduct stock mathematically for a specific product (Combo-aware)
      */
-    protected function deductProductStock(Product $product, float $qty, Sale $sale, SaleContextDTO $context, bool $isAdjustment, Collection $products, bool $trackPopularity = true): void
+    protected function deductProductStock(Product $product, float $qty, Sale $sale, SaleContextDTO $context, bool $isAdjustment, Collection $products, bool $trackPopularity = true): array
     {
+        $deductedIds = [];
         if ($product->is_combo) {
             foreach ($product->children as $child) {
                 $qtyDeducted = $qty * $child->pivot->quantity;
@@ -99,6 +106,7 @@ class StockService
                 $this->logMovement($canonicalChild->id, -$qtyDeducted, 'sale',
                     ($isAdjustment ? 'Ajuste Recall ' : 'Venta ').StockMovement::CHECKOUT_NOTE_TOKEN."{$sale->id} (Hijo de: {$product->name})",
                     $context, $sale);
+                $deductedIds[] = $canonicalChild->id;
             }
         } else {
             // Update the canonical product (which $product already is, as it comes from $products)
@@ -106,12 +114,15 @@ class StockService
             $this->logMovement($product->id, -$qty, 'sale',
                 ($isAdjustment ? 'Ajuste Recall ' : 'Venta ').StockMovement::CHECKOUT_NOTE_TOKEN."{$sale->id}",
                 $context, $sale);
+            $deductedIds[] = $product->id;
         }
 
         if ($trackPopularity && ! $context->isInternalAccount && $qty > 0) {
             $product->sales_count += $this->popularityPoints($qty);
         }
         $product->save(); // Dispara Observers
+
+        return $deductedIds;
     }
 
     /**
@@ -193,7 +204,7 @@ class StockService
     /**
      * Devuelve el stock al anular una venta (Void). Sensible a Remitos.
      */
-    public function restoreStockForVoid(Sale $sale, SaleContextDTO $context, ?DeliveryNote $deliveryNote): void
+    public function restoreStockForVoid(Sale $sale, SaleContextDTO $context, ?DeliveryNote $deliveryNote): array
     {
         $productIds = $sale->items->pluck('product_id')->unique()->toArray();
 
@@ -203,6 +214,7 @@ class StockService
         $deferredDelivery = $deliveryNote && ! $sale->hasDeductedStock();
         $metric = $this->getPopularityMetric();
         $restoredPopularityProductIds = [];
+        $physicallyRestoredIds = [];
 
         foreach ($sale->items as $item) {
             if (! isset($products[$item->product_id])) {
@@ -219,7 +231,8 @@ class StockService
             }
 
             if ($qtyToRestore > 0) {
-                $this->addStockBack($product, $qtyToRestore, $sale, $context, $products);
+                $restored = $this->addStockBack($product, $qtyToRestore, $sale, $context, $products);
+                $physicallyRestoredIds = array_merge($physicallyRestoredIds, $restored);
             }
 
             // Restauración segura de popularidad (GREATEST logic equivalent in memory since we locked)
@@ -233,6 +246,11 @@ class StockService
                 $product->save();
             }
         }
+
+        // Recalcular combos padres cuyos componentes fueron restituidos
+        $affectedCombos = $this->recalculateAndGetAffectedParentCombos($physicallyRestoredIds);
+
+        return array_values(array_unique(array_merge($physicallyRestoredIds, $affectedCombos)));
     }
 
     /**
@@ -359,8 +377,9 @@ class StockService
         }
     }
 
-    protected function addStockBack(Product $product, float $qtyToRestore, Sale $sale, SaleContextDTO $context, Collection $products): void
+    protected function addStockBack(Product $product, float $qtyToRestore, Sale $sale, SaleContextDTO $context, Collection $products): array
     {
+        $restoredIds = [];
         if ($product->is_combo) {
             foreach ($product->children as $child) {
                 $qtyRestored = $qtyToRestore * $child->pivot->quantity;
@@ -369,13 +388,17 @@ class StockService
                 $canonicalChild->save();
 
                 $this->logMovement($canonicalChild->id, $qtyRestored, 'in', "Reversión (Combo Hijo) Venta #{$sale->id}", $context, $sale);
+                $restoredIds[] = $canonicalChild->id;
             }
         } else {
             $product->stock += $qtyToRestore;
             $product->save();
 
             $this->logMovement($product->id, $qtyToRestore, 'in', "Reversión por anulación de Venta #{$sale->id}", $context, $sale);
+            $restoredIds[] = $product->id;
         }
+
+        return $restoredIds;
     }
 
     /**
@@ -408,4 +431,26 @@ class StockService
             'notes' => $notes,
         ]);
     }
+    /**
+     * Obtiene los IDs de todos los combos padres que contienen a los productos dados como ingredientes,
+     * para su propagación y sincronización de stock virtual hacia plataformas e-commerce.
+     *
+     * @param array<int> $ingredientProductIds
+     * @return array<int> IDs de los combos padres afectados
+     */
+    public function recalculateAndGetAffectedParentCombos(array $ingredientProductIds): array
+    {
+        $uniqueIngredientIds = array_values(array_unique(array_filter($ingredientProductIds)));
+        if (empty($uniqueIngredientIds)) {
+            return [];
+        }
+
+        return DB::table('product_combos')
+            ->whereIn('child_product_id', $uniqueIngredientIds)
+            ->pluck('parent_product_id')
+            ->unique()
+            ->values()
+            ->toArray();
+    }
+
 }
