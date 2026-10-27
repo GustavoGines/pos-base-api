@@ -11,3 +11,6 @@ Artisan::command('inspire', function () {
 // Sincronización diaria del estado de la licencia con el servidor remoto.
 // Si no hay internet, el comando falla silenciosamente sin afectar la operaria.
 Schedule::command('license:sync')->everyThreeMinutes()->withoutOverlapping();
+
+// F-AFIP-03: Reintentar automáticamente la autorización de comprobantes en contingencia (invoice_status = 'pending').
+Schedule::command('afip:retry-contingency')->everyFifteenMinutes()->withoutOverlapping();

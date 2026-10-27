@@ -17,6 +17,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Http\Request;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -67,6 +68,8 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
             return;
         }
 
+        $orderLock = null;
+
         try {
             $adapter = $ecommerceManager->forIntegration($integration);
             $payload = is_array($webhook->payload) ? $webhook->payload : (json_decode((string) $webhook->payload, true) ?: []);
@@ -93,12 +96,19 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
                 $externalOrderId = (string) $externalOrderId;
             }
 
-            // 1. Order-level Idempotency Check
+            // 1. Order-level Idempotency Check & Atomic Lock (BK-05)
             if ($externalOrderId !== null) {
+                $orderLock = Cache::lock("ecommerce_deduct:{$integration->id}:{$externalOrderId}", 30);
+                if (! $orderLock->get()) {
+                    $this->release(5);
+
+                    return;
+                }
+
                 $alreadyDeducted = EcommerceSyncLog::where('integration_id', $integration->id)
                     ->where('external_order_id', $externalOrderId)
                     ->where('action', 'order_deduct')
-                    ->where('status', 'success')
+                    ->whereIn('status', ['success', 'stock_conflict_review'])
                     ->exists();
 
                 if ($alreadyDeducted) {
@@ -228,6 +238,20 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
                 $externalOrderId
             ) {
                 $lockedProducts = $stockService->lockProducts($sortedProductIds);
+
+                // BK-05: Re-verificar idempotencia dentro de la sección crítica con productos bloqueados
+                if ($externalOrderId !== null) {
+                    $alreadyDeductedInTx = EcommerceSyncLog::where('integration_id', $integration->id)
+                        ->where('external_order_id', $externalOrderId)
+                        ->where('action', 'order_deduct')
+                        ->whereIn('status', ['success', 'stock_conflict_review'])
+                        ->exists();
+
+                    if ($alreadyDeductedInTx) {
+                        return;
+                    }
+                }
+
                 $affectedProductsToPropagate = [];
 
                 foreach ($resolvedItems as $item) {
@@ -337,6 +361,8 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
             ]);
 
             throw $e;
+        } finally {
+            optional($orderLock)->release();
         }
     }
 

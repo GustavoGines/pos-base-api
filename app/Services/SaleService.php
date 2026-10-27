@@ -389,204 +389,242 @@ class SaleService
 
     public function voidSale(Sale $sale, SaleContextDTO $context): Sale
     {
-        // ── FASE A: Pre-validación de invariantes antes de comunicar a AFIP ──
-        DB::transaction(function () use ($sale) {
-            $lockedSale = Sale::lockForUpdate()->find($sale->id);
-
-            if ($lockedSale->status === 'voided') {
-                throw new \InvalidArgumentException('Esta venta ya está anulada.');
-            }
-            if ($lockedSale->status !== 'pending' && $lockedSale->status !== 'completed') {
-                throw new \InvalidArgumentException('No se puede anular una venta en este estado.');
-            }
-
-            $checks = ThirdPartyCheck::with('supplier')->where('sale_id', $lockedSale->id)->lockForUpdate()->get();
-            foreach ($checks as $check) {
-                if ($check->status === 'endorsed') {
-                    $supplierName = $check->supplier?->name;
-                    $msg = $supplierName
-                        ? "No se puede anular la venta porque el cheque #{$check->check_number} fue endosado al proveedor '{$supplierName}'. Debe anular primero el pago al proveedor en Movimientos de Caja para reincorporarlo a cartera."
-                        : "No se puede anular la venta porque el cheque #{$check->check_number} figura como endosado. Debe reincorporarlo a cartera primero.";
-                    throw new \InvalidArgumentException($msg);
-                }
-                if ($check->status === 'deposited') {
-                    throw new \InvalidArgumentException(
-                        "No se puede anular la venta porque el cheque #{$check->check_number} ya fue depositado en el banco."
-                    );
-                }
-                if ($check->status === 'rejected') {
-                    throw new \InvalidArgumentException(
-                        "No se puede anular la venta porque el cheque #{$check->check_number} figura como rechazado."
-                    );
-                }
-                if ($check->status !== 'in_wallet' && $check->status !== 'voided') {
-                    throw new \InvalidArgumentException(
-                        "No se puede anular la venta porque el cheque #{$check->check_number} tiene un estado incompatible ({$check->status})."
-                    );
-                }
-            }
-        });
-
-        // ── FASE B: Emisión de Nota de Crédito AFIP fuera de la transacción de reversión local ──
-        // Si AFIP autoriza el CAE, se persiste inmediatamente en electronic_invoices para garantizar
-        // idempotencia fiscal y evitar duplicar Notas de Crédito si fallara una operación local posterior.
-        $saleForAfip = Sale::with('electronicInvoice')->find($sale->id);
-        $electronicInvoice = $saleForAfip?->electronicInvoice;
-        if ($electronicInvoice && $electronicInvoice->cae && empty($electronicInvoice->credit_note_cae)) {
-            $ncVoucherType = match ($electronicInvoice->voucher_type) {
-                AfipHelper::VOUCHER_FACTURA_A => AfipHelper::VOUCHER_NOTA_CREDITO_A,
-                AfipHelper::VOUCHER_FACTURA_C => AfipHelper::VOUCHER_NOTA_CREDITO_C,
-                default => AfipHelper::VOUCHER_NOTA_CREDITO_B,
-            };
-
-            $cbtesAsoc = [
-                [
-                    'Tipo' => $electronicInvoice->voucher_type,
-                    'PtoVta' => $electronicInvoice->point_of_sale,
-                    'Nro' => $electronicInvoice->voucher_number,
-                    // 'Cuit' lo completa AfipWsfeService con el CUIT emisor (comprobante propio)
-                    'CbteFch' => $electronicInvoice->issued_at ? $electronicInvoice->issued_at->format('Ymd') : date('Ymd'),
-                ],
-            ];
-
-            $options = [
-                'voucher_type' => $ncVoucherType,
-                'point_of_sale' => $electronicInvoice->point_of_sale,
-                'doc_type' => $electronicInvoice->doc_type,
-                'doc_number' => $electronicInvoice->doc_number,
-                'receiver_name' => $electronicInvoice->receiver_name,
-                'receiver_address' => $electronicInvoice->receiver_address,
-                'receiver_tax_condition' => $electronicInvoice->receiver_tax_condition,
-                'cbtes_asoc' => $cbtesAsoc,
-            ];
-
-            try {
-                $ncData = $this->afipWsfeService->authorizeInvoice($saleForAfip, $options);
-                $electronicInvoice->update([
-                    'credit_note_cae' => $ncData['cae'],
-                    'credit_note_expiration' => $ncData['cae_expiration'],
-                    'credit_note_number' => $ncData['voucher_number'],
-                    'credit_note_issued_at' => now(),
-                    'credit_note_voucher_type' => $ncVoucherType,
-                    'credit_note_qr_data' => $ncData['qr_data'] ?? null,
-                ]);
-            } catch (\Exception $e) {
-                throw new \InvalidArgumentException('No se pudo emitir la Nota de Crédito en AFIP. Motivo: '.$e->getMessage());
-            }
+        // BK-02: Mutex atómico distribuido para prevenir emisión duplicada de Notas de Crédito en AFIP
+        // ante doble clic o reintentos concurrentes durante la ventana SOAP de la Fase B.
+        $lock = Cache::lock("sale_void_lock:{$sale->id}", 60);
+        if (! $lock->get()) {
+            throw new \InvalidArgumentException('La anulación de esta venta ya se encuentra en proceso por otra petición.');
         }
 
-        // ── FASE C: Restitución transaccional local (Stock, Remito, Cheques, Cta Cte, Caja) ──
-        return DB::transaction(function () use ($sale, $context) {
-            $lockedSale = Sale::lockForUpdate()->find($sale->id);
+        try {
+            // ── FASE A: Pre-validación de invariantes antes de comunicar a AFIP ──
+            DB::transaction(function () use ($sale) {
+                $lockedSale = Sale::lockForUpdate()->find($sale->id);
 
-            if ($lockedSale->status === 'voided') {
-                throw new \InvalidArgumentException('Esta venta ya está anulada.');
-            }
-            if ($lockedSale->status !== 'pending' && $lockedSale->status !== 'completed') {
-                throw new \InvalidArgumentException('No se puede anular una venta en este estado.');
-            }
-
-            $checks = ThirdPartyCheck::with('supplier')->where('sale_id', $lockedSale->id)->lockForUpdate()->get();
-            foreach ($checks as $check) {
-                if ($check->status === 'endorsed') {
-                    $supplierName = $check->supplier?->name;
-                    $msg = $supplierName
-                        ? "No se puede anular la venta porque el cheque #{$check->check_number} fue endosado al proveedor '{$supplierName}'. Debe anular primero el pago al proveedor en Movimientos de Caja para reincorporarlo a cartera."
-                        : "No se puede anular la venta porque el cheque #{$check->check_number} figura como endosado. Debe reincorporarlo a cartera primero.";
-                    throw new \InvalidArgumentException($msg);
+                if ($lockedSale->status === 'voided') {
+                    throw new \InvalidArgumentException('Esta venta ya está anulada.');
                 }
-                if ($check->status === 'deposited') {
-                    throw new \InvalidArgumentException(
-                        "No se puede anular la venta porque el cheque #{$check->check_number} ya fue depositado en el banco."
-                    );
+                if ($lockedSale->status !== 'pending' && $lockedSale->status !== 'completed') {
+                    throw new \InvalidArgumentException('No se puede anular una venta en este estado.');
                 }
-                if ($check->status === 'rejected') {
-                    throw new \InvalidArgumentException(
-                        "No se puede anular la venta porque el cheque #{$check->check_number} figura como rechazado."
-                    );
-                }
-                if ($check->status !== 'in_wallet' && $check->status !== 'voided') {
-                    throw new \InvalidArgumentException(
-                        "No se puede anular la venta porque el cheque #{$check->check_number} tiene un estado incompatible ({$check->status})."
-                    );
-                }
-            }
 
-            $deliveryNote = DeliveryNote::with('items')->where('sale_id', $lockedSale->id)->first();
-
-            $restoredProductIds = $this->stockService->restoreStockForVoid($lockedSale, $context, $deliveryNote);
-
-            if ($deliveryNote) {
-                $deliveryNote->update(['status' => 'cancelled']);
-            }
-
-            // Si están 'in_wallet', procedemos a anularlos
-            foreach ($checks as $check) {
-                if ($check->status === 'in_wallet') {
-                    $check->update(['status' => 'voided']);
-                }
-            }
-
-            // Revertir Cuenta Corriente
-            $this->paymentService->revertCustomerTransactionsForVoid($lockedSale, $context);
-
-            if ($lockedSale->cash_shift_id !== $context->cashShiftId) {
-                $originShift = $lockedSale->cash_shift_id
-                    ? CashShift::where('id', $lockedSale->cash_shift_id)->lockForUpdate()->first()
-                    : null;
-
-                // MC-05: Solo generar egreso compensatorio ("Devolución Turno anterior") cuando el turno original
-                // de la venta YA ESTÁ CERRADO (su balance quedó congelado). Si el turno original sigue ABIERTO
-                // (ej. anulación desde Caja 1 de una venta del turno actual abierto de Caja 2), el cambio de
-                // status a 'voided' YA descuenta automáticamente el efectivo de calculateLiveTotals($originShift),
-                // por lo que crear además un CashMovement en Caja 1 duplicaría el descuento de efectivo.
-                if (! $originShift || $originShift->status !== 'open') {
-                    $cashRefundAmount = $lockedSale->payments()
-                        ->whereHas('paymentMethod', fn ($q) => $q->where('is_cash', true))
-                        ->sum('total_amount');
-
-                    if ($cashRefundAmount > 0 && $context->cashShiftId) {
-                        CashMovement::create([
-                            'cash_shift_id' => $context->cashShiftId,
-                            'user_id' => $context->userId,
-                            'amount' => $cashRefundAmount,
-                            'payment_method' => 'cash',
-                            'type' => 'expense',
-                            'category' => 'refund',
-                            'description' => "Devolución en efectivo por anulación de Venta #{$lockedSale->id} (Turno anterior)",
-                        ]);
+                $checks = ThirdPartyCheck::with('supplier')->where('sale_id', $lockedSale->id)->lockForUpdate()->get();
+                foreach ($checks as $check) {
+                    if ($check->status === 'endorsed') {
+                        $supplierName = $check->supplier?->name;
+                        $msg = $supplierName
+                            ? "No se puede anular la venta porque el cheque #{$check->check_number} fue endosado al proveedor '{$supplierName}'. Debe anular primero el pago al proveedor en Movimientos de Caja para reincorporarlo a cartera."
+                            : "No se puede anular la venta porque el cheque #{$check->check_number} figura como endosado. Debe reincorporarlo a cartera primero.";
+                        throw new \InvalidArgumentException($msg);
+                    }
+                    if ($check->status === 'deposited') {
+                        throw new \InvalidArgumentException(
+                            "No se puede anular la venta porque el cheque #{$check->check_number} ya fue depositado en el banco."
+                        );
+                    }
+                    if ($check->status === 'rejected') {
+                        throw new \InvalidArgumentException(
+                            "No se puede anular la venta porque el cheque #{$check->check_number} figura como rechazado."
+                        );
+                    }
+                    if ($check->status !== 'in_wallet' && $check->status !== 'voided') {
+                        throw new \InvalidArgumentException(
+                            "No se puede anular la venta porque el cheque #{$check->check_number} tiene un estado incompatible ({$check->status})."
+                        );
                     }
                 }
+            });
+
+            // ── FASE B: Emisión de Nota de Crédito AFIP fuera de la transacción de reversión local ──
+            // Si AFIP autoriza el CAE, se persiste inmediatamente en electronic_invoices para garantizar
+            // idempotencia fiscal y evitar duplicar Notas de Crédito si fallara una operación local posterior.
+            $saleForAfip = Sale::with('electronicInvoice')->find($sale->id);
+            $electronicInvoice = $saleForAfip?->electronicInvoice?->fresh();
+            if ($electronicInvoice && $electronicInvoice->cae && empty($electronicInvoice->credit_note_cae)) {
+                $ncVoucherType = match ($electronicInvoice->voucher_type) {
+                    AfipHelper::VOUCHER_FACTURA_A => AfipHelper::VOUCHER_NOTA_CREDITO_A,
+                    AfipHelper::VOUCHER_FACTURA_C => AfipHelper::VOUCHER_NOTA_CREDITO_C,
+                    default => AfipHelper::VOUCHER_NOTA_CREDITO_B,
+                };
+
+                $cbtesAsoc = [
+                    [
+                        'Tipo' => $electronicInvoice->voucher_type,
+                        'PtoVta' => $electronicInvoice->point_of_sale,
+                        'Nro' => $electronicInvoice->voucher_number,
+                        // 'Cuit' lo completa AfipWsfeService con el CUIT emisor (comprobante propio)
+                        'CbteFch' => $electronicInvoice->issued_at ? $electronicInvoice->issued_at->format('Ymd') : date('Ymd'),
+                    ],
+                ];
+
+                $options = [
+                    'voucher_type' => $ncVoucherType,
+                    'point_of_sale' => $electronicInvoice->point_of_sale,
+                    'doc_type' => $electronicInvoice->doc_type,
+                    'doc_number' => $electronicInvoice->doc_number,
+                    'receiver_name' => $electronicInvoice->receiver_name,
+                    'receiver_address' => $electronicInvoice->receiver_address,
+                    'receiver_tax_condition' => $electronicInvoice->receiver_tax_condition,
+                    'cbtes_asoc' => $cbtesAsoc,
+                ];
+
+                try {
+                    $ncData = $this->afipWsfeService->authorizeInvoice($saleForAfip, $options);
+                    $electronicInvoice->update([
+                        'credit_note_cae' => $ncData['cae'],
+                        'credit_note_expiration' => $ncData['cae_expiration'],
+                        'credit_note_number' => $ncData['voucher_number'],
+                        'credit_note_issued_at' => now(),
+                        'credit_note_voucher_type' => $ncVoucherType,
+                        'credit_note_qr_data' => $ncData['qr_data'] ?? null,
+                    ]);
+                } catch (\Exception $e) {
+                    throw new \InvalidArgumentException('No se pudo emitir la Nota de Crédito en AFIP. Motivo: '.$e->getMessage());
+                }
             }
 
-            $voidPayload = [
-                'status' => 'voided',
-                'voided_by_user_id' => $context->userId,
-                'void_authorized_by_admin_id' => $context->authorizedByAdminId,
-                'voided_at' => now(),
-                'void_reason' => $context->voidReason,
-            ];
+            // ── FASE C: Restitución transaccional local (Stock, Remito, Cheques, Cta Cte, Caja) ──
+            // BK-01: Orden canónico estricto de bloqueos pesimistas (1° CashShift -> 2° Customer -> 3° Sale -> 4° Product)
+            return DB::transaction(function () use ($sale, $context) {
+                // 1° Bloquear CashShift(s) involucrados en orden ascendente de ID
+                $shiftIdsToLock = array_values(array_unique(array_filter([
+                    $sale->cash_shift_id ? (int) $sale->cash_shift_id : null,
+                    $context->cashShiftId ? (int) $context->cashShiftId : null,
+                ])));
+                sort($shiftIdsToLock);
+                $lockedShifts = ! empty($shiftIdsToLock)
+                    ? CashShift::whereIn('id', $shiftIdsToLock)->orderBy('id', 'asc')->lockForUpdate()->get()->keyBy('id')
+                    : collect();
 
-            if ($this->hasClientTransactionColumn() && ! empty($lockedSale->client_transaction_id)) {
-                Cache::forget("pos_sale_idemp:{$lockedSale->client_transaction_id}");
-                $voidPayload['client_transaction_id'] = null;
-            }
+                // 2° Bloquear Customer(s) involucrados en orden ascendente de ID
+                $txCustomerIds = \App\Models\CustomerTransaction::where('sale_id', $sale->id)
+                    ->where('type', 'charge')
+                    ->pluck('customer_id')
+                    ->toArray();
+                $customerIdsToLock = array_values(array_unique(array_filter(array_merge(
+                    $sale->customer_id ? [(int) $sale->customer_id] : [],
+                    array_map('intval', $txCustomerIds)
+                ))));
+                sort($customerIdsToLock);
+                if (! empty($customerIdsToLock)) {
+                    \App\Models\Customer::whereIn('id', $customerIdsToLock)->orderBy('id', 'asc')->lockForUpdate()->get();
+                }
 
-            $lockedSale->update($voidPayload);
+                // 3° Bloquear la Venta y sus Cheques de Terceros
+                $lockedSale = Sale::lockForUpdate()->find($sale->id);
 
-            // Fix F1-ALTA-04 & FINDING-STOCK-04: Sincronizar stock restituido (físicos + combos) hacia plataformas e-commerce
-            $lockedSale->loadMissing('items');
-            $productsToSync = ! empty($restoredProductIds)
-                ? $restoredProductIds
-                : $lockedSale->items->pluck('product_id')->toArray();
-            SyncProductStockToPlatformsJob::dispatchForProducts($productsToSync);
+                if ($lockedSale->status === 'voided') {
+                    throw new \InvalidArgumentException('Esta venta ya está anulada.');
+                }
+                if ($lockedSale->status !== 'pending' && $lockedSale->status !== 'completed') {
+                    throw new \InvalidArgumentException('No se puede anular una venta en este estado.');
+                }
 
-            $this->broadcastSaleCompletedSafely($lockedSale); // Opcional, podría ser SaleVoided
+                $checks = ThirdPartyCheck::with('supplier')->where('sale_id', $lockedSale->id)->lockForUpdate()->get();
+                foreach ($checks as $check) {
+                    if ($check->status === 'endorsed') {
+                        $supplierName = $check->supplier?->name;
+                        $msg = $supplierName
+                            ? "No se puede anular la venta porque el cheque #{$check->check_number} fue endosado al proveedor '{$supplierName}'. Debe anular primero el pago al proveedor en Movimientos de Caja para reincorporarlo a cartera."
+                            : "No se puede anular la venta porque el cheque #{$check->check_number} figura como endosado. Debe reincorporarlo a cartera primero.";
+                        throw new \InvalidArgumentException($msg);
+                    }
+                    if ($check->status === 'deposited') {
+                        throw new \InvalidArgumentException(
+                            "No se puede anular la venta porque el cheque #{$check->check_number} ya fue depositado en el banco."
+                        );
+                    }
+                    if ($check->status === 'rejected') {
+                        throw new \InvalidArgumentException(
+                            "No se puede anular la venta porque el cheque #{$check->check_number} figura como rechazado."
+                        );
+                    }
+                    if ($check->status !== 'in_wallet' && $check->status !== 'voided') {
+                        throw new \InvalidArgumentException(
+                            "No se puede anular la venta porque el cheque #{$check->check_number} tiene un estado incompatible ({$check->status})."
+                        );
+                    }
+                }
 
-            ReportCacheService::flush();
+                $deliveryNote = DeliveryNote::with('items')->where('sale_id', $lockedSale->id)->first();
 
-            return $lockedSale;
-        });
+                // 4° Bloquear Productos (incluyendo ingredientes de combos en orden ID ASC) y restituir stock
+                $restoredProductIds = $this->stockService->restoreStockForVoid($lockedSale, $context, $deliveryNote);
+
+                if ($deliveryNote) {
+                    $deliveryNote->update(['status' => 'cancelled']);
+                }
+
+                // Si están 'in_wallet', procedemos a anularlos
+                foreach ($checks as $check) {
+                    if ($check->status === 'in_wallet') {
+                        $check->update(['status' => 'voided']);
+                    }
+                }
+
+                // Revertir Cuenta Corriente (el Customer ya fue bloqueado en el paso 2°)
+                $this->paymentService->revertCustomerTransactionsForVoid($lockedSale, $context);
+
+                if ($lockedSale->cash_shift_id !== $context->cashShiftId) {
+                    $originShift = $lockedSale->cash_shift_id
+                        ? ($lockedShifts->get((int) $lockedSale->cash_shift_id) ?? CashShift::where('id', $lockedSale->cash_shift_id)->lockForUpdate()->first())
+                        : null;
+
+                    // MC-05: Solo generar egreso compensatorio ("Devolución Turno anterior") cuando el turno original
+                    // de la venta YA ESTÁ CERRADO (su balance quedó congelado). Si el turno original sigue ABIERTO
+                    // (ej. anulación desde Caja 1 de una venta del turno actual abierto de Caja 2), el cambio de
+                    // status a 'voided' YA descuenta automáticamente el efectivo de calculateLiveTotals($originShift),
+                    // por lo que crear además un CashMovement en Caja 1 duplicaría el descuento de efectivo.
+                    if (! $originShift || $originShift->status !== 'open') {
+                        $cashRefundAmount = $lockedSale->payments()
+                            ->whereHas('paymentMethod', fn ($q) => $q->where('is_cash', true))
+                            ->sum('total_amount');
+
+                        if ($cashRefundAmount > 0 && $context->cashShiftId) {
+                            CashMovement::create([
+                                'cash_shift_id' => $context->cashShiftId,
+                                'user_id' => $context->userId,
+                                'amount' => $cashRefundAmount,
+                                'payment_method' => 'cash',
+                                'type' => 'expense',
+                                'category' => 'refund',
+                                'description' => "Devolución en efectivo por anulación de Venta #{$lockedSale->id} (Turno anterior)",
+                            ]);
+                        }
+                    }
+                }
+
+                $voidPayload = [
+                    'status' => 'voided',
+                    'voided_by_user_id' => $context->userId,
+                    'void_authorized_by_admin_id' => $context->authorizedByAdminId,
+                    'voided_at' => now(),
+                    'void_reason' => $context->voidReason,
+                ];
+
+                if ($this->hasClientTransactionColumn() && ! empty($lockedSale->client_transaction_id)) {
+                    Cache::forget("pos_sale_idemp:{$lockedSale->client_transaction_id}");
+                    $voidPayload['client_transaction_id'] = null;
+                }
+
+                $lockedSale->update($voidPayload);
+
+                // Fix F1-ALTA-04 & FINDING-STOCK-04: Sincronizar stock restituido (físicos + combos) hacia plataformas e-commerce
+                $lockedSale->loadMissing('items');
+                $productsToSync = ! empty($restoredProductIds)
+                    ? $restoredProductIds
+                    : $lockedSale->items->pluck('product_id')->toArray();
+                SyncProductStockToPlatformsJob::dispatchForProducts($productsToSync);
+
+                $this->broadcastSaleCompletedSafely($lockedSale); // Opcional, podría ser SaleVoided
+
+                ReportCacheService::flush();
+
+                return $lockedSale;
+            });
+        } finally {
+            optional($lock)->release();
+        }
     }
 
     protected function processItems(Sale $sale, array $items, Collection $products, SaleContextDTO $context): void

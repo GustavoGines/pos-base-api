@@ -25,6 +25,10 @@ class StockController extends Controller
         DB::transaction(function () use ($validated, $product, $request) {
             $lockedProduct = Product::where('id', $product->id)->lockForUpdate()->firstOrFail();
 
+            if ($lockedProduct->is_combo) {
+                abort(422, 'No es posible ajustar el stock directamente sobre un producto combo. Modifique el stock de sus ingredientes.');
+            }
+
             // Solo registramos movimiento si la cantidad es realmente mayor a cero
             if ($validated['quantity'] > 0) {
                 // Mapeo de tipos para consistencia (in/increment -> in, out/decrement -> out)

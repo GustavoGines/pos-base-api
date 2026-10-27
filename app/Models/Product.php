@@ -215,8 +215,13 @@ class Product extends Model
     {
         $array = parent::toArray();
 
-        if ($this->is_combo && $this->relationLoaded('children')) {
-            $array['cost_price'] = number_format($this->calculateComboCostPrice(), 2, '.', '');
+        if ($this->is_combo && $this->exists) {
+            if (! $this->relationLoaded('children')) {
+                $this->loadMissing('children');
+            }
+            if ($this->children->isNotEmpty()) {
+                $array['cost_price'] = number_format($this->calculateComboCostPrice(), 2, '.', '');
+            }
             $array['stock'] = number_format($this->calculateComboAvailableStock(), 3, '.', '');
         }
 

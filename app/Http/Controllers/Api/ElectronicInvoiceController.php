@@ -10,6 +10,7 @@ use App\Models\Sale;
 use App\Services\Afip\AfipWsfeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -39,103 +40,123 @@ class ElectronicInvoiceController extends Controller
             'iibb_perception_rate' => 'nullable|numeric|min:0|max:100',
         ]);
 
-        return DB::transaction(function () use ($sale, $validated) {
-            $lockedSale = Sale::with('electronicInvoice')->lockForUpdate()->find($sale->id);
+        $lock = Cache::lock("sale_invoice_lock:{$sale->id}", 60);
+        if (! $lock->get()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'La autorización fiscal de esta venta ya se encuentra en curso.',
+                'invoice_status' => 'pending',
+            ], 409);
+        }
 
-            if ($lockedSale->isVoided()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'No es posible emitir factura electrónica para una venta anulada.',
-                    'invoice_status' => 'failed',
-                ], 422);
-            }
+        try {
+            return DB::transaction(function () use ($sale, $validated) {
+                // BK-03: Respetar orden canónico de locks (Customer -> Sale) para evitar deadlock
+                // circular con CustomerController::registerPayment.
+                $lockedCustomer = $sale->customer_id
+                    ? \App\Models\Customer::where('id', $sale->customer_id)->lockForUpdate()->first()
+                    : null;
 
-            // Si ya fue autorizada, retornar la factura existente
-            $existingInvoice = $lockedSale->electronicInvoice;
-            if ($existingInvoice && $existingInvoice->isAuthorized()) {
-                return response()->json([
-                    'success' => true,
-                    'message' => 'La venta ya posee una factura electrónica autorizada previamente.',
-                    'invoice' => $existingInvoice,
-                ]);
-            }
+                $lockedSale = Sale::with('electronicInvoice')->lockForUpdate()->find($sale->id);
 
-            try {
-                $invoiceData = $this->wsfeService->authorizeInvoice($lockedSale, $validated);
-
-                $invoice = ElectronicInvoice::updateOrCreate(
-                    ['sale_id' => $lockedSale->id],
-                    array_merge($invoiceData, [
-                        'issued_at' => now(),
-                    ])
-                );
-
-                $saleUpdates = ['invoice_status' => 'invoiced'];
-
-                // Fix F1-MED-09 / REP-06: Si se auto-calculó o aplicó una percepción IIBB al emitir la factura
-                // que no estaba registrada en la cabecera de la venta, sincronizarla en `sales` (y en la deuda
-                // exigible si la venta fue en Cuenta Corriente) para evitar divergencia contable.
-                $tributeAmount = round((float) ($invoiceData['tribute_amount'] ?? 0.0), 2);
-                if ($tributeAmount > 0.0 && round((float) ($lockedSale->iibb_perception_amount ?? 0.0), 2) <= 0.0) {
-                    $saleUpdates['iibb_perception_amount'] = $tributeAmount;
-                    $tributeAlic = $invoiceData['tributes_breakdown'][0]['Alic'] ?? $validated['iibb_perception_rate'] ?? $lockedSale->customer?->iibb_perception_rate ?? null;
-                    if ($tributeAlic !== null) {
-                        $saleUpdates['iibb_perception_rate'] = (float) $tributeAlic;
-                    }
-                    $saleUpdates['total'] = round((float) $lockedSale->total + $tributeAmount, 2);
-
-                    if (in_array($lockedSale->payment_status, ['pending', 'partial'], true) && $lockedSale->customer_id) {
-                        $saleUpdates['amount_due'] = round((float) $lockedSale->amount_due + $tributeAmount, 2);
-                        $lockedCustomer = \App\Models\Customer::where('id', $lockedSale->customer_id)->lockForUpdate()->first();
-                        if ($lockedCustomer) {
-                            $lockedCustomer->increment('balance', $tributeAmount);
-                        }
-                    }
+                if ($lockedSale->isVoided()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'No es posible emitir factura electrónica para una venta anulada.',
+                        'invoice_status' => 'failed',
+                    ], 422);
                 }
 
-                $lockedSale->update($saleUpdates);
+                // Si ya fue autorizada, retornar la factura existente
+                $existingInvoice = $lockedSale->electronicInvoice;
+                if ($existingInvoice && $existingInvoice->isAuthorized()) {
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'La venta ya posee una factura electrónica autorizada previamente.',
+                        'invoice' => $existingInvoice,
+                    ]);
+                }
 
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Factura autorizada exitosamente',
-                    'invoice' => $invoice,
-                ]);
-            } catch (Throwable $e) {
-                $errorMessage = $e->getMessage();
-                Log::error("Error al autorizar factura electrónica para venta #{$lockedSale->id}: {$errorMessage}", [
-                    'exception' => $e,
-                ]);
+                try {
+                    $invoiceData = $this->wsfeService->authorizeInvoice($lockedSale, $validated);
 
-                // Determinar si es una falla de conexión / timeout de AFIP (Contingencia)
-                $isTimeout = str_contains(strtolower($errorMessage), 'timeout')
-                    || str_contains(strtolower($errorMessage), 'timed out')
-                    || str_contains(strtolower($errorMessage), 'connection')
-                    || str_contains(strtolower($errorMessage), 'curl error 28')
-                    || str_contains(strtolower($errorMessage), '504')
-                    || str_contains(strtolower($errorMessage), 'no disponible');
+                    $invoice = ElectronicInvoice::updateOrCreate(
+                        ['sale_id' => $lockedSale->id],
+                        array_merge($invoiceData, [
+                            'issued_at' => now(),
+                        ])
+                    );
 
-                if ($isTimeout) {
-                    $lockedSale->update(['invoice_status' => 'pending']);
+                    $saleUpdates = ['invoice_status' => 'invoiced'];
+
+                    // Fix F1-MED-09 / REP-06: Si se auto-calculó o aplicó una percepción IIBB al emitir la factura
+                    // que no estaba registrada en la cabecera de la venta, sincronizarla en `sales` (y en la deuda
+                    // exigible si la venta fue en Cuenta Corriente) para evitar divergencia contable.
+                    $tributeAmount = round((float) ($invoiceData['tribute_amount'] ?? 0.0), 2);
+                    if ($tributeAmount > 0.0 && round((float) ($lockedSale->iibb_perception_amount ?? 0.0), 2) <= 0.0) {
+                        $saleUpdates['iibb_perception_amount'] = $tributeAmount;
+                        $tributeAlic = $invoiceData['tributes_breakdown'][0]['Alic'] ?? $validated['iibb_perception_rate'] ?? $lockedSale->customer?->iibb_perception_rate ?? null;
+                        if ($tributeAlic !== null) {
+                            $saleUpdates['iibb_perception_rate'] = (float) $tributeAlic;
+                        }
+                        $saleUpdates['total'] = round((float) $lockedSale->total + $tributeAmount, 2);
+
+                        if (in_array($lockedSale->payment_status, ['pending', 'partial'], true) && $lockedSale->customer_id) {
+                            $saleUpdates['amount_due'] = round((float) $lockedSale->amount_due + $tributeAmount, 2);
+                            $customerToUpdate = $lockedCustomer
+                                ?? \App\Models\Customer::where('id', $lockedSale->customer_id)->lockForUpdate()->first();
+                            if ($customerToUpdate) {
+                                $customerToUpdate->increment('balance', $tributeAmount);
+                            }
+                        }
+                    }
+
+                    $lockedSale->update($saleUpdates);
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Factura autorizada exitosamente',
+                        'invoice' => $invoice,
+                    ]);
+                } catch (Throwable $e) {
+                    $errorMessage = $e->getMessage();
+                    Log::error("Error al autorizar factura electrónica para venta #{$lockedSale->id}: {$errorMessage}", [
+                        'exception' => $e,
+                    ]);
+
+                    // Determinar si es una falla de conexión / timeout de AFIP (Contingencia)
+                    $isTimeout = str_contains(strtolower($errorMessage), 'timeout')
+                        || str_contains(strtolower($errorMessage), 'timed out')
+                        || str_contains(strtolower($errorMessage), 'connection')
+                        || str_contains(strtolower($errorMessage), 'curl error 28')
+                        || str_contains(strtolower($errorMessage), '504')
+                        || str_contains(strtolower($errorMessage), 'no disponible');
+
+                    if ($isTimeout) {
+                        $lockedSale->update(['invoice_status' => 'pending']);
+
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Servicio de AFIP no disponible. Venta registrada en contingencia.',
+                            'invoice_status' => 'pending',
+                            'error' => $errorMessage,
+                        ], 504);
+                    }
+
+                    // Rechazo de AFIP o validación impositiva
+                    $lockedSale->update(['invoice_status' => 'failed']);
 
                     return response()->json([
                         'success' => false,
-                        'message' => 'Servicio de AFIP no disponible. Venta registrada en contingencia.',
-                        'invoice_status' => 'pending',
+                        'message' => "La solicitud fiscal no pudo ser autorizada: {$errorMessage}",
+                        'invoice_status' => 'failed',
                         'error' => $errorMessage,
-                    ], 504);
+                    ], 422);
                 }
-
-                // Rechazo de AFIP o validación impositiva
-                $lockedSale->update(['invoice_status' => 'failed']);
-
-                return response()->json([
-                    'success' => false,
-                    'message' => "La solicitud fiscal no pudo ser autorizada: {$errorMessage}",
-                    'invoice_status' => 'failed',
-                    'error' => $errorMessage,
-                ], 422);
-            }
-        });
+            });
+        } finally {
+            optional($lock)->release();
+        }
     }
 
     /**

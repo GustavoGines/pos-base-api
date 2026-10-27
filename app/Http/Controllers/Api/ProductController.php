@@ -160,9 +160,10 @@ class ProductController extends Controller
 
             // Auditoría de Stock: Guardar valor previo bajo lock antes de actualizar
             $oldStock = (float) $product->stock;
+            $willBeCombo = array_key_exists('is_combo', $validated) ? (bool) $validated['is_combo'] : (bool) $product->is_combo;
 
-            // Si usamos add_stock, no pisamos el stock absoluto
-            if (! empty($validated['add_stock'])) {
+            // Si usamos add_stock o si es un combo (stock virtual), no pisamos el stock absoluto manualmente
+            if (! empty($validated['add_stock']) || $willBeCombo) {
                 unset($validated['stock']);
             }
 
@@ -170,8 +171,8 @@ class ProductController extends Controller
 
             $actorUser = $request->user() ?? $request->attributes->get('authenticated_user');
 
-            // Modificación aditiva (Sin race condition)
-            if (! empty($request->add_stock)) {
+            // Modificación aditiva (Sin race condition, excluido para combos)
+            if (! $willBeCombo && ! empty($request->add_stock)) {
                 $product->increment('stock', $request->add_stock);
                 $product->refresh();
                 $stockChanged = true;
@@ -184,7 +185,7 @@ class ProductController extends Controller
                 ]);
             }
             // Modificación absoluta protegida bajo lockForUpdate
-            elseif (array_key_exists('stock', $validated) && (float) $validated['stock'] !== $oldStock) {
+            elseif (! $willBeCombo && array_key_exists('stock', $validated) && (float) $validated['stock'] !== $oldStock) {
                 $newStock = (float) $validated['stock'];
                 $diff = $newStock - $oldStock;
                 $stockChanged = true;
@@ -291,9 +292,6 @@ class ProductController extends Controller
             ->map(function (Product $p) {
                 if ($p->is_combo) {
                     $avail = $p->calculateComboAvailableStock();
-                    if ((float) $p->stock !== $avail) {
-                        Product::where('id', $p->id)->update(['stock' => $avail]);
-                    }
 
                     return [
                         'id' => $p->id,

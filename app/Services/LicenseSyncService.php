@@ -68,13 +68,31 @@ class LicenseSyncService
     public static function verifyLocalIntegrity(): bool
     {
         $storedSeal = BusinessSetting::where('key', 'license_integrity_hash')->value('value');
-        if ($storedSeal === null || $storedSeal === '') {
-            return true;
-        }
-
         $plan = (string) (BusinessSetting::where('key', 'app_plan')->value('value') ?? 'basic');
         $planMode = (string) (BusinessSetting::where('key', 'license_plan_mode')->value('value') ?? 'saas');
         $isLifetime = (string) (BusinessSetting::where('key', 'license_is_lifetime')->value('value') ?? '0');
+        $legacyPlan = BusinessSetting::where('key', 'license_plan')->value('value');
+
+        if ($legacyPlan !== null && $legacyPlan !== '' && strtolower((string) $legacyPlan) !== strtolower($plan)) {
+            return false;
+        }
+
+        if ($storedSeal === null || $storedSeal === '') {
+            // F-LIC-01: Impedir bypass por borrado físico de la fila `license_integrity_hash`
+            // cuando se intenta forzar 'lifetime' en BD, preservando retrocompatibilidad v1.8.5 SaaS.
+            if (
+                strtolower($planMode) === 'lifetime'
+                || $isLifetime === '1'
+                || strtolower($isLifetime) === 'true'
+                || strtolower($plan) === 'lifetime'
+                || ($legacyPlan !== null && strtolower((string) $legacyPlan) === 'lifetime')
+            ) {
+                return false;
+            }
+
+            return true;
+        }
+
         $featuresJson = (string) (BusinessSetting::where('key', 'license_features_dict')->value('value') ?? '{}');
 
         $expectedSeal = self::computeLocalIntegritySeal($plan, $planMode, $isLifetime, $featuresJson);
@@ -276,48 +294,58 @@ class LicenseSyncService
         }
         $this->setSetting('license_key', $licenseKey);
 
-        $installationId = $this->getInstallationId();
-        $nonce = Str::random(32);
-        $url = $this->getServerUrl().'/api/validate';
+        // F-LIC-02: Evitar estampida (Thundering Herd) de peticiones concurrentes hacia Render
+        $lock = Cache::lock('pos_license_heartbeat_lock', 65);
+        if (! $lock->get()) {
+            return;
+        }
 
         try {
-            $response = Http::timeout(60)->post($url, [
-                'license_key' => $licenseKey,
-                'mac_address' => $installationId,
-                'installation_id' => $installationId,
-                'nonce' => $nonce,
-            ]);
+            $installationId = $this->getInstallationId();
+            $nonce = Str::random(32);
+            $url = $this->getServerUrl().'/api/validate';
 
-            if ($response->successful()) {
-                $data = $response->json() ?? [];
+            try {
+                $response = Http::timeout(60)->post($url, [
+                    'license_key' => $licenseKey,
+                    'mac_address' => $installationId,
+                    'installation_id' => $installationId,
+                    'nonce' => $nonce,
+                ]);
 
-                try {
-                    $this->verifyServerSignature($data, $installationId, $nonce);
-                } catch (LicenseSignatureException $e) {
-                    // FINDING-LIC-01: una respuesta sin firma válida (spoofing por hosts o servidor
-                    // mal configurado) jamás se aplica; se trata igual que una falla de red, por lo
-                    // que un atacante no obtiene más que las 72 h de gracia de desconectar el cable.
-                    Log::warning('Heartbeat de licencia: '.$e->getMessage());
+                if ($response->successful()) {
+                    $data = $response->json() ?? [];
+
+                    try {
+                        $this->verifyServerSignature($data, $installationId, $nonce);
+                    } catch (LicenseSignatureException $e) {
+                        // FINDING-LIC-01: una respuesta sin firma válida (spoofing por hosts o servidor
+                        // mal configurado) jamás se aplica; se trata igual que una falla de red, por lo
+                        // que un atacante no obtiene más que las 72 h de gracia de desconectar el cable.
+                        Log::warning('Heartbeat de licencia: '.$e->getMessage());
+                        $this->handleOfflineGracePeriod();
+
+                        return;
+                    }
+
+                    $this->applyValidatedLicenseData($data);
+                } elseif ($response->status() === 401 || $response->status() === 403 || $response->status() === 404) {
+                    // 401/403/404: Licencia suspendida, expirada, revocada o inválida
+                    if (($response->json('status') ?? '') === 'expired') {
+                        $this->setSetting('license_expires_at', now()->subSecond()->toIso8601String());
+                    }
+                    $this->markLicenseBlocked();
+                    throw new \Exception('La licencia ha sido suspendida, revocada o es inválida.');
+                } else {
+                    // 500 u otros errores del servidor: Tratar como "Falla de Internet"
                     $this->handleOfflineGracePeriod();
-
-                    return;
                 }
-
-                $this->applyValidatedLicenseData($data);
-            } elseif ($response->status() === 401 || $response->status() === 403 || $response->status() === 404) {
-                // 401/403/404: Licencia suspendida, expirada, revocada o inválida
-                if (($response->json('status') ?? '') === 'expired') {
-                    $this->setSetting('license_expires_at', now()->subSecond()->toIso8601String());
-                }
-                $this->markLicenseBlocked();
-                throw new \Exception('La licencia ha sido suspendida, revocada o es inválida.');
-            } else {
-                // 500 u otros errores del servidor: Tratar como "Falla de Internet"
+            } catch (ConnectionException $e) {
+                // Timeout / Falla de red: Manejar Grace Period silenciosamente
                 $this->handleOfflineGracePeriod();
             }
-        } catch (ConnectionException $e) {
-            // Timeout / Falla de red: Manejar Grace Period silenciosamente
-            $this->handleOfflineGracePeriod();
+        } finally {
+            optional($lock)->release();
         }
     }
 
