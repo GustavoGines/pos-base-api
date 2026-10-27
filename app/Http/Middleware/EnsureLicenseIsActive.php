@@ -46,6 +46,38 @@ class EnsureLicenseIsActive
             ], 403);
         }
 
+        // FINDING-LIC-04: Verificar expiración local o vencimiento de periodo de gracia (72h) en planes SaaS sin cron
+        $planMode = strtolower((string) (BusinessSetting::where('key', 'license_plan_mode')->value('value') ?? 'saas'));
+        if ($planMode !== 'lifetime' && ! empty($appPlan)) {
+            $expiresAt = BusinessSetting::where('key', 'license_expires_at')->value('value');
+            if (! empty($expiresAt)) {
+                try {
+                    if (\Carbon\Carbon::parse($expiresAt)->endOfDay()->isPast()) {
+                        return response()->json([
+                            'message' => 'Su licencia se encuentra vencida. Active o sincronice su licencia para continuar operando.',
+                            'error_code' => 'LICENSE_BLOCKED',
+                        ], 403);
+                    }
+                } catch (\Throwable) {
+                }
+            }
+
+            $lastCheck = BusinessSetting::where('key', 'last_license_check')->value('value')
+                ?: BusinessSetting::where('key', 'license_last_sync')->value('value');
+            if ($lastCheck) {
+                try {
+                    $lastCheckDate = \Carbon\Carbon::parse($lastCheck);
+                    if ($lastCheckDate->diffInHours(now()) > 72) {
+                        return response()->json([
+                            'message' => 'El periodo de gracia sin conexión (72 horas) ha expirado. Conecte su terminal a internet para validar la licencia.',
+                            'error_code' => 'LICENSE_BLOCKED',
+                        ], 403);
+                    }
+                } catch (\Throwable) {
+                }
+            }
+        }
+
         return $next($request);
     }
 }

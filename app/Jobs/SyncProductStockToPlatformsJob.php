@@ -155,6 +155,9 @@ class SyncProductStockToPlatformsJob implements ShouldQueue
                 );
                 $durationMs = (int) round((microtime(true) - $startTime) * 1000);
 
+                // FINDING-STOCK-03: Capturar stock previo antes de actualizar el mapping
+                $stockBefore = $mapping->last_known_external_stock !== null ? (float) $mapping->last_known_external_stock : null;
+
                 // Update mapping tracking fields
                 $mapping->update([
                     'last_known_local_stock' => $baseStock,
@@ -171,7 +174,7 @@ class SyncProductStockToPlatformsJob implements ShouldQueue
                     'external_order_id' => null,
                     'direction' => 'outbound',
                     'action' => 'update_stock',
-                    'stock_before' => $mapping->last_known_external_stock,
+                    'stock_before' => $stockBefore,
                     'stock_after' => $targetStock,
                     'request_payload' => [
                         'external_product_id' => $mapping->external_product_id,

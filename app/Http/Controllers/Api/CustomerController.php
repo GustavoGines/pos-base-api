@@ -191,6 +191,13 @@ class CustomerController extends Controller
                 } elseif ($request->filled('cash_register_id')) {
                     $activeShift = CashShift::where('cash_register_id', $request->cash_register_id)->where('status', 'open')->latest('id')->lockForUpdate()->first();
                 } else {
+                    // FINDING-CASH-04: Si existen múltiples cajas abiertas, exigir especificar la caja/turno
+                    $openCount = CashShift::where('status', 'open')->count();
+                    if ($openCount > 1) {
+                        throw ValidationException::withMessages([
+                            'cash_shift_id' => ['Existen múltiples cajas abiertas. Debe especificar cash_shift_id o cash_register_id.'],
+                        ]);
+                    }
                     $activeShift = CashShift::where('status', 'open')->latest('id')->lockForUpdate()->first();
                 }
 

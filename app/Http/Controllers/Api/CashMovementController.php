@@ -143,6 +143,15 @@ class CashMovementController extends Controller
 
     public function store(StoreCashMovementRequest $request)
     {
+        // FINDING-CASH-02: En Multi-Caja, si hay múltiples cajas abiertas, exigir especificar la caja/turno
+        $openShiftsCount = CashShift::where('status', 'open')->count();
+        if ($openShiftsCount > 1 && ! $request->filled('cash_shift_id') && ! $request->filled('cash_register_id')) {
+            return response()->json([
+                'message' => 'Existen múltiples cajas abiertas. Debe especificar cash_shift_id o cash_register_id.',
+                'errors' => ['cash_shift_id' => ['Existen múltiples cajas abiertas. Debe especificar cash_shift_id o cash_register_id.']],
+            ], 422);
+        }
+
         $shift = $this->resolveActiveShift($request);
 
         if (! $shift) {
