@@ -61,6 +61,12 @@ class PosController extends Controller
             return $discountResponse;
         }
 
+        // 2. FINDING-CC-01: Si se envió PIN explícito (ej. para autorizar exceso de límite de crédito), resolverlo
+        $pinResponse = $this->discountAuthService->resolveExplicitAdminPin($request);
+        if ($pinResponse !== null) {
+            return $pinResponse;
+        }
+
         $actingUser = $request->user() ?? $request->attributes->get('authenticated_user');
         $authorizedByAdminId = $request->attributes->get('authorized_by_admin_id')
             ?? ($actingUser?->isAdmin() ? $actingUser->id : null);

@@ -121,6 +121,17 @@ class PaymentService
             return;
         }
 
+        // FINDING-CC-01: Validar que el nuevo saldo no exceda credit_limit salvo autorización de supervisor
+        if (! $customer->is_internal_account && (float) $customer->credit_limit > 0) {
+            $projectedBalance = round((float) $customer->balance + (float) $amount, 2);
+            if ($projectedBalance > (round((float) $customer->credit_limit, 2) + 0.01) && empty($context->authorizedByAdminId)) {
+                $available = max(0.0, round((float) $customer->credit_limit - (float) $customer->balance, 2));
+                throw new \InvalidArgumentException(
+                    "El monto en Cuenta Corriente (\${$amount}) supera el límite de crédito disponible del cliente (\${$available}). Se requiere autorización de supervisor."
+                );
+            }
+        }
+
         $customer->balance += $amount; // El balance de cuenta corriente suele sumar deudas en este POS? En el original: $customer->balance += $ccPaymentTotal; (Sí, balance = deuda)
         $customer->save();
 

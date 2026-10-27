@@ -6,10 +6,12 @@ use App\Models\BusinessSetting;
 use App\Services\LicenseSyncService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Tests\Concerns\FakesSignedLicenseServer;
 use Tests\TestCase;
 
 class LicenseSyncServiceTest extends TestCase
 {
+    use FakesSignedLicenseServer;
     use RefreshDatabase;
 
     protected LicenseSyncService $service;
@@ -26,14 +28,12 @@ class LicenseSyncServiceTest extends TestCase
      */
     public function test_activate_manual_enables_pro_and_premium_features_fallback(): void
     {
-        Http::fake([
-            '*/api/validate' => Http::response([
-                'plan' => 'pro',
-                'plan_type' => 'saas',
-                'business_type' => 'retail',
-                'features' => [], // Servidor devuelve lista vacía de features
-                'expires_at' => now()->addYear()->toIso8601String(),
-            ], 200),
+        $this->fakeSignedLicenseServer([
+            'plan' => 'pro',
+            'plan_type' => 'saas',
+            'business_type' => 'retail',
+            'features' => [], // Servidor devuelve lista vacía de features
+            'expires_at' => now()->addYear()->toIso8601String(),
         ]);
 
         $plan = $this->service->activateManual('LICENSE-KEY-PRO-001');
@@ -54,14 +54,12 @@ class LicenseSyncServiceTest extends TestCase
      */
     public function test_activate_manual_hardware_store_enables_hardware_exclusive_features(): void
     {
-        Http::fake([
-            '*/api/validate' => Http::response([
-                'plan' => 'premium',
-                'plan_type' => 'lifetime',
-                'business_type' => 'hardware_store',
-                'features' => [],
-                'expires_at' => null,
-            ], 200),
+        $this->fakeSignedLicenseServer([
+            'plan' => 'premium',
+            'plan_type' => 'lifetime',
+            'business_type' => 'hardware_store',
+            'features' => [],
+            'expires_at' => null,
         ]);
 
         $plan = $this->service->activateManual('LICENSE-KEY-HW-PREMIUM');
@@ -139,15 +137,13 @@ class LicenseSyncServiceTest extends TestCase
     {
         BusinessSetting::updateOrCreate(['key' => 'license_key'], ['value' => 'VALID-RETAIL-KEY']);
 
-        Http::fake([
-            '*/api/validate' => Http::response([
-                'plan' => 'pro',
-                'business_type' => 'retail',
-                'features' => [
-                    'quotes' => false,
-                    'logistics' => false,
-                ],
-            ], 200),
+        $this->fakeSignedLicenseServer([
+            'plan' => 'pro',
+            'business_type' => 'retail',
+            'features' => [
+                'quotes' => false,
+                'logistics' => false,
+            ],
         ]);
 
         $this->service->syncManualForce();
@@ -164,15 +160,13 @@ class LicenseSyncServiceTest extends TestCase
     {
         BusinessSetting::updateOrCreate(['key' => 'license_key'], ['value' => 'VALID-RETAIL-ADDON-KEY']);
 
-        Http::fake([
-            '*/api/validate' => Http::response([
-                'plan' => 'pro',
-                'business_type' => 'retail',
-                'features' => [
-                    'quotes' => true,
-                    'logistics' => false,
-                ],
-            ], 200),
+        $this->fakeSignedLicenseServer([
+            'plan' => 'pro',
+            'business_type' => 'retail',
+            'features' => [
+                'quotes' => true,
+                'logistics' => false,
+            ],
         ]);
 
         $this->service->syncManualForce();

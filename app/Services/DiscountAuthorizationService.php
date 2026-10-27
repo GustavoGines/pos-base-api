@@ -260,4 +260,66 @@ class DiscountAuthorizationService
 
         return null;
     }
+
+    /**
+     * FINDING-CC-01: Si la petición incluye explícitamente X-Admin-Pin o admin_pin (por ejemplo,
+     * para autorizar un exceso sobre credit_limit en Cuenta Corriente cuando no hubo descuentos de ítems),
+     * valida el PIN contra los supervisores/administradores y registra authorized_by_admin_id.
+     */
+    public function resolveExplicitAdminPin(Request $request): ?JsonResponse
+    {
+        if ($request->attributes->get('authorized_by_admin_id') !== null) {
+            return null;
+        }
+
+        $user = $request->user() ?? $request->attributes->get('authenticated_user');
+        if ($user && ($user->isAdmin() || $user->hasPermission('all'))) {
+            $request->attributes->set('authorized_by_admin_id', $user->id);
+
+            return null;
+        }
+
+        $rawHeaderPin = $request->header('X-Admin-Pin');
+        $rawBodyPin = $request->input('admin_pin');
+        $adminPin = (is_string($rawHeaderPin) && trim($rawHeaderPin) !== '')
+            ? trim($rawHeaderPin)
+            : ((is_string($rawBodyPin) && trim($rawBodyPin) !== '') ? trim($rawBodyPin) : null);
+
+        if ($adminPin === null) {
+            return null;
+        }
+
+        $throttleKey = 'pin_attempts:'.($user ? $user->id : 'guest').':'.$request->ip();
+        if (RateLimiter::tooManyAttempts($throttleKey, 5)) {
+            $seconds = RateLimiter::availableIn($throttleKey);
+
+            return response()->json([
+                'message' => "Demasiados intentos erróneos de PIN. Operación bloqueada temporalmente por {$seconds} segundos.",
+                'error_code' => 'PIN_LOCKED_TEMPORARILY',
+                'retry_after' => $seconds,
+            ], 429);
+        }
+
+        $admins = User::withoutGlobalScope('visible')
+            ->where('role', 'admin')
+            ->whereNotNull('pin')
+            ->get();
+
+        foreach ($admins as $admin) {
+            if (Hash::check($adminPin, $admin->pin)) {
+                RateLimiter::clear($throttleKey);
+                $request->attributes->set('authorized_by_admin_id', $admin->id);
+                $request->attributes->set('authorized_by_admin', $admin);
+
+                return null;
+            }
+        }
+
+        RateLimiter::hit($throttleKey, 300);
+
+        return response()->json([
+            'message' => 'El PIN de administrador ingresado es incorrecto.',
+            'error_code' => 'INVALID_ADMIN_PIN',
+        ], 403);
+    }
 }

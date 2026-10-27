@@ -1066,4 +1066,190 @@ class Fase3AuditRegressionTest extends TestCase
             ->assertJsonPath('summary.total_invoiced', 1000)
             ->assertJsonPath('summary.net_fiscal_total', 1000);
     }
+
+    /**
+     * FINDING-CC-01: Una venta en Cuenta Corriente que excede credit_limit se rechaza con 422 para un
+     * cajero (sin crear venta ni descontar stock), salvo autorización con PIN de supervisor.
+     * credit_limit = 0 significa "sin límite".
+     */
+    public function test_lote1_cc01_credit_limit_blocks_cashier_unless_supervisor_pin(): void
+    {
+        BusinessSetting::updateOrCreate(['key' => 'license_features_dict'], ['value' => json_encode(['current_accounts' => true])]);
+        BusinessSetting::updateOrCreate(['key' => 'app_plan'], ['value' => 'pro']);
+
+        $shift = $this->crearTurnoAbierto(user: $this->cashier);
+        $cc = $this->crearMetodoCuentaCorriente();
+        $product = Product::create([
+            'name' => 'Producto Fiado CC-01',
+            'internal_code' => 'CC01-P',
+            'selling_price' => 300.00,
+            'cost_price' => 150.00,
+            'stock' => 10,
+            'active' => true,
+        ]);
+        $customer = Customer::create([
+            'name' => 'Cliente Con Límite',
+            'document_number' => '30999888',
+            'balance' => 800.00,
+            'credit_limit' => 1000.00,
+        ]);
+
+        $payload = [
+            'total' => 300.00,
+            'total_surcharge' => 0,
+            'cash_shift_id' => $shift->id,
+            'user_id' => $this->cashier->id,
+            'customer_id' => $customer->id,
+            'payments' => [[
+                'payment_method_id' => $cc->id,
+                'base_amount' => 300.00,
+                'surcharge_amount' => 0,
+                'total_amount' => 300.00,
+            ]],
+            'items' => [[
+                'product_id' => $product->id,
+                'quantity' => 1,
+                'unit_price' => 300.00,
+                'subtotal' => 300.00,
+            ]],
+        ];
+
+        // 1. Cajero sin PIN: 800 + 300 > 1000 -> 422, sin efectos colaterales.
+        $this->withHeaders($this->authHeaders($this->cashier))
+            ->postJson('/api/pos/sales', $payload)
+            ->assertStatus(422)
+            ->assertJsonPath('message', fn ($msg) => str_contains($msg, 'límite de crédito'));
+
+        $this->assertEquals(800.00, (float) $customer->fresh()->balance);
+        $this->assertEquals(10, (float) $product->fresh()->stock);
+        $this->assertSame(0, Sale::where('customer_id', $customer->id)->count());
+
+        // 2. PIN de supervisor incorrecto -> 403.
+        $this->withHeaders($this->authHeaders($this->cashier) + ['X-Admin-Pin' => '0000'])
+            ->postJson('/api/pos/sales', $payload)
+            ->assertStatus(403);
+        $this->assertEquals(800.00, (float) $customer->fresh()->balance);
+
+        // 3. PIN de supervisor válido -> 201, deuda 1100 y venta auditada con authorized_by_admin_id.
+        $okResp = $this->withHeaders($this->authHeaders($this->cashier) + ['X-Admin-Pin' => '1234'])
+            ->postJson('/api/pos/sales', $payload + ['idempotency_key' => 'cc01-with-pin']);
+        $okResp->assertStatus(201);
+        $this->assertEquals(1100.00, (float) $customer->fresh()->balance);
+        $this->assertEquals(9, (float) $product->fresh()->stock);
+
+        // 4. Cliente sin límite (credit_limit = 0): el cajero vende sin PIN.
+        $unlimited = Customer::create([
+            'name' => 'Cliente Sin Límite',
+            'document_number' => '30777666',
+            'balance' => 50000.00,
+            'credit_limit' => 0,
+        ]);
+        $this->withHeaders($this->authHeaders($this->cashier))
+            ->postJson('/api/pos/sales', ['customer_id' => $unlimited->id, 'idempotency_key' => 'cc01-unlimited'] + $payload)
+            ->assertStatus(201);
+        $this->assertEquals(50300.00, (float) $unlimited->fresh()->balance);
+    }
+
+    /**
+     * FINDING-SALES-01: El cajero sin permiso void_sales puede revertir automáticamente su propia venta
+     * recién creada cuando AFIP la rechazó (invoice_status = failed, sin CAE, <= 180s desde created_at),
+     * pero no puede usar fiscal_rollback para anular ventas normales, antiguas, con CAE o ajenas.
+     */
+    public function test_lote1_sales01_fiscal_rollback_allowed_only_for_fresh_failed_own_sale(): void
+    {
+        $shift = $this->crearTurnoAbierto(user: $this->cashier);
+        $cash = $this->crearMetodoEfectivo();
+
+        $makeSale = function (array $overrides = []) use ($shift, $cash): Sale {
+            $sale = Sale::create(array_merge([
+                'total' => 100.00,
+                'total_surcharge' => 0,
+                'payment_status' => 'paid',
+                'amount_due' => 0,
+                'status' => 'completed',
+                'invoice_status' => 'failed',
+                'cash_shift_id' => $shift->id,
+                'user_id' => $this->cashier->id,
+                'cashier_id' => $this->cashier->id,
+            ], $overrides));
+
+            \App\Models\SalePayment::create([
+                'sale_id' => $sale->id,
+                'payment_method_id' => $cash->id,
+                'base_amount' => 100.00,
+                'surcharge_amount' => 0,
+                'total_amount' => 100.00,
+            ]);
+
+            return $sale;
+        };
+
+        $rollback = fn (Sale $sale, bool $flag = true) => $this->withHeaders($this->authHeaders($this->cashier))
+            ->postJson("/api/sales/{$sale->id}/void", ['cash_shift_id' => $shift->id, 'fiscal_rollback' => $flag]);
+
+        // 1. Venta normal (sin fallo fiscal): fiscal_rollback no otorga permiso -> 403 PIN_REQUIRED.
+        $normal = $makeSale(['invoice_status' => 'none']);
+        $rollback($normal)->assertStatus(403)->assertJsonPath('error_code', 'PIN_REQUIRED');
+
+        // 2. Venta con fallo fiscal pero sin la bandera fiscal_rollback -> 403.
+        $failedNoFlag = $makeSale();
+        $rollback($failedNoFlag, false)->assertStatus(403);
+
+        // 3. Venta fallida antigua (creada hace 10 min) aunque se haya "tocado" recién -> 403.
+        $old = $makeSale();
+        Sale::where('id', $old->id)->update(['created_at' => now()->subMinutes(10), 'updated_at' => now()]);
+        $rollback($old)->assertStatus(403);
+
+        // 4. Venta fallida con CAE ya asignado -> 403.
+        $withCae = $makeSale();
+        \App\Models\ElectronicInvoice::create([
+            'sale_id' => $withCae->id,
+            'voucher_type' => 6,
+            'voucher_letter' => 'B',
+            'point_of_sale' => 1,
+            'voucher_number' => 99,
+            'cae' => '74999888777666',
+            'cae_expiration' => now()->addDays(10)->toDateString(),
+            'doc_type' => 99,
+            'doc_number' => '0',
+            'receiver_name' => 'Consumidor Final',
+            'receiver_tax_condition' => 'Consumidor Final',
+            'net_amount' => 82.64,
+            'iva_amount' => 17.36,
+            'tribute_amount' => 0.00,
+            'exempt_amount' => 0.00,
+            'untaxed_amount' => 0.00,
+            'total_amount' => 100.00,
+            'status' => 'authorized',
+            'issued_at' => now(),
+        ]);
+        $rollback($withCae)->assertStatus(403);
+
+        // 5. Venta fallida de otro cajero en otro turno -> 403.
+        $otherCashier = User::factory()->create(['role' => 'cashier', 'permissions' => ['pos_access']]);
+        $otherShift = CashShift::create([
+            'cash_register_id' => $shift->cash_register_id,
+            'user_id' => $otherCashier->id,
+            'opened_at' => now(),
+            'opening_balance' => 0,
+            'status' => 'open',
+        ]);
+        $foreign = $makeSale([
+            'user_id' => $otherCashier->id,
+            'cashier_id' => $otherCashier->id,
+            'cash_shift_id' => $otherShift->id,
+        ]);
+        $this->withHeaders($this->authHeaders($this->cashier))
+            ->postJson("/api/sales/{$foreign->id}/void", ['fiscal_rollback' => true])
+            ->assertStatus(403);
+
+        foreach ([$normal, $failedNoFlag, $old, $withCae, $foreign] as $untouched) {
+            $this->assertSame('completed', $untouched->fresh()->status);
+        }
+
+        // 6. Caso legítimo: venta propia recién rechazada por AFIP -> 200 y queda anulada.
+        $fresh = $makeSale();
+        $rollback($fresh)->assertStatus(200);
+        $this->assertSame('voided', $fresh->fresh()->status);
+    }
 }

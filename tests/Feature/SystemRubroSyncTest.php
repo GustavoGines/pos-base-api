@@ -8,11 +8,12 @@ use App\Models\Rubro;
 use App\Services\LicenseSyncService;
 use App\Services\SystemRubroSyncService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Http;
+use Tests\Concerns\FakesSignedLicenseServer;
 use Tests\TestCase;
 
 class SystemRubroSyncTest extends TestCase
 {
+    use FakesSignedLicenseServer;
     use RefreshDatabase;
 
     private SystemRubroSyncService $sync;
@@ -145,11 +146,10 @@ class SystemRubroSyncTest extends TestCase
         BusinessSetting::updateOrCreate(['key' => 'license_key'], ['value' => 'KEY-1']);
 
         // 1ª respuesta: ferretería. 2ª respuesta: el administrador cambió el negocio a retail.
-        Http::fake([
-            '*/api/validate' => Http::sequence()
-                ->push(['plan' => 'premium', 'business_type' => 'hardware_store', 'features' => []], 200)
-                ->push(['plan' => 'premium', 'business_type' => 'retail', 'features' => []], 200),
-        ]);
+        $this->fakeSignedLicenseServer(
+            ['plan' => 'premium', 'business_type' => 'hardware_store', 'features' => []],
+            ['plan' => 'premium', 'business_type' => 'retail', 'features' => []],
+        );
 
         app(LicenseSyncService::class)->syncHeartbeat();
         $this->assertSame('Ferretería', $this->systemRubro()->name);
@@ -160,12 +160,10 @@ class SystemRubroSyncTest extends TestCase
 
     public function test_activate_manual_gives_new_installation_the_correct_rubro(): void
     {
-        Http::fake([
-            '*/api/validate' => Http::response([
-                'plan' => 'basic',
-                'business_type' => 'hardware_store',
-                'features' => [],
-            ], 200),
+        $this->fakeSignedLicenseServer([
+            'plan' => 'basic',
+            'business_type' => 'hardware_store',
+            'features' => [],
         ]);
 
         app(LicenseSyncService::class)->activateManual('NEW-INSTALL-KEY');
@@ -180,12 +178,10 @@ class SystemRubroSyncTest extends TestCase
         });
 
         BusinessSetting::updateOrCreate(['key' => 'license_key'], ['value' => 'KEY-2']);
-        Http::fake([
-            '*/api/validate' => Http::response([
-                'plan' => 'premium',
-                'business_type' => 'hardware_store',
-                'features' => ['multi_rubro' => true],
-            ], 200),
+        $this->fakeSignedLicenseServer([
+            'plan' => 'premium',
+            'business_type' => 'hardware_store',
+            'features' => ['multi_rubro' => true],
         ]);
 
         app(LicenseSyncService::class)->syncHeartbeat();

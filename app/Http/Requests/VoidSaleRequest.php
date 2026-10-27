@@ -28,6 +28,8 @@ class VoidSaleRequest extends FormRequest
                 Rule::exists('cash_shifts', 'id')->where('status', 'open'),
             ],
             'void_reason' => 'nullable|string|max:255',
+            'reason' => 'nullable|string|max:255',
+            'fiscal_rollback' => 'nullable|boolean',
         ];
     }
 }

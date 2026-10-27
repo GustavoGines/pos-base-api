@@ -115,6 +115,8 @@ class CustomerPaymentTest extends TestCase
     public function test_c_c02_abono_mayor_al_saldo_retorna_422(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
+        $this->crearTurnoAbierto(user: $admin);
+
         $customer = Customer::create([
             'name' => 'Cliente Poco Saldo',
             'document_number' => '99887766',

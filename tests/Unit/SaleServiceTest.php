@@ -375,10 +375,13 @@ class SaleServiceTest extends TestCase
      */
     public function test_pay_pending_sale_throws_when_not_pending(): void
     {
+        $shift = $this->crearTurnoAbierto(user: $this->user);
+
         $sale = Sale::create([
             'total' => 100.00,
             'status' => 'completed',
             'payment_status' => 'paid',
+            'cash_shift_id' => $shift->id,
         ]);
 
         $payDto = new PaySaleDTO(
@@ -398,7 +401,7 @@ class SaleServiceTest extends TestCase
 
         $context = new SaleContextDTO(
             userId: $this->user->id,
-            cashShiftId: 1,
+            cashShiftId: $shift->id,
             customerId: null,
             quoteId: null,
             priceList: null,

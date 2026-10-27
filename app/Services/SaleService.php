@@ -116,6 +116,27 @@ class SaleService
                             'payment_methods' => 'El cobro con Cuenta Corriente (Fiado) requiere el módulo de Cuentas Corrientes habilitado en su licencia.',
                         ]);
                     }
+
+                    // FINDING-CC-01: Bloquear Customer en orden canónico (1° CashShift -> 2° Customer -> 3° Sale -> 4° Product)
+                    // y verificar credit_limit antes de crear la venta o descontar stock.
+                    if (! $context->customerId) {
+                        throw new \InvalidArgumentException('Debe asociar un cliente a la venta para pagar con Cuenta Corriente.');
+                    }
+
+                    $lockedCustomer = \App\Models\Customer::where('id', $context->customerId)->lockForUpdate()->first();
+                    if (! $lockedCustomer) {
+                        throw new \InvalidArgumentException('El cliente seleccionado no existe.');
+                    }
+
+                    if (! $lockedCustomer->is_internal_account && (float) $lockedCustomer->credit_limit > 0) {
+                        $projectedBalance = round((float) $lockedCustomer->balance + (float) $ccPaymentTotal, 2);
+                        if ($projectedBalance > (round((float) $lockedCustomer->credit_limit, 2) + 0.01) && empty($context->authorizedByAdminId)) {
+                            $available = max(0.0, round((float) $lockedCustomer->credit_limit - (float) $lockedCustomer->balance, 2));
+                            throw new \InvalidArgumentException(
+                                "El monto en Cuenta Corriente (\${$ccPaymentTotal}) supera el límite de crédito disponible del cliente (\${$available}). Se requiere autorización de supervisor."
+                            );
+                        }
+                    }
                 }
             }
 

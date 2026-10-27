@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Exceptions\LicenseSignatureException;
 use App\Models\BusinessSetting;
 use Carbon\Carbon;
 use Illuminate\Http\Client\ConnectionException;
@@ -82,30 +83,15 @@ class LicenseSyncService
     }
 
     /**
-     * Verifica la firma remota del servidor de licencias cuando LICENSE_SIGNING_SECRET está configurado (L-01, L-17).
+     * Construye la cadena canónica firmada por el servidor. Debe coincidir byte a byte con
+     * LicenseValidationController::buildCanonicalPayload() en pos-license-server.
      */
-    private function verifyServerSignature(array $data, string $installationId, string $sentNonce): void
+    public static function buildCanonicalPayload(array $data, string $installationId): string
     {
-        $signingSecret = (string) config('app.license_signing_secret', '');
-        if ($signingSecret === '') {
-            return;
-        }
-
-        $signature = $data['signature'] ?? null;
-        $returnedNonce = $data['nonce'] ?? null;
-
-        if (! is_string($signature) || $signature === '') {
-            throw new \Exception('Respuesta del servidor de licencias rechazada: firma criptográfica ausente.');
-        }
-
-        if ($returnedNonce !== $sentNonce) {
-            throw new \Exception('Respuesta del servidor de licencias rechazada: nonce de desafío no coincide.');
-        }
-
         $features = is_array($data['features'] ?? null) ? $data['features'] : [];
         ksort($features);
 
-        $canonical = implode('|', [
+        return implode('|', [
             (string) ($data['status'] ?? ''),
             (string) ($data['plan'] ?? ''),
             (string) ($data['plan_type'] ?? ''),
@@ -116,10 +102,41 @@ class LicenseSyncService
             (string) ($data['nonce'] ?? ''),
             json_encode($features, JSON_UNESCAPED_SLASHES),
         ]);
+    }
 
-        $expected = hash_hmac('sha256', $canonical, $signingSecret);
-        if (! hash_equals($expected, $signature)) {
-            throw new \Exception('Respuesta del servidor de licencias rechazada: firma criptográfica inválida.');
+    /**
+     * Verifica la firma asimétrica Ed25519 del servidor de licencias (FINDING-LIC-01, L-01, L-17).
+     * Es obligatoria: sin firma válida o con nonce distinto, la respuesta se rechaza siempre.
+     * El cliente solo posee la clave pública, por lo que no puede fabricar respuestas firmadas.
+     *
+     * @throws LicenseSignatureException
+     */
+    private function verifyServerSignature(array $data, string $installationId, string $sentNonce): void
+    {
+        $returnedNonce = $data['nonce'] ?? null;
+        if (! is_string($returnedNonce) || ! hash_equals($sentNonce, $returnedNonce)) {
+            throw new LicenseSignatureException('Respuesta del servidor de licencias rechazada: nonce de desafío no coincide.');
+        }
+
+        $signatureHex = $data['signature_ed25519'] ?? null;
+        if (! is_string($signatureHex) || $signatureHex === '') {
+            throw new LicenseSignatureException('Respuesta del servidor de licencias rechazada: firma criptográfica ausente.');
+        }
+
+        $publicKeyHex = (string) config('app.license_ed25519_public_key', '');
+        $publicKey = ctype_xdigit($publicKeyHex) ? hex2bin($publicKeyHex) : false;
+        if ($publicKey === false || strlen($publicKey) !== SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES) {
+            throw new LicenseSignatureException('Clave pública Ed25519 del servidor de licencias inválida o ausente.');
+        }
+
+        $signature = ctype_xdigit($signatureHex) ? hex2bin($signatureHex) : false;
+        if ($signature === false || strlen($signature) !== SODIUM_CRYPTO_SIGN_BYTES) {
+            throw new LicenseSignatureException('Respuesta del servidor de licencias rechazada: firma criptográfica inválida.');
+        }
+
+        $canonical = self::buildCanonicalPayload($data, $installationId);
+        if (! sodium_crypto_sign_verify_detached($signature, $canonical, $publicKey)) {
+            throw new LicenseSignatureException('Respuesta del servidor de licencias rechazada: firma criptográfica inválida.');
         }
     }
 
@@ -157,7 +174,7 @@ class LicenseSyncService
         // Failsafe local override: Si el servidor remoto de licencias es antiguo y no envía
         // las nuevas llaves, pero el plan es Premium/Pro, forzamos la habilitación local.
         $planLower = strtolower($plan);
-        if (in_array($planLower, ['premium', 'pro', 'enterprise'], true)) {
+        if (in_array($planLower, ['premium', 'pro'], true)) {
             $features['multi_caja'] = $features['multi_caja'] ?? true;
             $features['current_accounts'] = $features['current_accounts'] ?? true;
             $features['suppliers'] = $features['suppliers'] ?? true;
@@ -273,7 +290,19 @@ class LicenseSyncService
 
             if ($response->successful()) {
                 $data = $response->json() ?? [];
-                $this->verifyServerSignature($data, $installationId, $nonce);
+
+                try {
+                    $this->verifyServerSignature($data, $installationId, $nonce);
+                } catch (LicenseSignatureException $e) {
+                    // FINDING-LIC-01: una respuesta sin firma válida (spoofing por hosts o servidor
+                    // mal configurado) jamás se aplica; se trata igual que una falla de red, por lo
+                    // que un atacante no obtiene más que las 72 h de gracia de desconectar el cable.
+                    Log::warning('Heartbeat de licencia: '.$e->getMessage());
+                    $this->handleOfflineGracePeriod();
+
+                    return;
+                }
+
                 $this->applyValidatedLicenseData($data);
             } elseif ($response->status() === 401 || $response->status() === 403 || $response->status() === 404) {
                 // 401/403/404: Licencia suspendida, expirada, revocada o inválida

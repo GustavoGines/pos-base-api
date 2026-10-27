@@ -137,6 +137,17 @@ return [
     'rescue_migrate_secret' => env('RESCUE_MIGRATE_SECRET', ''),
 
     'license_server_url' => env('LICENSE_SERVER_URL', 'https://pos-license-server-2jma.onrender.com'),
-    'license_signing_secret' => env('LICENSE_SIGNING_SECRET'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Clave pública Ed25519 del servidor de licencias (FINDING-LIC-01)
+    |--------------------------------------------------------------------------
+    |
+    | Verifica la firma 'signature_ed25519' de /api/validate. Es pública (no es
+    | un secreto) y se embebe deliberadamente SIN env(): no debe poder
+    | reemplazarse desde el .env del cliente. La privada vive solo en Render.
+    |
+    */
+    'license_ed25519_public_key' => '9ba24a8a7f8e0b520dd4c104cf465a8c853c4ee4c545227a49fbdc8831d752c2',
 
 ];

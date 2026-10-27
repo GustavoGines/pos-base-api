@@ -39,7 +39,7 @@ class CatalogImportExportTest extends TestCase
         $response = $this->get('/api/catalog/products/import-template');
 
         $response->assertStatus(200);
-        $response->assertHeader('Content-Disposition', 'attachment; filename="plantilla_productos.csv"');
+        $response->assertHeader('Content-Disposition', 'attachment; filename=plantilla_importacion_productos.xlsx');
     }
 
     public function test_import_requires_file()

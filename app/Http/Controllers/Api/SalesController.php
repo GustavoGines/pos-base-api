@@ -155,6 +155,12 @@ class SalesController extends Controller
             }
         }
 
+        // FINDING-CC-01: Resolver PIN de supervisor explícito (ej. para autorizar exceso sobre credit_limit)
+        $pinResponse = $discountAuthService->resolveExplicitAdminPin($request);
+        if ($pinResponse !== null) {
+            return $pinResponse;
+        }
+
         $actingUser = $request->user() ?? $request->attributes->get('authenticated_user');
         $authorizedByAdminId = $request->attributes->get('authorized_by_admin_id')
             ?? ($actingUser?->isAdmin() ? $actingUser->id : null);
@@ -206,6 +212,11 @@ class SalesController extends Controller
         $actingUser = $request->user() ?? $request->attributes->get('authenticated_user');
         $authorizedByAdminId = $request->attributes->get('authorized_by_admin_id')
             ?? ($actingUser?->isAdmin() ? $actingUser->id : null);
+
+        if (empty($validated['void_reason'])) {
+            $validated['void_reason'] = $validated['reason']
+                ?? ($request->boolean('fiscal_rollback') ? 'Rollback automático por rechazo fiscal AFIP' : null);
+        }
 
         $context = SaleContextDTO::fromArray(
             $validated,

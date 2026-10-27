@@ -69,6 +69,11 @@ class EnsurePermissionOrPin
                     return $next($request);
                 }
             }
+
+            // FINDING-SALES-01: Permitir rollback automático inmediato al cajero ante rechazo duro 422 de AFIP
+            if (in_array('void_sales', $permissions, true) && $this->isAuthorizedAutomaticFiscalRollback($request, $user)) {
+                return $next($request);
+            }
         }
 
         $rawHeaderPin = $request->header('X-Admin-Pin');
@@ -131,5 +136,49 @@ class EnsurePermissionOrPin
             'error_code' => 'PIN_REQUIRED',
             'required_permissions' => $permissions,
         ], 403);
+    }
+
+    /**
+     * FINDING-SALES-01: Verifica si la solicitud de anulación corresponde a un rollback automático
+     * inmediato tras un rechazo fiscal 422 de AFIP (invoice_status === 'failed', sin CAE y dentro de
+     * los 180s posteriores a la creación de la venta).
+     */
+    private function isAuthorizedAutomaticFiscalRollback(Request $request, User $user): bool
+    {
+        if (! $request->is('api/sales/*/void') || ! $request->boolean('fiscal_rollback')) {
+            return false;
+        }
+
+        $routeSale = $request->route('sale');
+        $sale = $routeSale instanceof \App\Models\Sale
+            ? $routeSale
+            : (is_numeric($routeSale) ? \App\Models\Sale::with('electronicInvoice')->find((int) $routeSale) : null);
+
+        if (! $sale) {
+            return false;
+        }
+
+        $sale->loadMissing('electronicInvoice');
+
+        if ($sale->status !== 'completed' || $sale->invoice_status !== 'failed') {
+            return false;
+        }
+
+        if ($sale->electronicInvoice && ! empty($sale->electronicInvoice->cae)) {
+            return false;
+        }
+
+        // Se mide desde created_at (inmutable) y no desde updated_at: de lo contrario, re-facturar una
+        // venta antigua hasta que falle (POST /sales/{sale}/invoice no exige permiso) reabriría la
+        // ventana y permitiría anular ventas viejas sin PIN. 180s cubre el peor caso WSAA+WSFE (~50s).
+        $referenceTime = $sale->created_at;
+        if (! $referenceTime || abs($referenceTime->diffInSeconds(now())) > 180) {
+            return false;
+        }
+
+        $matchesUser = (int) $sale->cashier_id === (int) $user->id || (int) $sale->user_id === (int) $user->id;
+        $matchesShift = $request->filled('cash_shift_id') && (int) $sale->cash_shift_id === (int) $request->input('cash_shift_id');
+
+        return $matchesUser || $matchesShift;
     }
 }

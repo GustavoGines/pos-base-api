@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Exceptions\LicenseSignatureException;
 use App\Models\BusinessSetting;
 use App\Models\CashShift;
 use App\Models\Product;
@@ -9,13 +10,14 @@ use App\Models\User;
 use App\Services\LicenseSyncService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
+use Tests\Concerns\FakesSignedLicenseServer;
 use Tests\TestCase;
 
 class Fase3LicenseSecurityRegressionTest extends TestCase
 {
+    use FakesSignedLicenseServer;
     use RefreshDatabase;
 
     /**
@@ -94,19 +96,17 @@ class Fase3LicenseSecurityRegressionTest extends TestCase
         $admin = User::factory()->create(['role' => 'admin']);
         $service = app(LicenseSyncService::class);
 
-        Http::fake([
-            '*/api/validate' => Http::response([
-                'status' => 'active',
-                'plan' => 'basic',
-                'plan_type' => 'saas',
-                'business_type' => 'retail',
-                'server_time' => now()->toIso8601String(),
-                'expires_at' => now()->addMonth()->toIso8601String(),
-                'features' => [
-                    'fast_pos' => true,
-                    'multi_caja' => false,
-                ],
-            ], 200),
+        $this->fakeSignedLicenseServer([
+            'status' => 'active',
+            'plan' => 'basic',
+            'plan_type' => 'saas',
+            'business_type' => 'retail',
+            'server_time' => now()->toIso8601String(),
+            'expires_at' => now()->addMonth()->toIso8601String(),
+            'features' => [
+                'fast_pos' => true,
+                'multi_caja' => false,
+            ],
         ]);
 
         $service->activateManual('POS-VALID-SAAS-KEY');
@@ -125,30 +125,126 @@ class Fase3LicenseSecurityRegressionTest extends TestCase
     }
 
     /**
-     * L-01 & L-17: Cuando LICENSE_SIGNING_SECRET está configurado, LicenseSyncService rechaza
-     * respuestas falsificadas (spoofing por archivo hosts) o con nonce alterado.
+     * L-01 & L-17 / FINDING-LIC-01: la firma Ed25519 es obligatoria. Sin LICENSE_SIGNING_SECRET ni
+     * ninguna otra configuración, LicenseSyncService rechaza respuestas sin firma (spoofing por
+     * archivo hosts), firmadas con una clave ajena o con nonce reutilizado.
      */
-    public function test_l01_l17_rejects_unsigned_or_forged_server_response_when_signing_secret_configured(): void
+    public function test_l01_l17_lic01_rejects_unsigned_forged_or_replayed_server_response(): void
     {
-        Config::set('app.license_signing_secret', 'shared-hmac-secret-production-2026');
+        $this->useTestLicenseKeyPair();
         $service = app(LicenseSyncService::class);
 
-        // Simulamos un servidor falso en 127.0.0.1 que devuelve plan=pro sin firma válida
-        Http::fake([
-            '*/api/validate' => Http::response([
-                'status' => 'active',
-                'plan' => 'pro',
-                'plan_type' => 'lifetime',
-                'business_type' => 'retail',
-                'features' => ['multi_caja' => true],
-                'signature' => 'forged-invalid-signature',
-            ], 200),
+        $spoofedBody = [
+            'status' => 'active',
+            'plan' => 'pro',
+            'plan_type' => 'lifetime',
+            'business_type' => 'retail',
+            'features' => ['multi_caja' => true],
+        ];
+
+        // 1. Servidor falso en 127.0.0.1 sin firma Ed25519 (solo un campo HMAC legado inventado).
+        $this->setLicenseServerHandler(fn ($request) => Http::response(
+            $spoofedBody + ['nonce' => $request['nonce'], 'signature' => str_repeat('a', 64)],
+            200
+        ));
+        $this->assertLicenseRejected(fn () => $service->activateManual('SPOOFED-KEY'), '/firma criptográfica ausente/');
+
+        // 2. Atacante firma con su propio par Ed25519: el cliente solo confía en la clave pública embebida.
+        $attackerKey = sodium_crypto_sign_secretkey(sodium_crypto_sign_keypair());
+        $this->setLicenseServerHandler(function ($request) use ($spoofedBody, $attackerKey) {
+            $body = $spoofedBody + ['nonce' => $request['nonce']];
+            $body['signature_ed25519'] = bin2hex(sodium_crypto_sign_detached(
+                LicenseSyncService::buildCanonicalPayload($body, $request['installation_id']),
+                $attackerKey
+            ));
+
+            return Http::response($body, 200);
+        });
+        $this->assertLicenseRejected(fn () => $service->activateManual('SPOOFED-KEY'), '/firma criptográfica inválida/');
+
+        // 3. Replay: respuesta legítima capturada, pero con el nonce de otro desafío.
+        $this->setLicenseServerHandler(fn ($request) => Http::response(
+            $this->signLicensePayload($spoofedBody, $request['installation_id'], 'nonce-capturado-antes'),
+            200
+        ));
+        $this->assertLicenseRejected(fn () => $service->activateManual('SPOOFED-KEY'), '/nonce de desafío no coincide/');
+
+        // 4. Payload legítimo alterado tras la firma (saas -> lifetime).
+        $this->setLicenseServerHandler(function ($request) use ($spoofedBody) {
+            $signed = $this->signLicensePayload(
+                ['plan_type' => 'saas'] + $spoofedBody,
+                $request['installation_id'],
+                $request['nonce']
+            );
+            $signed['plan_type'] = 'lifetime';
+
+            return Http::response($signed, 200);
+        });
+        $this->assertLicenseRejected(fn () => $service->activateManual('SPOOFED-KEY'), '/firma criptográfica inválida/');
+
+        $this->assertNotEquals('pro', BusinessSetting::where('key', 'app_plan')->value('value'));
+        $this->assertNotEquals('lifetime', BusinessSetting::where('key', 'license_plan_mode')->value('value'));
+
+        // Control positivo: la misma respuesta firmada por el servidor legítimo sí se acepta.
+        $this->fakeSignedLicenseServer(['plan_type' => 'saas'] + $spoofedBody);
+        $this->assertEquals('pro', $service->activateManual('LEGIT-KEY'));
+        $this->assertEquals('saas', BusinessSetting::where('key', 'license_plan_mode')->value('value'));
+    }
+
+    /**
+     * FINDING-LIC-01: el heartbeat nunca aplica una respuesta sin firma válida; la trata como
+     * falla de red (grace period de 72 h), por lo que el spoofing no otorga nada extra.
+     */
+    public function test_lic01_heartbeat_ignores_unsigned_response_and_falls_back_to_grace_period(): void
+    {
+        $service = app(LicenseSyncService::class);
+        BusinessSetting::updateOrCreate(['key' => 'license_key'], ['value' => 'SAAS-BASIC-KEY']);
+
+        $unsignedSpoof = fn ($request) => Http::response([
+            'status' => 'active',
+            'plan' => 'pro',
+            'plan_type' => 'lifetime',
+            'business_type' => 'retail',
+            'features' => ['multi_caja' => true],
+            'nonce' => $request['nonce'],
+        ], 200);
+
+        // Sin sincronización previa (sin last_license_check): grace period no disponible -> bloqueado.
+        $this->setLicenseServerHandler($unsignedSpoof);
+        $service->syncHeartbeat();
+
+        $this->assertEquals('blocked', BusinessSetting::where('key', 'app_plan')->value('value'));
+        $this->assertNotEquals('lifetime', BusinessSetting::where('key', 'license_plan_mode')->value('value'));
+
+        // Con una sincronización legítima reciente, el spoofing solo conserva el estado previo (basic/saas).
+        $this->fakeSignedLicenseServer([
+            'status' => 'active',
+            'plan' => 'basic',
+            'plan_type' => 'saas',
+            'business_type' => 'retail',
+            'server_time' => now()->toIso8601String(),
+            'expires_at' => now()->addMonth()->toIso8601String(),
+            'features' => ['multi_caja' => false],
         ]);
+        $service->syncHeartbeat();
+        $this->assertEquals('basic', BusinessSetting::where('key', 'app_plan')->value('value'));
 
-        $this->expectException(\Exception::class);
-        $this->expectExceptionMessageMatches('/firma criptográfica|nonce/i');
+        $this->setLicenseServerHandler($unsignedSpoof);
+        $service->syncHeartbeat();
 
-        $service->activateManual('SPOOFED-KEY');
+        $this->assertEquals('basic', BusinessSetting::where('key', 'app_plan')->value('value'));
+        $this->assertEquals('saas', BusinessSetting::where('key', 'license_plan_mode')->value('value'));
+        $this->assertTrue(LicenseSyncService::verifyLocalIntegrity());
+    }
+
+    private function assertLicenseRejected(callable $callback, string $expectedMessagePattern): void
+    {
+        try {
+            $callback();
+            $this->fail('La respuesta no firmada/falsificada debió ser rechazada.');
+        } catch (LicenseSignatureException $e) {
+            $this->assertMatchesRegularExpression($expectedMessagePattern, $e->getMessage());
+        }
     }
 
     /**
@@ -161,19 +257,18 @@ class Fase3LicenseSecurityRegressionTest extends TestCase
         $remoteTime = '2026-10-20T12:00:00+00:00';
         $expiredDate = now()->subDay()->toIso8601String();
 
-        Http::fake([
-            '*/api/validate' => Http::Sequence()
-                ->push([
-                    'status' => 'active',
-                    'plan' => 'pro',
-                    'plan_type' => 'saas',
-                    'business_type' => 'retail',
-                    'server_time' => $remoteTime,
-                    'expires_at' => $expiredDate,
-                    'features' => ['multi_caja' => true],
-                ], 200)
-                ->pushStatus(500), // Segunda llamada falla simulando corte/caída
-        ]);
+        $this->fakeSignedLicenseServer(
+            [
+                'status' => 'active',
+                'plan' => 'pro',
+                'plan_type' => 'saas',
+                'business_type' => 'retail',
+                'server_time' => $remoteTime,
+                'expires_at' => $expiredDate,
+                'features' => ['multi_caja' => true],
+            ],
+            Http::response('', 500), // Segunda llamada falla simulando corte/caída
+        );
 
         $service->activateManual('SAAS-EXPIRING-KEY');
 
@@ -222,14 +317,12 @@ class Fase3LicenseSecurityRegressionTest extends TestCase
     {
         $service = app(LicenseSyncService::class);
 
-        Http::fake([
-            '*/api/validate' => Http::response([
-                'status' => 'active',
-                'plan' => 'pro',
-                'plan_type' => 'saas',
-                'business_type' => 'retail',
-                'features' => [],
-            ], 200),
+        $this->fakeSignedLicenseServer([
+            'status' => 'active',
+            'plan' => 'pro',
+            'plan_type' => 'saas',
+            'business_type' => 'retail',
+            'features' => [],
         ]);
 
         $service->activateManual('PRO-CONSISTENCY-KEY');
@@ -247,7 +340,7 @@ class Fase3LicenseSecurityRegressionTest extends TestCase
     /**
      * Bloque 5 (LIC-01, LIC-02, LIC-03, LIC-05, LIC-08):
      * - Soporta clientes v1.8.5 que tienen license_api_key y license_last_sync y esperan license_allowed_addons.
-     * - Soporta respuestas del main de Render en producción (sin firma ni expires_at).
+     * - Soporta respuestas del servidor de Render sin expires_at (desde FINDING-LIC-01 deben venir firmadas con Ed25519).
      * - Cuando Render devuelve 403 con status='expired', marca license_expires_at vencido y bloquea el plan.
      */
     public function test_bloque5_lic01_to_lic08_legacy_v185_keys_render_main_compat_and_pro_features(): void
@@ -258,43 +351,42 @@ class Fase3LicenseSecurityRegressionTest extends TestCase
         // 1. Simular instalación v1.8.5 que solo tiene license_api_key en BD
         BusinessSetting::updateOrCreate(['key' => 'license_api_key'], ['value' => 'LEGACY-V185-PRO-KEY']);
 
-        // Respuesta idéntica al main actual en producción de pos-license-server en Render (sin signature ni expires_at)
-        Http::fake([
-            '*/api/validate' => Http::Sequence()
-                ->push([
-                    'status' => 'active',
-                    'plan' => 'pro',
-                    'plan_type' => 'saas',
-                    'server_time' => '2026-10-26T15:00:00+00:00',
-                    'client_name' => 'Comercio v1.8.5',
-                    'business_type' => 'retail',
-                    'plan_espanol' => 'premium',
-                    'features' => [
-                        'fast_pos' => true,
-                        'z_reports' => true,
-                        'quotes' => true,
-                        'current_accounts' => true,
-                        'multiple_prices' => true,
-                        'multi_caja' => true,
-                        'advanced_reports' => true,
-                        'predictive_alerts' => true,
-                        'logistics' => false,
-                        'checks' => true,
-                        'mobile_app' => true,
-                        'remote_access' => false,
-                        'suppliers' => true,
-                        'expenses' => true,
-                        'multi_rubro' => true,
-                        'mercadopago_qr' => true,
-                        'arca_afip' => true,
-                        'ecommerce_sync' => true,
-                    ],
-                ], 200)
-                ->push([
-                    'status' => 'expired',
-                    'message' => 'La licencia ha expirado.',
-                ], 403),
-        ]);
+        // Respuesta equivalente al servidor de Render (sin expires_at), firmada con Ed25519 (FINDING-LIC-01)
+        $this->fakeSignedLicenseServer(
+            [
+                'status' => 'active',
+                'plan' => 'pro',
+                'plan_type' => 'saas',
+                'server_time' => '2026-10-26T15:00:00+00:00',
+                'client_name' => 'Comercio v1.8.5',
+                'business_type' => 'retail',
+                'plan_espanol' => 'premium',
+                'features' => [
+                    'fast_pos' => true,
+                    'z_reports' => true,
+                    'quotes' => true,
+                    'current_accounts' => true,
+                    'multiple_prices' => true,
+                    'multi_caja' => true,
+                    'advanced_reports' => true,
+                    'predictive_alerts' => true,
+                    'logistics' => false,
+                    'checks' => true,
+                    'mobile_app' => true,
+                    'remote_access' => false,
+                    'suppliers' => true,
+                    'expenses' => true,
+                    'multi_rubro' => true,
+                    'mercadopago_qr' => true,
+                    'arca_afip' => true,
+                    'ecommerce_sync' => true,
+                ],
+            ],
+            Http::response([
+                'status' => 'expired',
+                'message' => 'La licencia ha expirado.',
+            ], 403),
+        );
 
         // LIC-01: syncHeartbeat encuentra license_api_key y la migra a license_key
         $service->syncHeartbeat();
