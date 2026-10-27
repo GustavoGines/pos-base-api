@@ -245,11 +245,17 @@
                 <td style="width: 50%; vertical-align: bottom;">
                     <div class="footer-totals" style="margin-top: 0;">
                         <table>
-                            @if($sale->total_surcharge > 0 || $sale->shipping_cost > 0)
+                            @if($sale->total_surcharge > 0 || $sale->shipping_cost > 0 || ($sale->iibb_perception_amount ?? 0) > 0)
                             <tr>
                                 <td>Subtotal:</td>
-                                <td class="text-right">${{ number_format($sale->total, 2, ',', '.') }}</td>
+                                <td class="text-right">${{ number_format($sale->total - ($sale->iibb_perception_amount ?? 0), 2, ',', '.') }}</td>
                             </tr>
+                            @if(($sale->iibb_perception_amount ?? 0) > 0)
+                            <tr>
+                                <td>Percepción IIBB:</td>
+                                <td class="text-right">${{ number_format($sale->iibb_perception_amount, 2, ',', '.') }}</td>
+                            </tr>
+                            @endif
                             @if($sale->shipping_cost > 0)
                             <tr>
                                 <td>Flete / Envío:</td>

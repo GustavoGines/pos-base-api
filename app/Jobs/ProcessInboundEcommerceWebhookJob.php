@@ -241,7 +241,9 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
                         continue;
                     }
 
-                    $stockBefore = (float) $product->stock;
+                    $stockBefore = $product->is_combo
+                        ? $product->calculateComboAvailableStock()
+                        : (float) $product->stock;
 
                     if ($product->is_combo) {
                         // Combo sale: deduct from component children
@@ -264,7 +266,9 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
                             }
                         }
 
-                        $stockAfter = (float) $product->stock;
+                        $product->unsetRelation('children');
+                        $stockAfter = $product->calculateComboAvailableStock();
+                        $affectedProductsToPropagate[$product->id] = $stockAfter;
                         $status = 'success';
                     } else {
                         // Single product sale
@@ -304,9 +308,9 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
                 // FINDING-STOCK-02: Propagar recálculo de combos virtuales que contienen a los productos deducidos
                 $affectedCombos = app(\App\Services\StockService::class)->recalculateAndGetAffectedParentCombos(array_keys($affectedProductsToPropagate));
                 foreach ($affectedCombos as $comboId) {
-                    $comboProd = Product::find($comboId);
+                    $comboProd = Product::with('children')->find($comboId);
                     if ($comboProd) {
-                        $affectedProductsToPropagate[$comboId] = (float) $comboProd->stock;
+                        $affectedProductsToPropagate[$comboId] = $comboProd->calculateComboAvailableStock();
                     }
                 }
 

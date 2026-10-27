@@ -46,35 +46,91 @@ class EnsureLicenseIsActive
             ], 403);
         }
 
-        // FINDING-LIC-04: Verificar expiración local o vencimiento de periodo de gracia (72h) en planes SaaS sin cron
+        // FINDING-LIC-04: Verificar expiración local o vencimiento de periodo de gracia (72h) en planes SaaS sin cron.
+        // Si se detecta vencimiento local o >72h sin check pero existe license_key configurada, intentamos primero
+        // un syncHeartbeat() en vivo para no bloquear falsamente terminales con internet activa pero sin Cron de Windows.
         $planMode = strtolower((string) (BusinessSetting::where('key', 'license_plan_mode')->value('value') ?? 'saas'));
         if ($planMode !== 'lifetime' && ! empty($appPlan)) {
+            $needsLiveSync = false;
+            $blockMessage = null;
+
             $expiresAt = BusinessSetting::where('key', 'license_expires_at')->value('value');
             if (! empty($expiresAt)) {
                 try {
                     if (\Carbon\Carbon::parse($expiresAt)->endOfDay()->isPast()) {
-                        return response()->json([
-                            'message' => 'Su licencia se encuentra vencida. Active o sincronice su licencia para continuar operando.',
-                            'error_code' => 'LICENSE_BLOCKED',
-                        ], 403);
+                        $needsLiveSync = true;
+                        $blockMessage = 'Su licencia se encuentra vencida. Active o sincronice su licencia para continuar operando.';
                     }
                 } catch (\Throwable) {
                 }
             }
 
-            $lastCheck = BusinessSetting::where('key', 'last_license_check')->value('value')
-                ?: BusinessSetting::where('key', 'license_last_sync')->value('value');
-            if ($lastCheck) {
-                try {
-                    $lastCheckDate = \Carbon\Carbon::parse($lastCheck);
-                    if ($lastCheckDate->diffInHours(now()) > 72) {
+            if (! $needsLiveSync) {
+                $lastCheck = BusinessSetting::where('key', 'last_license_check')->value('value')
+                    ?: BusinessSetting::where('key', 'license_last_sync')->value('value');
+                if ($lastCheck) {
+                    try {
+                        $lastCheckDate = \Carbon\Carbon::parse($lastCheck);
+                        if ($lastCheckDate->greaterThan(now()->addHours(2)) || $lastCheckDate->diffInHours(now(), true) > 72) {
+                            $needsLiveSync = true;
+                            $blockMessage = 'El periodo de gracia sin conexión (72 horas) ha expirado. Conecte su terminal a internet para validar la licencia.';
+                        }
+                    } catch (\Throwable) {
+                    }
+                }
+            }
+
+            if ($needsLiveSync) {
+                $hasLicenseKey = ! empty(BusinessSetting::where('key', 'license_key')->value('value'))
+                    || ! empty(BusinessSetting::where('key', 'license_api_key')->value('value'));
+
+                if ($hasLicenseKey) {
+                    try {
+                        app(LicenseSyncService::class)->syncHeartbeat();
+                    } catch (\Throwable) {
+                    }
+
+                    $refreshedPlan = strtolower((string) (BusinessSetting::where('key', 'app_plan')->value('value') ?? ''));
+                    $refreshedMode = strtolower((string) (BusinessSetting::where('key', 'license_plan_mode')->value('value') ?? 'saas'));
+                    if ($refreshedMode === 'lifetime') {
+                        return $next($request);
+                    }
+                    if ($refreshedPlan === 'blocked') {
                         return response()->json([
-                            'message' => 'El periodo de gracia sin conexión (72 horas) ha expirado. Conecte su terminal a internet para validar la licencia.',
+                            'message' => $blockMessage ?? 'Su licencia se encuentra vencida o suspendida. Active o sincronice su licencia para continuar operando.',
                             'error_code' => 'LICENSE_BLOCKED',
                         ], 403);
                     }
-                } catch (\Throwable) {
+
+                    $stillExpired = false;
+                    $newExpiresAt = BusinessSetting::where('key', 'license_expires_at')->value('value');
+                    if (! empty($newExpiresAt)) {
+                        try {
+                            $stillExpired = \Carbon\Carbon::parse($newExpiresAt)->endOfDay()->isPast();
+                        } catch (\Throwable) {
+                        }
+                    }
+
+                    $newLastCheck = BusinessSetting::where('key', 'last_license_check')->value('value')
+                        ?: BusinessSetting::where('key', 'license_last_sync')->value('value');
+                    $stillStale = false;
+                    if ($newLastCheck) {
+                        try {
+                            $newCheckDate = \Carbon\Carbon::parse($newLastCheck);
+                            $stillStale = $newCheckDate->greaterThan(now()->addHours(2)) || $newCheckDate->diffInHours(now(), true) > 72;
+                        } catch (\Throwable) {
+                        }
+                    }
+
+                    if (! $stillExpired && ! $stillStale) {
+                        return $next($request);
+                    }
                 }
+
+                return response()->json([
+                    'message' => $blockMessage ?? 'Su licencia se encuentra vencida o suspendida. Active o sincronice su licencia para continuar operando.',
+                    'error_code' => 'LICENSE_BLOCKED',
+                ], 403);
             }
         }
 

@@ -234,9 +234,8 @@ class SaleService
     public function payPendingSale(Sale $sale, PaySaleDTO $dto, SaleContextDTO $context): Sale
     {
         return DB::transaction(function () use ($sale, $dto, $context) {
-            // F3-CAJA-03 / FN-F3-03 / CC-04: Bloqueo pesimista del turno de caja SIEMPRE en primer término
-            // (incluso si el cliente v1.8.5 omitió cash_shift_id y se usa el turno original de la venta)
-            // para respetar el orden canónico 1° CashShift -> 2° Sale -> 3° Product -> 4° Customer.
+            // F3-CAJA-03 / FN-F3-03 / CC-04 / FINDING-CC-01: Bloqueo pesimista en orden canónico:
+            // 1° CashShift -> 2° Customer -> 3° Sale -> 4° Product
             $shiftIdToLock = $context->cashShiftId ?? $sale->cash_shift_id;
             if ($shiftIdToLock) {
                 $lockedShift = CashShift::where('id', $shiftIdToLock)->lockForUpdate()->first();
@@ -248,6 +247,11 @@ class SaleService
                         'cash_shift_id' => [$msg],
                     ]);
                 }
+            }
+
+            $customerIdToLock = $context->customerId ?? $sale->customer_id;
+            if ($customerIdToLock) {
+                \App\Models\Customer::where('id', $customerIdToLock)->lockForUpdate()->first();
             }
 
             $lockedSale = Sale::with('items')->lockForUpdate()->find($sale->id);
@@ -283,6 +287,8 @@ class SaleService
                 throw new \InvalidArgumentException('Esta venta ya no está en estado pendiente.');
             }
 
+            $previousItemProductIds = $lockedSale->items->pluck('product_id')->toArray();
+
             // Order Recall Items Delta
             if (! empty($dto->items)) {
                 $lockedProducts = $this->stockService->reconcileStockDiff($dto->items, $lockedSale, $context);
@@ -294,6 +300,12 @@ class SaleService
                 // Recalculate Totals based on new items
                 $newTotal = round((float) $lockedSale->items()->sum('subtotal'), 2);
                 $lockedSale->total = round($newTotal + (float) $dto->iibbPerceptionAmount, 2);
+            } elseif ((float) $dto->iibbPerceptionAmount > 0 || (float) $lockedSale->iibb_perception_amount > 0) {
+                $itemsSubtotal = round((float) $lockedSale->items->sum('subtotal'), 2);
+                $baseSubtotal = $itemsSubtotal > 0
+                    ? $itemsSubtotal
+                    : round((float) $lockedSale->total - (float) $lockedSale->iibb_perception_amount, 2);
+                $lockedSale->total = round($baseSubtotal + (float) $dto->iibbPerceptionAmount, 2);
             }
 
             $totalToValidate = round((float) $lockedSale->total + (float) $dto->totalSurcharge + (float) $dto->shippingCost, 2);
@@ -353,9 +365,13 @@ class SaleService
                 'customer_id' => $effectiveCustomerId,
             ]);
 
-            // Enqueue asynchronous stock synchronization to online platforms (including parent combos)
+            // Enqueue asynchronous stock synchronization to online platforms (including parent combos and removed items)
             if (isset($lockedProducts) && $lockedProducts instanceof \Illuminate\Support\Collection) {
-                SyncProductStockToPlatformsJob::dispatchForProducts($lockedProducts->keys());
+                $idsToSync = array_values(array_unique(array_merge(
+                    $lockedProducts->keys()->toArray(),
+                    $previousItemProductIds ?? []
+                )));
+                SyncProductStockToPlatformsJob::dispatchForProducts($idsToSync);
             } else {
                 $lockedSale->loadMissing('items');
                 SyncProductStockToPlatformsJob::dispatchForProducts($lockedSale->items->pluck('product_id'));

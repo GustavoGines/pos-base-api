@@ -225,14 +225,16 @@ class BlockTwoRegressionTest extends TestCase
         $job->handle(app(EcommerceManager::class), app(StockService::class));
 
         $this->assertEquals(8.0, (float) $child->fresh()->stock);
+        // El stock virtual calculado del combo debe ser 8 / 2 = 4 combos disponibles (sin mutar la columna física products.stock)
+        $this->assertEquals(4.0, $combo->fresh()->calculateComboAvailableStock());
 
-        // Se debió despachar sincronización para el hijo y para el combo padre
+        // Se debió despachar sincronización para el hijo y para el combo padre con su nuevo stock virtual (4.0)
         Queue::assertPushed(SyncProductStockToPlatformsJob::class, function ($job) use ($child) {
             return $job->productId === $child->id;
         });
 
         Queue::assertPushed(SyncProductStockToPlatformsJob::class, function ($job) use ($combo) {
-            return $job->productId === $combo->id;
+            return $job->productId === $combo->id && (float) $job->newStock === 4.0;
         });
     }
 }

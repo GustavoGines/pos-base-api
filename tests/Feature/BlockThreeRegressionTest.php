@@ -193,4 +193,72 @@ class BlockThreeRegressionTest extends TestCase
         $payResponse->assertStatus(422)
             ->assertJsonValidationErrors('cash_shift_id');
     }
+
+    /**
+     * Post-Audit Fix (FINDING-LIC-04): Si la terminal lleva > 72h sin ejecutar cron pero tiene internet
+     * y clave activa, EnsureLicenseIsActive ejecuta syncHeartbeat() en vivo y permite operar sin falso bloqueo.
+     */
+    public function test_ensure_license_is_active_auto_revalidates_online_when_cron_missed_72h(): void
+    {
+        $shift = $this->crearTurnoAbierto(1000.00, $this->admin);
+        $paymentMethod = $this->crearMetodoEfectivo();
+
+        $this->fakeSignedLicenseServer([
+            'status' => 'active',
+            'plan' => 'pro',
+            'plan_type' => 'saas',
+            'business_type' => 'retail',
+            'server_time' => now()->toIso8601String(),
+            'expires_at' => now()->addMonths(6)->toIso8601String(),
+            'features' => ['multi_caja' => true, 'current_accounts' => true],
+        ]);
+
+        BusinessSetting::updateOrCreate(['key' => 'license_key'], ['value' => 'POS-LIVE-SYNC-KEY']);
+        BusinessSetting::updateOrCreate(['key' => 'app_plan'], ['value' => 'pro']);
+        BusinessSetting::updateOrCreate(['key' => 'license_plan_mode'], ['value' => 'saas']);
+        BusinessSetting::updateOrCreate(
+            ['key' => 'license_expires_at'],
+            ['value' => now()->addMonths(6)->toIso8601String()]
+        );
+        // Simular que el cron de Windows no corrió por 80 horas (> 72h)
+        BusinessSetting::updateOrCreate(
+            ['key' => 'last_license_check'],
+            ['value' => now()->subHours(80)->toIso8601String()]
+        );
+
+        $product = Product::create([
+            'name' => 'Producto Test Renovación Live',
+            'internal_code' => 'LIVE-01',
+            'cost_price' => 500.0,
+            'selling_price' => 1000.0,
+            'stock' => 20.0,
+            'active' => true,
+        ]);
+
+        $response = $this->postJson('/api/pos/sales', [
+            'cash_shift_id' => $shift->id,
+            'total' => 1000.0,
+            'total_surcharge' => 0.0,
+            'items' => [
+                [
+                    'product_id' => $product->id,
+                    'quantity' => 1,
+                    'unit_price' => 1000.0,
+                    'subtotal' => 1000.0,
+                ],
+            ],
+            'payments' => [
+                [
+                    'payment_method_id' => $paymentMethod->id,
+                    'base_amount' => 1000.0,
+                    'surcharge_amount' => 0.0,
+                    'total_amount' => 1000.0,
+                ],
+            ],
+        ]);
+
+        $response->assertStatus(201);
+        $updatedCheck = Carbon::parse(BusinessSetting::where('key', 'last_license_check')->value('value'));
+        $this->assertLessThan(2, $updatedCheck->diffInHours(now(), true));
+    }
 }

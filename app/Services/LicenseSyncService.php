@@ -362,7 +362,9 @@ class LicenseSyncService
         }
 
         $lastCheckDate = Carbon::parse($lastCheck);
-        $hoursSinceLastCheck = $lastCheckDate->diffInHours(now());
+        $hoursSinceLastCheck = $lastCheckDate->greaterThan(now()->addHours(2))
+            ? 999
+            : $lastCheckDate->diffInHours(now(), true);
 
         if ($hoursSinceLastCheck > 72) {
             // Grace period vencido — solo aplica a planes SaaS
