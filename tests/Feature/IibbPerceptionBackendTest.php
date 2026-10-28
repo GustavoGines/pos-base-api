@@ -8,6 +8,7 @@ use App\Models\BusinessSetting;
 use App\Models\CashRegister;
 use App\Models\CashShift;
 use App\Models\Customer;
+use App\Models\CustomerTransaction;
 use App\Models\ElectronicInvoice;
 use App\Models\PaymentMethod;
 use App\Models\Product;
@@ -668,5 +669,89 @@ class IibbPerceptionBackendTest extends TestCase
         $this->assertStringContainsString('<ImpTotal>1250.00</ImpTotal>', $interceptedXml);
         $this->assertStringContainsString('<Alic>4.00</Alic>', $interceptedXml);
         $this->assertStringContainsString('<Importe>40.00</Importe>', $interceptedXml);
+    }
+
+    public function test_bk_high_01_credit_sale_iibb_perception_creates_ledger_entry_and_reverts_cleanly_on_void(): void
+    {
+        BusinessSetting::updateOrCreate(['key' => 'is_iibb_perception_agent'], ['value' => '1']);
+        BusinessSetting::updateOrCreate(['key' => 'default_iibb_perception_rate'], ['value' => '3.00']);
+        $this->mockAfipSuccess(cbteNro: 81, cae: '74382910492820');
+
+        $shift = $this->createOpenShift();
+
+        $product = Product::create([
+            'name' => 'Generador Industrial',
+            'internal_code' => 'GEN-IND',
+            'cost_price' => 500.00,
+            'selling_price' => 1210.00,
+            'iva_rate' => 21.00,
+            'stock' => 10,
+            'active' => true,
+        ]);
+
+        $customer = Customer::create([
+            'name' => 'Constructora Norte S.A.',
+            'document_type' => AfipHelper::DOC_CUIT,
+            'document_number' => '30500010912',
+            'tax_condition' => 'responsable_inscripto',
+            'applies_iibb_perception' => true,
+            'iibb_perception_rate' => 4.00,
+            'balance' => 1210.00,
+        ]);
+
+        $sale = Sale::create([
+            'total' => 1210.00,
+            'total_surcharge' => 0.00,
+            'payment_status' => 'pending',
+            'amount_due' => 1210.00,
+            'status' => 'completed',
+            'invoice_status' => 'none',
+            'cash_shift_id' => $shift->id,
+            'user_id' => $this->adminUser->id,
+            'cashier_id' => $this->adminUser->id,
+            'customer_id' => $customer->id,
+            'iibb_perception_amount' => 0.00,
+        ]);
+
+        $sale->items()->create([
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
+            'unit_cost_price' => 500.00,
+            'unit_price' => 1210.00,
+            'subtotal' => 1210.00,
+            'iva_rate' => 21.00,
+            'net_amount' => 1000.00,
+            'iva_amount' => 210.00,
+        ]);
+
+        CustomerTransaction::create([
+            'customer_id' => $customer->id,
+            'user_id' => $this->adminUser->id,
+            'cash_shift_id' => $shift->id,
+            'sale_id' => $sale->id,
+            'type' => 'charge',
+            'amount' => 1210.00,
+            'balance_after' => 1210.00,
+            'description' => "Venta en Cta. Cte. - Ticket #{$sale->id}",
+        ]);
+
+        // 1. Emitir factura electrónica (agrega $40.00 de IIBB a la venta en CC)
+        $invoiceResp = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/invoice", [
+            'voucher_type' => AfipHelper::VOUCHER_FACTURA_A,
+        ]);
+        $invoiceResp->assertStatus(200);
+
+        $this->assertEquals(1250.00, (float) $customer->fresh()->balance);
+        $this->assertEquals(2, CustomerTransaction::where('sale_id', $sale->id)->where('type', 'charge')->count());
+
+        // 2. Anular la venta: debe revertir tanto los $1210 como los $40 de IIBB, dejando balance = 0.00
+        $voidResp = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/void", [
+            'cash_shift_id' => $shift->id,
+            'reason' => 'Anulación de prueba con IIBB',
+        ]);
+        $voidResp->assertStatus(200);
+
+        $this->assertEquals(0.00, (float) $customer->fresh()->balance, 'El saldo del cliente debe volver exactamente a 0.00 sin deuda huérfana de IIBB.');
     }
 }

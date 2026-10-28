@@ -180,7 +180,7 @@ class CustomerController extends Controller
             $payments[] = $p;
         }
 
-        $totalAmount = array_sum(array_column($payments, 'amount'));
+        $totalAmount = round((float) array_sum(array_column($payments, 'amount')), 2);
 
         try {
             $transaction = DB::transaction(function () use ($customer, $totalAmount, $payments, $request, $isRefund) {
@@ -209,19 +209,23 @@ class CustomerController extends Controller
 
                 $lockedCustomer = Customer::where('id', $customer->id)->lockForUpdate()->first();
 
+                // BK-MED-02: Comparar en centavos enteros para evitar rechazos espurios por precisión IEEE 754
+                $balanceCents = (int) round(((float) $lockedCustomer->balance) * 100);
+                $totalAmountCents = (int) round(((float) $totalAmount) * 100);
+
                 if ($isRefund) {
-                    if ($lockedCustomer->balance >= 0) {
+                    if ($balanceCents >= 0) {
                         throw ValidationException::withMessages([
                             'amount' => ['No se puede procesar un reintegro porque el cliente no tiene saldo a favor.'],
                         ]);
                     }
-                    if ($totalAmount > abs($lockedCustomer->balance)) {
+                    if ($totalAmountCents > abs($balanceCents)) {
                         throw ValidationException::withMessages([
                             'amount' => ["El monto del reintegro (\${$totalAmount}) no puede superar el saldo a favor actual (\$".abs($lockedCustomer->balance).').'],
                         ]);
                     }
                 } else {
-                    if ($totalAmount > $lockedCustomer->balance) {
+                    if ($totalAmountCents > $balanceCents) {
                         throw ValidationException::withMessages([
                             'amount' => ["El monto del abono (\${$totalAmount}) no puede superar el saldo actual de la deuda (\${$lockedCustomer->balance})."],
                         ]);

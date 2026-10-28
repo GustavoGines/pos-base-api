@@ -134,28 +134,39 @@ class AfipWsaaService
         $environment = BusinessSetting::where('key', 'afip_environment')->value('value') ?? 'testing';
         $cacheKey = "afip_ta_{$cuit}_{$service}_{$environment}";
 
-        // 1. Revisar caché existente
+        // 1. Revisar caché existente (Fast Path)
         $cached = Cache::get($cacheKey);
         if (is_array($cached) && ! empty($cached['token']) && ! empty($cached['sign'])) {
             return $cached;
         }
 
-        // 2. Resolver rutas de certificado y clave privada
-        $certPath = $this->resolveCertPath($cuit);
-        $keyPath = $this->resolveKeyPath($cuit);
+        // R3-AFIP-02: Cerrojo distribuido para prevenir Cache Stampede contra AFIP WSAA
+        // cuando múltiples cajas intentan renovar el TA simultáneamente tras las 10 horas.
+        $lock = Cache::lock("afip_wsaa_lock_{$cuit}_{$service}_{$environment}", 30);
 
-        // 3. Generar TRA y firmar CMS
-        $traXml = $this->createTraXml($service);
-        $cmsBase64 = $this->signTra($traXml, $certPath, $keyPath);
+        return $lock->block(25, function () use ($cacheKey, $cuit, $service, $environment) {
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached) && ! empty($cached['token']) && ! empty($cached['sign'])) {
+                return $cached;
+            }
 
-        // 4. Invocar WSAA loginCms vía HTTP/SOAP
-        $endpoint = $environment === 'production' ? self::URL_WSAA_PROD : self::URL_WSAA_HOMO;
-        $ticketData = $this->callLoginCms($endpoint, $cmsBase64);
+            // 2. Resolver rutas de certificado y clave privada
+            $certPath = $this->resolveCertPath($cuit);
+            $keyPath = $this->resolveKeyPath($cuit);
 
-        // 5. Almacenar en caché por 10 horas (36000 segundos)
-        Cache::put($cacheKey, $ticketData, 36000);
+            // 3. Generar TRA y firmar CMS
+            $traXml = $this->createTraXml($service);
+            $cmsBase64 = $this->signTra($traXml, $certPath, $keyPath);
 
-        return $ticketData;
+            // 4. Invocar WSAA loginCms vía HTTP/SOAP
+            $endpoint = $environment === 'production' ? self::URL_WSAA_PROD : self::URL_WSAA_HOMO;
+            $ticketData = $this->callLoginCms($endpoint, $cmsBase64);
+
+            // 5. Almacenar en caché por 10 horas (36000 segundos)
+            Cache::put($cacheKey, $ticketData, 36000);
+
+            return $ticketData;
+        });
     }
 
     /**

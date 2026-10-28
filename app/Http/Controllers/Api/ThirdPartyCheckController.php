@@ -35,6 +35,16 @@ class ThirdPartyCheckController extends Controller
         ]);
 
         return DB::transaction(function () use ($request, $check) {
+            // BK-CRIT-01: Respetar el orden canónico de locks pesimistas:
+            // 1° CashShift -> 2° Customer -> 3° Sale -> ThirdPartyCheck (idéntico a SaleService::voidSale)
+            $lockedCustomer = $check->customer_id !== null
+                ? Customer::where('id', $check->customer_id)->lockForUpdate()->first()
+                : null;
+
+            $preLockedSale = $check->sale_id !== null
+                ? Sale::where('id', $check->sale_id)->lockForUpdate()->first()
+                : null;
+
             $lockedCheck = ThirdPartyCheck::lockForUpdate()->find($check->id);
             if (! $lockedCheck) {
                 return response()->json([
@@ -77,7 +87,9 @@ class ThirdPartyCheckController extends Controller
             // CC-11: Si el cheque pertenece a un cliente y pasa a estado 'rejected' (o se revierte desde 'rejected'),
             // re-imputar (o des-imputar) la deuda en su Cuenta Corriente y actualizar el asiento en el Ledger.
             if ($lockedCheck->customer_id !== null && $previousStatus !== $newStatus) {
-                $lockedCustomer = Customer::where('id', $lockedCheck->customer_id)->lockForUpdate()->first();
+                if (! $lockedCustomer || (int) $lockedCustomer->id !== (int) $lockedCheck->customer_id) {
+                    $lockedCustomer = Customer::where('id', $lockedCheck->customer_id)->lockForUpdate()->first();
+                }
                 if ($lockedCustomer) {
                     $checkAmount = round((float) $lockedCheck->amount, 2);
 
@@ -86,11 +98,15 @@ class ThirdPartyCheckController extends Controller
                         $lockedCustomer->save();
 
                         if ($lockedCheck->sale_id) {
-                            $linkedSale = Sale::where('id', $lockedCheck->sale_id)
-                                ->where('customer_id', $lockedCustomer->id)
-                                ->where('status', 'completed')
-                                ->lockForUpdate()
-                                ->first();
+                            $linkedSale = ($preLockedSale && (int) $preLockedSale->id === (int) $lockedCheck->sale_id
+                                && (int) $preLockedSale->customer_id === (int) $lockedCustomer->id
+                                && $preLockedSale->status === 'completed')
+                                ? $preLockedSale
+                                : Sale::where('id', $lockedCheck->sale_id)
+                                    ->where('customer_id', $lockedCustomer->id)
+                                    ->where('status', 'completed')
+                                    ->lockForUpdate()
+                                    ->first();
                             if ($linkedSale) {
                                 $saleGrandTotal = round((float) $linkedSale->total + (float) $linkedSale->total_surcharge + (float) $linkedSale->shipping_cost, 2);
                                 $newAmountDue = min($saleGrandTotal, round((float) $linkedSale->amount_due + $checkAmount, 2));
@@ -116,11 +132,15 @@ class ThirdPartyCheckController extends Controller
                         $lockedCustomer->save();
 
                         if ($lockedCheck->sale_id) {
-                            $linkedSale = Sale::where('id', $lockedCheck->sale_id)
-                                ->where('customer_id', $lockedCustomer->id)
-                                ->where('status', 'completed')
-                                ->lockForUpdate()
-                                ->first();
+                            $linkedSale = ($preLockedSale && (int) $preLockedSale->id === (int) $lockedCheck->sale_id
+                                && (int) $preLockedSale->customer_id === (int) $lockedCustomer->id
+                                && $preLockedSale->status === 'completed')
+                                ? $preLockedSale
+                                : Sale::where('id', $lockedCheck->sale_id)
+                                    ->where('customer_id', $lockedCustomer->id)
+                                    ->where('status', 'completed')
+                                    ->lockForUpdate()
+                                    ->first();
                             if ($linkedSale && (float) $linkedSale->amount_due > 0) {
                                 $newAmountDue = max(0.0, round((float) $linkedSale->amount_due - $checkAmount, 2));
                                 $linkedSale->amount_due = $newAmountDue;

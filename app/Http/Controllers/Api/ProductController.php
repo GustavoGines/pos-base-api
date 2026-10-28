@@ -240,14 +240,28 @@ class ProductController extends Controller
      */
     public function criticalAlerts()
     {
-        $products = Product::where('active', true)
+        $simpleProducts = Product::where('active', true)
+            ->where('is_combo', false)
             ->whereNotNull('min_stock')
             ->whereColumn('stock', '<=', 'min_stock')
             ->orderBy('stock', 'asc')
             ->limit(100)
             ->get();
 
-        return response()->json($products);
+        // BK-MED-01: Evaluar combos según su disponibilidad virtual real (calculateComboAvailableStock)
+        $comboAlerts = Product::where('active', true)
+            ->where('is_combo', true)
+            ->whereNotNull('min_stock')
+            ->with('children')
+            ->get()
+            ->filter(fn (Product $combo) => $combo->calculateComboAvailableStock() <= (float) $combo->min_stock);
+
+        $merged = $simpleProducts->concat($comboAlerts)
+            ->sortBy(fn (Product $p) => $p->is_combo ? $p->calculateComboAvailableStock() : (float) $p->stock)
+            ->take(100)
+            ->values();
+
+        return response()->json($merged);
     }
 
     /**

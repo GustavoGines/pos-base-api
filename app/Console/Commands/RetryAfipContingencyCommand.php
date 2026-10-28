@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use App\Models\Customer;
+use App\Models\CustomerTransaction;
 use App\Models\ElectronicInvoice;
 use App\Models\Sale;
+use App\Models\User;
 use App\Services\Afip\AfipWsfeService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
@@ -75,7 +77,7 @@ class RetryAfipContingencyCommand extends Command
 
                     $invoiceData = $wsfeService->authorizeInvoice($lockedSale, []);
 
-                    ElectronicInvoice::updateOrCreate(
+                    $invoice = ElectronicInvoice::updateOrCreate(
                         ['sale_id' => $lockedSale->id],
                         array_merge($invoiceData, [
                             'issued_at' => now(),
@@ -97,7 +99,20 @@ class RetryAfipContingencyCommand extends Command
                             $customerToUpdate = $lockedCustomer
                                 ?? Customer::where('id', $lockedSale->customer_id)->lockForUpdate()->first();
                             if ($customerToUpdate) {
-                                $customerToUpdate->increment('balance', $tributeAmount);
+                                $customerToUpdate->balance = round((float) $customerToUpdate->balance + $tributeAmount, 2);
+                                $customerToUpdate->save();
+
+                                // BK-HIGH-01: Registrar asiento en el Ledger de Cuenta Corriente en contingencia
+                                CustomerTransaction::create([
+                                    'customer_id' => $customerToUpdate->id,
+                                    'user_id' => $lockedSale->user_id ?? $lockedSale->cashier_id ?? User::first()?->id,
+                                    'cash_shift_id' => $lockedSale->cash_shift_id,
+                                    'sale_id' => $lockedSale->id,
+                                    'type' => 'charge',
+                                    'amount' => $tributeAmount,
+                                    'balance_after' => $customerToUpdate->balance,
+                                    'description' => "Percepción IIBB AFIP Factura {$invoice->voucher_letter}-{$invoice->formatted_number} - Ticket #{$lockedSale->id}",
+                                ]);
                             }
                         }
                     }

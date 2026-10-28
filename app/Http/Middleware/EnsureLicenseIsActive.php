@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use App\Models\BusinessSetting;
 use App\Services\LicenseSyncService;
+use Carbon\Carbon;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -57,7 +58,7 @@ class EnsureLicenseIsActive
             $expiresAt = BusinessSetting::where('key', 'license_expires_at')->value('value');
             if (! empty($expiresAt)) {
                 try {
-                    if (\Carbon\Carbon::parse($expiresAt)->endOfDay()->isPast()) {
+                    if (Carbon::parse($expiresAt)->endOfDay()->isPast()) {
                         $needsLiveSync = true;
                         $blockMessage = 'Su licencia se encuentra vencida. Active o sincronice su licencia para continuar operando.';
                     }
@@ -70,7 +71,7 @@ class EnsureLicenseIsActive
                     ?: BusinessSetting::where('key', 'license_last_sync')->value('value');
                 if ($lastCheck) {
                     try {
-                        $lastCheckDate = \Carbon\Carbon::parse($lastCheck);
+                        $lastCheckDate = Carbon::parse($lastCheck);
                         if ($lastCheckDate->greaterThan(now()->addHours(2)) || $lastCheckDate->diffInHours(now(), true) > 72) {
                             $needsLiveSync = true;
                             $blockMessage = 'El periodo de gracia sin conexión (72 horas) ha expirado. Conecte su terminal a internet para validar la licencia.';
@@ -86,7 +87,9 @@ class EnsureLicenseIsActive
 
                 if ($hasLicenseKey) {
                     try {
-                        app(LicenseSyncService::class)->syncHeartbeat();
+                        // R3-LIC-03 / R3-LIC-04: Timeout de 12s (inferior a los 20s LAN de Flutter)
+                        // y espera de hasta 5s si otra caja de la red local ya está sincronizando en vivo.
+                        app(LicenseSyncService::class)->syncHeartbeat(timeoutSeconds: 12, lockWaitSeconds: 5);
                     } catch (\Throwable) {
                     }
 
@@ -106,7 +109,7 @@ class EnsureLicenseIsActive
                     $newExpiresAt = BusinessSetting::where('key', 'license_expires_at')->value('value');
                     if (! empty($newExpiresAt)) {
                         try {
-                            $stillExpired = \Carbon\Carbon::parse($newExpiresAt)->endOfDay()->isPast();
+                            $stillExpired = Carbon::parse($newExpiresAt)->endOfDay()->isPast();
                         } catch (\Throwable) {
                         }
                     }
@@ -116,7 +119,7 @@ class EnsureLicenseIsActive
                     $stillStale = false;
                     if ($newLastCheck) {
                         try {
-                            $newCheckDate = \Carbon\Carbon::parse($newLastCheck);
+                            $newCheckDate = Carbon::parse($newLastCheck);
                             $stillStale = $newCheckDate->greaterThan(now()->addHours(2)) || $newCheckDate->diffInHours(now(), true) > 72;
                         } catch (\Throwable) {
                         }

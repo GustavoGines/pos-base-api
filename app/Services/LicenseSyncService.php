@@ -282,9 +282,9 @@ class LicenseSyncService
     }
 
     /**
-     * Sincronización silenciosa (Heartbeat) a ejecutar por el Cron Diario.
+     * Sincronización silenciosa (Heartbeat) a ejecutar por el Cron Diario o en vivo por middleware.
      */
-    public function syncHeartbeat(): void
+    public function syncHeartbeat(int $timeoutSeconds = 60, int $lockWaitSeconds = 0): void
     {
         $licenseKey = $this->getSetting('license_key') ?: $this->getSetting('license_api_key');
         if (! $licenseKey) {
@@ -294,9 +294,32 @@ class LicenseSyncService
         }
         $this->setSetting('license_key', $licenseKey);
 
-        // F-LIC-02: Evitar estampida (Thundering Herd) de peticiones concurrentes hacia Render
+        // F-LIC-02 / R3-LIC-03: Evitar estampida (Thundering Herd) de peticiones concurrentes hacia Render.
+        // Si otra terminal LAN ya está sincronizando y se solicitó espera ($lockWaitSeconds > 0), aguardar.
         $lock = Cache::lock('pos_license_heartbeat_lock', 65);
-        if (! $lock->get()) {
+        if ($lockWaitSeconds > 0) {
+            try {
+                if (! $lock->block($lockWaitSeconds)) {
+                    return;
+                }
+            } catch (\Throwable) {
+                return;
+            }
+
+            // Double-Checked Locking: Si otra caja acaba de refrescar la licencia mientras esperábamos, reutilizar estado.
+            $recentCheck = $this->getSetting('last_license_check') ?: $this->getSetting('license_last_sync');
+            $currentPlan = strtolower((string) ($this->getSetting('app_plan') ?? ''));
+            if ($recentCheck && $currentPlan !== 'blocked') {
+                try {
+                    if (Carbon::parse($recentCheck)->diffInSeconds(now(), true) < 60) {
+                        optional($lock)->release();
+
+                        return;
+                    }
+                } catch (\Throwable) {
+                }
+            }
+        } elseif (! $lock->get()) {
             return;
         }
 
@@ -306,7 +329,7 @@ class LicenseSyncService
             $url = $this->getServerUrl().'/api/validate';
 
             try {
-                $response = Http::timeout(60)->post($url, [
+                $response = Http::timeout(max(5, $timeoutSeconds))->post($url, [
                     'license_key' => $licenseKey,
                     'mac_address' => $installationId,
                     'installation_id' => $installationId,

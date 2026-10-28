@@ -11,6 +11,8 @@ use App\Models\EcommerceIntegration;
 use App\Models\EcommerceProductMapping;
 use App\Models\EcommerceSyncLog;
 use App\Models\Product;
+use App\Models\Sale;
+use App\Models\ThirdPartyCheck;
 use App\Models\User;
 use App\Services\Ecommerce\EcommerceManager;
 use Carbon\Carbon;
@@ -260,5 +262,141 @@ class BlockThreeRegressionTest extends TestCase
         $response->assertStatus(201);
         $updatedCheck = Carbon::parse(BusinessSetting::where('key', 'last_license_check')->value('value'));
         $this->assertLessThan(2, $updatedCheck->diffInHours(now(), true));
+    }
+
+    /**
+     * BK-MED-01 & BK-MED-02:
+     * - criticalAlerts incluye combos cuyo stock virtual (calculateComboAvailableStock) cayó por debajo de min_stock,
+     *   aun cuando su columna products.stock tenga un snapshot antiguo superior.
+     * - CustomerController::registerPayment permite abonar el saldo exacto con pagos múltiples ($0.10 + $0.20 = $0.30)
+     *   sin fallar por imprecisión IEEE 754.
+     */
+    public function test_bk_med_01_and_02_combo_critical_alerts_and_ieee754_multi_payment_exact_balance(): void
+    {
+        $shift = $this->crearTurnoAbierto(1000.00, $this->admin);
+
+        // 1. BK-MED-01: Ingrediente se agota a 2 unidades => Combo requiere 2 (1 disponible <= min_stock 3)
+        $child = Product::create([
+            'name' => 'Componente Combo',
+            'internal_code' => 'COMP-01',
+            'cost_price' => 100.0,
+            'selling_price' => 200.0,
+            'stock' => 2.0,
+            'min_stock' => 1.0,
+            'active' => true,
+            'is_combo' => false,
+        ]);
+
+        $combo = Product::create([
+            'name' => 'Combo Alerta Crítica',
+            'internal_code' => 'CMB-ALERT',
+            'cost_price' => 200.0,
+            'selling_price' => 350.0,
+            'stock' => 50.0, // Snapshot antiguo en BD (> min_stock)
+            'min_stock' => 3.0,
+            'active' => true,
+            'is_combo' => true,
+        ]);
+        $combo->children()->attach($child->id, ['quantity' => 2]);
+
+        $alertsResponse = $this->getJson('/api/catalog/products/alerts/critical');
+        $alertsResponse->assertStatus(200);
+        $alertIds = collect($alertsResponse->json())->pluck('id')->all();
+        $this->assertContains($combo->id, $alertIds, 'El combo con stock virtual 1 <= min_stock 3 debe aparecer en criticalAlerts.');
+
+        // 2. BK-MED-02: Cliente con deuda de $0.30 paga con $0.10 efectivo + $0.20 transferencia (0.1 + 0.2 = 0.30000000000000004 en float)
+        BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['current_accounts' => true])]
+        );
+        $customer = Customer::create([
+            'name' => 'Cliente Float IEEE754',
+            'document_number' => '20998877665',
+            'balance' => 0.30,
+            'is_active' => true,
+        ]);
+
+        $payResp = $this->postJson("/api/customers/{$customer->id}/payments", [
+            'cash_shift_id' => $shift->id,
+            'payments' => [
+                ['method' => 'cash', 'amount' => 0.10],
+                ['method' => 'transfer', 'amount' => 0.20],
+            ],
+        ]);
+
+        $payResp->assertStatus(200);
+        $this->assertEquals(0.0, (float) $customer->fresh()->balance);
+    }
+
+    /**
+     * BK-CRIT-01: Rechazo de cheque vinculado a una venta en Cta. Cte.
+     * Verifica que el orden canónico de locks (Customer -> Sale -> ThirdPartyCheck)
+     * actualiza la deuda del cliente, reabre amount_due en la venta y crea el asiento en el Ledger.
+     */
+    public function test_bk_crit_01_reject_check_linked_to_sale_updates_customer_and_sale_ledger(): void
+    {
+        BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['current_accounts' => true, 'checks' => true])]
+        );
+
+        $shift = $this->crearTurnoAbierto(1000.00, $this->admin);
+
+        $customer = Customer::create([
+            'name' => 'Cliente Cheque Rechazado',
+            'document_number' => '20123456789',
+            'balance' => 0.00,
+            'is_active' => true,
+        ]);
+
+        $sale = Sale::create([
+            'total' => 5000.00,
+            'total_surcharge' => 0.00,
+            'shipping_cost' => 0.00,
+            'amount_due' => 0.00,
+            'payment_status' => 'paid',
+            'status' => 'completed',
+            'invoice_status' => 'none',
+            'cash_shift_id' => $shift->id,
+            'user_id' => $this->admin->id,
+            'cashier_id' => $this->admin->id,
+            'customer_id' => $customer->id,
+        ]);
+
+        $check = ThirdPartyCheck::create([
+            'customer_id' => $customer->id,
+            'sale_id' => $sale->id,
+            'cash_shift_id' => $shift->id,
+            'bank_name' => 'Banco Galicia',
+            'check_number' => 'CHQ-BK-CRIT-01',
+            'amount' => 5000.00,
+            'issue_date' => now(),
+            'payment_date' => now(),
+            'issuer_name' => 'Emisor SA',
+            'issuer_cuit' => '30711223344',
+            'status' => 'in_wallet',
+        ]);
+
+        $resp = $this->patchJson("/api/third-party-checks/{$check->id}/status", [
+            'status' => 'rejected',
+        ]);
+        $resp->assertStatus(200);
+
+        // 1. Deuda del cliente se incrementa en el monto del cheque
+        $this->assertEquals(5000.00, (float) $customer->fresh()->balance);
+
+        // 2. Venta se reabre con amount_due = 5000.00 y payment_status = pending
+        $refreshedSale = $sale->fresh();
+        $this->assertEquals(5000.00, (float) $refreshedSale->amount_due);
+        $this->assertEquals('pending', $refreshedSale->payment_status);
+
+        // 3. Asiento contable registrado en CustomerTransaction (type = charge)
+        $this->assertDatabaseHas('customer_transactions', [
+            'customer_id' => $customer->id,
+            'sale_id' => $sale->id,
+            'type' => 'charge',
+            'amount' => 5000.00,
+            'payment_method' => 'cheque',
+        ]);
     }
 }

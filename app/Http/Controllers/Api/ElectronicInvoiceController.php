@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Customer;
+use App\Models\CustomerTransaction;
 use App\Models\ElectronicInvoice;
 use App\Models\Sale;
+use App\Models\User;
 use App\Services\Afip\AfipWsfeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -54,7 +57,7 @@ class ElectronicInvoiceController extends Controller
                 // BK-03: Respetar orden canónico de locks (Customer -> Sale) para evitar deadlock
                 // circular con CustomerController::registerPayment.
                 $lockedCustomer = $sale->customer_id
-                    ? \App\Models\Customer::where('id', $sale->customer_id)->lockForUpdate()->first()
+                    ? Customer::where('id', $sale->customer_id)->lockForUpdate()->first()
                     : null;
 
                 $lockedSale = Sale::with('electronicInvoice')->lockForUpdate()->find($sale->id);
@@ -104,9 +107,23 @@ class ElectronicInvoiceController extends Controller
                         if (in_array($lockedSale->payment_status, ['pending', 'partial'], true) && $lockedSale->customer_id) {
                             $saleUpdates['amount_due'] = round((float) $lockedSale->amount_due + $tributeAmount, 2);
                             $customerToUpdate = $lockedCustomer
-                                ?? \App\Models\Customer::where('id', $lockedSale->customer_id)->lockForUpdate()->first();
+                                ?? Customer::where('id', $lockedSale->customer_id)->lockForUpdate()->first();
                             if ($customerToUpdate) {
-                                $customerToUpdate->increment('balance', $tributeAmount);
+                                $customerToUpdate->balance = round((float) $customerToUpdate->balance + $tributeAmount, 2);
+                                $customerToUpdate->save();
+
+                                // BK-HIGH-01: Registrar asiento en el Ledger de Cuenta Corriente para preservar
+                                // la trazabilidad contable y revertir el monto íntegro si la venta se anula.
+                                CustomerTransaction::create([
+                                    'customer_id' => $customerToUpdate->id,
+                                    'user_id' => $lockedSale->user_id ?? $lockedSale->cashier_id ?? User::first()?->id,
+                                    'cash_shift_id' => $lockedSale->cash_shift_id,
+                                    'sale_id' => $lockedSale->id,
+                                    'type' => 'charge',
+                                    'amount' => $tributeAmount,
+                                    'balance_after' => $customerToUpdate->balance,
+                                    'description' => "Percepción IIBB AFIP Factura {$invoice->voucher_letter}-{$invoice->formatted_number} - Ticket #{$lockedSale->id}",
+                                ]);
                             }
                         }
                     }
