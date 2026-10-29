@@ -238,20 +238,38 @@ class CustomerController extends Controller
 
                 if (! $isRefund) {
                     // ── Distribuir a tickets específicos o a los más antiguos pendientes ──────────────────────
+                    // BK-02: Bloquear ventas estrictamente por PK para evitar gap locks en el índice secundario customer_id (InnoDB)
                     if ($request->filled('sale_ids')) {
-                        $sales = Sale::whereIn('id', $request->sale_ids)
-                            ->where('customer_id', $lockedCustomer->id)
-                            ->where('status', 'completed')
-                            ->lockForUpdate()
-                            ->orderBy('created_at', 'asc')
-                            ->get();
+                        $targetIds = collect($request->sale_ids)->map(fn ($id) => (int) $id)->unique()->sort()->values()->all();
+                        $sales = empty($targetIds)
+                            ? collect()
+                            : Sale::whereIn('id', $targetIds)
+                                ->where('customer_id', $lockedCustomer->id)
+                                ->where('status', 'completed')
+                                ->orderBy('id', 'asc')
+                                ->lockForUpdate()
+                                ->get()
+                                ->sortBy('created_at')
+                                ->values();
                     } else {
-                        $sales = Sale::where('customer_id', $lockedCustomer->id)
+                        $pendingSaleIds = Sale::where('customer_id', $lockedCustomer->id)
                             ->where('status', 'completed')
                             ->whereIn('payment_status', ['pending', 'partial'])
-                            ->lockForUpdate()
                             ->orderBy('created_at', 'asc')
-                            ->get();
+                            ->orderBy('id', 'asc')
+                            ->pluck('id')
+                            ->all();
+
+                        $sales = empty($pendingSaleIds)
+                            ? collect()
+                            : Sale::whereIn('id', $pendingSaleIds)
+                                ->orderBy('id', 'asc')
+                                ->lockForUpdate()
+                                ->get()
+                                ->sortBy(function ($s) use ($pendingSaleIds) {
+                                    return array_search($s->id, $pendingSaleIds);
+                                })
+                                ->values();
                     }
 
                     /** @var Collection<int, Sale> $sales */
@@ -276,14 +294,26 @@ class CustomerController extends Controller
                     // el excedente por orden FIFO a los demás tickets pendientes para evitar desincronizar
                     // customer.balance respecto a sum(sales.amount_due).
                     if ($request->filled('sale_ids') && $remainingAmount > 0.001) {
-                        $otherPendingSales = Sale::where('customer_id', $lockedCustomer->id)
+                        $extraPendingIds = Sale::where('customer_id', $lockedCustomer->id)
                             ->whereNotIn('id', $request->sale_ids)
                             ->where('status', 'completed')
                             ->whereIn('payment_status', ['pending', 'partial'])
                             ->where('amount_due', '>', 0)
-                            ->lockForUpdate()
                             ->orderBy('created_at', 'asc')
-                            ->get();
+                            ->orderBy('id', 'asc')
+                            ->pluck('id')
+                            ->all();
+
+                        $otherPendingSales = empty($extraPendingIds)
+                            ? collect()
+                            : Sale::whereIn('id', $extraPendingIds)
+                                ->orderBy('id', 'asc')
+                                ->lockForUpdate()
+                                ->get()
+                                ->sortBy(function ($s) use ($extraPendingIds) {
+                                    return array_search($s->id, $extraPendingIds);
+                                })
+                                ->values();
 
                         foreach ($otherPendingSales as $extraSale) {
                             if ($remainingAmount <= 0) {

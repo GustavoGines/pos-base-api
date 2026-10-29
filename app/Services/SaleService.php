@@ -411,7 +411,11 @@ class SaleService
                     throw new \InvalidArgumentException('No se puede anular una venta en este estado.');
                 }
 
-                $checks = ThirdPartyCheck::with('supplier')->where('sale_id', $lockedSale->id)->lockForUpdate()->get();
+                // BK-01: Bloquear cheques estrictamente por PK para evitar gap locks en el índice secundario sale_id (InnoDB)
+                $checkIds = ThirdPartyCheck::where('sale_id', $lockedSale->id)->orderBy('id')->pluck('id')->all();
+                $checks = empty($checkIds)
+                    ? collect()
+                    : ThirdPartyCheck::with('supplier')->whereIn('id', $checkIds)->orderBy('id')->lockForUpdate()->get();
                 foreach ($checks as $check) {
                     if ($check->status === 'endorsed') {
                         $supplierName = $check->supplier?->name;
@@ -523,7 +527,11 @@ class SaleService
                     throw new StaleLockSetException("El plan de bloqueos de la anulación de la Venta #{$lockedSale->id} quedó desactualizado.");
                 }
 
-                $checks = ThirdPartyCheck::with('supplier')->where('sale_id', $lockedSale->id)->lockForUpdate()->get();
+                // BK-01: Bloquear cheques estrictamente por PK para evitar gap locks en el índice secundario sale_id (InnoDB)
+                $checkIds = ThirdPartyCheck::where('sale_id', $lockedSale->id)->orderBy('id')->pluck('id')->all();
+                $checks = empty($checkIds)
+                    ? collect()
+                    : ThirdPartyCheck::with('supplier')->whereIn('id', $checkIds)->orderBy('id')->lockForUpdate()->get();
                 foreach ($checks as $check) {
                     if ($check->status === 'endorsed') {
                         $supplierName = $check->supplier?->name;
