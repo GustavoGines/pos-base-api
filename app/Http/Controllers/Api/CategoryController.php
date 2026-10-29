@@ -13,7 +13,11 @@ class CategoryController extends Controller
 {
     public function index()
     {
-        return response()->json(Category::with('rubro')->get());
+        return response()->json(
+            Category::with('rubro')
+                ->withCount(['products' => fn ($q) => $q->where('active', true)])
+                ->get()
+        );
     }
 
     public function store(StoreCategoryRequest $request)

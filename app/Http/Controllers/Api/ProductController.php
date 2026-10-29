@@ -40,6 +40,10 @@ class ProductController extends Controller
             $query->where('products.active', filter_var($request->query('active'), FILTER_VALIDATE_BOOLEAN));
         }
 
+        if ($request->filled('is_sold_by_weight')) {
+            $query->where('products.is_sold_by_weight', filter_var($request->query('is_sold_by_weight'), FILTER_VALIDATE_BOOLEAN));
+        }
+
         // OF-01: Carga puntual por IDs (ej. productos en oferta activa que quedaron fuera del bloque
         // inicial de 500 del Acceso Rápido POS). Acepta "ids=1,2,3" o "ids[]=1&ids[]=2". Parámetro
         // opcional y aditivo: clientes v1.8.5 no lo envían y su comportamiento no cambia.
