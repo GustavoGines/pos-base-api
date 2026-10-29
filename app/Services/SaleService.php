@@ -6,6 +6,7 @@ use App\DTOs\PaySaleDTO;
 use App\DTOs\ProcessSaleDTO;
 use App\DTOs\SaleContextDTO;
 use App\Events\SaleCompleted;
+use App\Exceptions\StaleLockSetException;
 use App\Jobs\SyncProductStockToPlatformsJob;
 use App\Models\CashMovement;
 use App\Models\CashShift;
@@ -487,24 +488,14 @@ class SaleService
 
             // ── FASE C: Restitución transaccional local (Stock, Remito, Cheques, Cta Cte, Caja) ──
             // BK-01: Orden canónico estricto de bloqueos pesimistas (1° CashShift -> 2° Customer -> 3° Sale -> 4° Product)
-            // Pre-calcular clientes a bloquear antes de DB::transaction para no fijar snapshot temprano en REPEATABLE-READ
-            $txCustomerIds = CustomerTransaction::where('sale_id', $sale->id)
-                ->where('type', 'charge')
-                ->pluck('customer_id')
-                ->toArray();
-            $customerIdsToLock = array_values(array_unique(array_filter(array_merge(
-                $sale->customer_id ? [(int) $sale->customer_id] : [],
-                array_map('intval', $txCustomerIds)
-            ))));
-            sort($customerIdsToLock);
+            // Pre-calcular turnos y clientes a bloquear antes de DB::transaction para no fijar snapshot temprano en REPEATABLE-READ.
+            // D-03: El plan se recalcula en cada intento (ver bucle al final) porque la venta no está bloqueada entre
+            // la Fase A y la Fase C: un cobro concurrente (payPendingSale) puede cambiar cliente, turno o cargos de Cta Cte.
+            $shiftIdsToLock = [];
+            $customerIdsToLock = [];
 
-            return DB::transaction(function () use ($sale, $context, $customerIdsToLock) {
+            $voidTransaction = function () use ($sale, $context, &$shiftIdsToLock, &$customerIdsToLock) {
                 // 1° Bloquear CashShift(s) involucrados en orden ascendente de ID
-                $shiftIdsToLock = array_values(array_unique(array_filter([
-                    $sale->cash_shift_id ? (int) $sale->cash_shift_id : null,
-                    $context->cashShiftId ? (int) $context->cashShiftId : null,
-                ])));
-                sort($shiftIdsToLock);
                 $lockedShifts = ! empty($shiftIdsToLock)
                     ? CashShift::whereIn('id', $shiftIdsToLock)->orderBy('id', 'asc')->lockForUpdate()->get()->keyBy('id')
                     : collect();
@@ -522,6 +513,14 @@ class SaleService
                 }
                 if ($lockedSale->status !== 'pending' && $lockedSale->status !== 'completed') {
                     throw new \InvalidArgumentException('No se puede anular una venta en este estado.');
+                }
+
+                // D-03: Con la venta ya bloqueada (estado definitivo), verificar que el plan pre-calculado cubra
+                // todos los turnos y clientes que se van a tocar. Si no, abortar antes de bloquear Productos y
+                // recalcular afuera, para nunca bloquear un CashShift/Customer después de Sale (riesgo de Deadlock 1213).
+                [$requiredShiftIds, $requiredCustomerIds] = $this->resolveVoidLockPlan($lockedSale, $context);
+                if (array_diff($requiredShiftIds, $shiftIdsToLock) || array_diff($requiredCustomerIds, $customerIdsToLock)) {
+                    throw new StaleLockSetException("El plan de bloqueos de la anulación de la Venta #{$lockedSale->id} quedó desactualizado.");
                 }
 
                 $checks = ThirdPartyCheck::with('supplier')->where('sale_id', $lockedSale->id)->lockForUpdate()->get();
@@ -629,10 +628,52 @@ class SaleService
                 ReportCacheService::flush();
 
                 return $lockedSale;
-            }, 3);
+            };
+
+            // D-03: Si la venta cambió entre el pre-cálculo y el lock, recalcular el plan y reintentar (máx. 3 veces).
+            // Los Deadlock 1213 residuales los sigue reintentando DB::transaction(..., 3) con el mismo plan.
+            $maxLockPlanAttempts = 3;
+            for ($lockPlanAttempt = 1; ; $lockPlanAttempt++) {
+                [$shiftIdsToLock, $customerIdsToLock] = $this->resolveVoidLockPlan(Sale::findOrFail($sale->id), $context);
+
+                try {
+                    return DB::transaction($voidTransaction, 3);
+                } catch (StaleLockSetException $e) {
+                    if ($lockPlanAttempt >= $maxLockPlanAttempts) {
+                        throw new \InvalidArgumentException('La venta fue modificada por otra operación mientras se anulaba. Intente nuevamente.');
+                    }
+                }
+            }
         } finally {
             optional($lock)->release();
         }
+    }
+
+    /**
+     * D-03: Turnos de caja y clientes que la anulación debe bloquear antes que la Venta (orden canónico),
+     * calculados a partir del estado de $sale. Ambos arreglos se devuelven sin duplicados y en orden ascendente.
+     *
+     * @return array{0: array<int, int>, 1: array<int, int>}
+     */
+    protected function resolveVoidLockPlan(Sale $sale, SaleContextDTO $context): array
+    {
+        $shiftIds = array_values(array_unique(array_filter([
+            $sale->cash_shift_id ? (int) $sale->cash_shift_id : null,
+            $context->cashShiftId ? (int) $context->cashShiftId : null,
+        ])));
+        sort($shiftIds);
+
+        $txCustomerIds = CustomerTransaction::where('sale_id', $sale->id)
+            ->where('type', 'charge')
+            ->pluck('customer_id')
+            ->toArray();
+        $customerIds = array_values(array_unique(array_filter(array_merge(
+            $sale->customer_id ? [(int) $sale->customer_id] : [],
+            array_map('intval', $txCustomerIds)
+        ))));
+        sort($customerIds);
+
+        return [$shiftIds, $customerIds];
     }
 
     protected function processItems(Sale $sale, array $items, Collection $products, SaleContextDTO $context): void
