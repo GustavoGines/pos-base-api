@@ -40,6 +40,21 @@ class ProductController extends Controller
             $query->where('products.active', filter_var($request->query('active'), FILTER_VALIDATE_BOOLEAN));
         }
 
+        // OF-01: Carga puntual por IDs (ej. productos en oferta activa que quedaron fuera del bloque
+        // inicial de 500 del Acceso Rápido POS). Acepta "ids=1,2,3" o "ids[]=1&ids[]=2". Parámetro
+        // opcional y aditivo: clientes v1.8.5 no lo envían y su comportamiento no cambia.
+        if ($request->has('ids')) {
+            $rawIds = $request->query('ids');
+            $rawIds = is_array($rawIds) ? $rawIds : explode(',', (string) $rawIds);
+            $ids = array_values(array_unique(array_filter(
+                array_map(fn ($id) => is_scalar($id) ? (int) $id : 0, $rawIds),
+                fn (int $id) => $id > 0
+            )));
+
+            // Cap de seguridad (mismo tope que per_page). Lista vacía o inválida => sin resultados.
+            $query->whereIn('products.id', array_slice($ids, 0, 500) ?: [0]);
+        }
+
         $allowedSorts = [
             'id', 'name', 'selling_price', 'cost_price', 'stock',
             'barcode', 'internal_code', 'category_id', 'brand_id', 'supplier_id', 'is_sold_by_weight', 'active', 'sales_count', 'vencimiento_dias',
