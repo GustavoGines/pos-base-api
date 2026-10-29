@@ -78,6 +78,16 @@ class SupplierInvoiceController extends Controller
                 // CP-01: Bloqueo pesimista del proveedor al inicio de la transacción
                 $lockedSupplier = Supplier::where('id', $supplier->id)->lockForUpdate()->firstOrFail();
 
+                // BK-CONC-04: Re-evaluar unicidad de invoice_number bajo lock del proveedor para prevenir duplicados concurrentes
+                if (! empty($validated['invoice_number'])) {
+                    $duplicate = SupplierInvoice::where('supplier_id', $lockedSupplier->id)
+                        ->where('invoice_number', $validated['invoice_number'])
+                        ->exists();
+                    if ($duplicate) {
+                        throw new \InvalidArgumentException('El número de comprobante ya existe para este proveedor.');
+                    }
+                }
+
                 $tax = $validated['tax_amount'] ?? 0;
                 $freight = $validated['freight_amount'] ?? 0;
                 $discount = $validated['discount_amount'] ?? 0;
@@ -236,6 +246,8 @@ class SupplierInvoiceController extends Controller
                 'message' => 'Factura/Remito cargado exitosamente',
                 'supplier' => $supplier->fresh(),
             ]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
         } catch (\Exception $e) {
             return response()->json(['message' => 'Error al registrar la factura: '.$e->getMessage()], 500);
         }

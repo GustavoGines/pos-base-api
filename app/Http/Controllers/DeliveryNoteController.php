@@ -45,31 +45,41 @@ class DeliveryNoteController extends Controller
 
     public function generateFromSale(Request $request, $saleId)
     {
-        $sale = Sale::with('items')->findOrFail($saleId);
+        return DB::transaction(function () use ($request, $saleId) {
+            $sale = Sale::with('items')->lockForUpdate()->findOrFail($saleId);
 
-        // Check if note already exists to prevent duplicates - return existing if found
-        $existingNote = DeliveryNote::where('sale_id', $sale->id)->first();
-        if ($existingNote) {
-            return response()->json($existingNote->load(['items.product', 'sale.payments.paymentMethod', 'sale.customer']), 200);
-        }
+            // BD-GUARD-01: Rechazar generación de remito si la venta ya está anulada
+            if ($sale->isVoided()) {
+                return response()->json([
+                    'message' => 'No se puede generar un remito para una venta anulada.',
+                ], 422);
+            }
 
-        $status = $request->input('status', 'pending');
+            // BK-CONC-03 / D-02: El lock pesimista sobre Sale ya serializa peticiones sobre la misma venta.
+            // La lectura de existencia previa se realiza sin FOR UPDATE para prevenir gap locks en MySQL/InnoDB.
+            $existingNote = DeliveryNote::where('sale_id', $sale->id)->first();
+            if ($existingNote) {
+                return response()->json($existingNote->load(['items.product', 'sale.payments.paymentMethod', 'sale.customer']), 200);
+            }
 
-        $note = DeliveryNote::create([
-            'sale_id' => $sale->id,
-            'status' => $status,
-            'notes' => 'Generado a partir del comprobante nº '.$sale->id.($status === 'delivered' ? ' (Entregado en mostrador)' : ''),
-        ]);
+            $status = $request->input('status', 'pending');
 
-        foreach ($sale->items as $item) {
-            $note->items()->create([
-                'product_id' => $item->product_id,
-                'quantity_purchased' => $item->quantity,
-                'quantity_delivered' => $status === 'delivered' ? $item->quantity : 0,
+            $note = DeliveryNote::create([
+                'sale_id' => $sale->id,
+                'status' => $status,
+                'notes' => 'Generado a partir del comprobante nº '.$sale->id.($status === 'delivered' ? ' (Entregado en mostrador)' : ''),
             ]);
-        }
 
-        return response()->json($note->load(['items.product', 'sale.payments.paymentMethod', 'sale.customer']), 201);
+            foreach ($sale->items as $item) {
+                $note->items()->create([
+                    'product_id' => $item->product_id,
+                    'quantity_purchased' => $item->quantity,
+                    'quantity_delivered' => $status === 'delivered' ? $item->quantity : 0,
+                ]);
+            }
+
+            return response()->json($note->load(['items.product', 'sale.payments.paymentMethod', 'sale.customer']), 201);
+        }, 3);
     }
 
     public function updateDelivery(Request $request, $id)
@@ -82,6 +92,19 @@ class DeliveryNoteController extends Controller
 
         return DB::transaction(function () use ($request, $id) {
             $note = DeliveryNote::with(['items', 'sale'])->lockForUpdate()->findOrFail($id);
+
+            // BK-CONC-02: Rechazar despacho si el remito está cancelado o la venta fue anulada
+            if ($note->status === 'cancelled') {
+                return response()->json([
+                    'message' => 'No se puede despachar un remito cancelado.',
+                ], 422);
+            }
+
+            if ($note->sale && $note->sale->isVoided()) {
+                return response()->json([
+                    'message' => 'No se puede despachar un remito asociado a una venta anulada.',
+                ], 422);
+            }
 
             $alreadyDeducted = $note->sale && $note->sale->hasDeductedStock();
 

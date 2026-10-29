@@ -9,6 +9,8 @@ use App\Events\SaleCompleted;
 use App\Jobs\SyncProductStockToPlatformsJob;
 use App\Models\CashMovement;
 use App\Models\CashShift;
+use App\Models\Customer;
+use App\Models\CustomerTransaction;
 use App\Models\DeliveryNote;
 use App\Models\PaymentMethod;
 use App\Models\Quote;
@@ -123,7 +125,7 @@ class SaleService
                         throw new \InvalidArgumentException('Debe asociar un cliente a la venta para pagar con Cuenta Corriente.');
                     }
 
-                    $lockedCustomer = \App\Models\Customer::where('id', $context->customerId)->lockForUpdate()->first();
+                    $lockedCustomer = Customer::where('id', $context->customerId)->lockForUpdate()->first();
                     if (! $lockedCustomer) {
                         throw new \InvalidArgumentException('El cliente seleccionado no existe.');
                     }
@@ -251,7 +253,7 @@ class SaleService
 
             $customerIdToLock = $context->customerId ?? $sale->customer_id;
             if ($customerIdToLock) {
-                \App\Models\Customer::where('id', $customerIdToLock)->lockForUpdate()->first();
+                Customer::where('id', $customerIdToLock)->lockForUpdate()->first();
             }
 
             $lockedSale = Sale::with('items')->lockForUpdate()->find($sale->id);
@@ -485,7 +487,18 @@ class SaleService
 
             // ── FASE C: Restitución transaccional local (Stock, Remito, Cheques, Cta Cte, Caja) ──
             // BK-01: Orden canónico estricto de bloqueos pesimistas (1° CashShift -> 2° Customer -> 3° Sale -> 4° Product)
-            return DB::transaction(function () use ($sale, $context) {
+            // Pre-calcular clientes a bloquear antes de DB::transaction para no fijar snapshot temprano en REPEATABLE-READ
+            $txCustomerIds = CustomerTransaction::where('sale_id', $sale->id)
+                ->where('type', 'charge')
+                ->pluck('customer_id')
+                ->toArray();
+            $customerIdsToLock = array_values(array_unique(array_filter(array_merge(
+                $sale->customer_id ? [(int) $sale->customer_id] : [],
+                array_map('intval', $txCustomerIds)
+            ))));
+            sort($customerIdsToLock);
+
+            return DB::transaction(function () use ($sale, $context, $customerIdsToLock) {
                 // 1° Bloquear CashShift(s) involucrados en orden ascendente de ID
                 $shiftIdsToLock = array_values(array_unique(array_filter([
                     $sale->cash_shift_id ? (int) $sale->cash_shift_id : null,
@@ -497,17 +510,8 @@ class SaleService
                     : collect();
 
                 // 2° Bloquear Customer(s) involucrados en orden ascendente de ID
-                $txCustomerIds = \App\Models\CustomerTransaction::where('sale_id', $sale->id)
-                    ->where('type', 'charge')
-                    ->pluck('customer_id')
-                    ->toArray();
-                $customerIdsToLock = array_values(array_unique(array_filter(array_merge(
-                    $sale->customer_id ? [(int) $sale->customer_id] : [],
-                    array_map('intval', $txCustomerIds)
-                ))));
-                sort($customerIdsToLock);
                 if (! empty($customerIdsToLock)) {
-                    \App\Models\Customer::whereIn('id', $customerIdsToLock)->orderBy('id', 'asc')->lockForUpdate()->get();
+                    Customer::whereIn('id', $customerIdsToLock)->orderBy('id', 'asc')->lockForUpdate()->get();
                 }
 
                 // 3° Bloquear la Venta y sus Cheques de Terceros
@@ -546,7 +550,11 @@ class SaleService
                     }
                 }
 
-                $deliveryNote = DeliveryNote::with('items')->where('sale_id', $lockedSale->id)->first();
+                // BK-CONC-01 / D-01: Localizar por índice sin lock de rango y bloquear por PK (sin gap lock en InnoDB)
+                $deliveryNoteId = DeliveryNote::where('sale_id', $lockedSale->id)->orderBy('id')->value('id');
+                $deliveryNote = $deliveryNoteId
+                    ? DeliveryNote::with('items')->lockForUpdate()->find($deliveryNoteId)
+                    : null;
 
                 // 4° Bloquear Productos (incluyendo ingredientes de combos en orden ID ASC) y restituir stock
                 $restoredProductIds = $this->stockService->restoreStockForVoid($lockedSale, $context, $deliveryNote);
@@ -621,7 +629,7 @@ class SaleService
                 ReportCacheService::flush();
 
                 return $lockedSale;
-            });
+            }, 3);
         } finally {
             optional($lock)->release();
         }
@@ -695,7 +703,7 @@ class SaleService
         try {
             event(new SaleCompleted($sale));
         } catch (\Throwable $e) {
-            \Log::warning('No se pudo emitir evento WebSocket SaleCompleted (Reverb 8080 inactivo): ' . $e->getMessage(), [
+            \Log::warning('No se pudo emitir evento WebSocket SaleCompleted (Reverb 8080 inactivo): '.$e->getMessage(), [
                 'sale_id' => $sale->id,
             ]);
         }

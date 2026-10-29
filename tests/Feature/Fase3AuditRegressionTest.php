@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
-use App\DTOs\PaySaleDTO;
 use App\DTOs\ProcessSaleDTO;
 use App\DTOs\SaleContextDTO;
 use App\Models\BusinessSetting;
@@ -13,19 +12,24 @@ use App\Models\CashRegister;
 use App\Models\CashShift;
 use App\Models\Customer;
 use App\Models\CustomerTransaction;
+use App\Models\ElectronicInvoice;
 use App\Models\PaymentMethod;
 use App\Models\Product;
 use App\Models\Sale;
+use App\Models\SalePayment;
 use App\Models\StockMovement;
 use App\Models\Supplier;
 use App\Models\ThirdPartyCheck;
 use App\Models\User;
+use App\Repositories\SalesAnalyticsRepository;
 use App\Services\Afip\AfipWsaaService;
 use App\Services\Afip\AfipWsfeService;
+use App\Services\CashShiftService;
 use App\Services\SaleService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 class Fase3AuditRegressionTest extends TestCase
@@ -477,7 +481,7 @@ class Fase3AuditRegressionTest extends TestCase
             'cash_shift_id' => $closedShift->id,
         ], $this->admin->id);
 
-        $this->expectException(\Illuminate\Validation\ValidationException::class);
+        $this->expectException(ValidationException::class);
         $saleService->executeSale($dto, $context);
     }
 
@@ -933,6 +937,43 @@ class Fase3AuditRegressionTest extends TestCase
     }
 
     /**
+     * BK-CONC-04: Re-evaluación atómica de unicidad de invoice_number bajo lock del proveedor.
+     */
+    public function test_bk_conc_04_supplier_invoice_number_duplicate_rejected_inside_transaction(): void
+    {
+        BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['suppliers' => true])]
+        );
+        BusinessSetting::updateOrCreate(
+            ['key' => 'app_plan'],
+            ['value' => 'pro']
+        );
+
+        $supplier = Supplier::create([
+            'name' => 'Proveedor Unicidad',
+            'balance' => 0.00,
+            'is_active' => true,
+        ]);
+
+        $resp1 = $this->withHeaders($this->authHeaders($this->admin))
+            ->postJson("/api/suppliers/{$supplier->id}/invoices", [
+                'amount' => 500.00,
+                'invoice_number' => 'FAC-999-001',
+            ]);
+        $resp1->assertOk();
+
+        // Segunda carga con el mismo número para el mismo proveedor
+        $resp2 = $this->withHeaders($this->authHeaders($this->admin))
+            ->postJson("/api/suppliers/{$supplier->id}/invoices", [
+                'amount' => 500.00,
+                'invoice_number' => 'FAC-999-001',
+            ]);
+        $resp2->assertStatus(422)
+            ->assertJson(['message' => 'El número de comprobante ya existe para este proveedor.']);
+    }
+
+    /**
      * Bloque 4 (REP-01 a REP-11):
      * - REP-01: POST /api/cash-movements acepta payload plano legacy v1.8.5 sin array 'payments' y normaliza 'efectivo'.
      * - REP-02: CashShiftService mantiene cash_sales y expected_balance intactos para v1.8.5, pero no duplica cobros de CC en total_sales.
@@ -983,7 +1024,7 @@ class Fase3AuditRegressionTest extends TestCase
             'balance_after' => 0.00,
         ]);
 
-        $shiftService = app(\App\Services\CashShiftService::class);
+        $shiftService = app(CashShiftService::class);
         $liveTotals = $shiftService->calculateLiveTotals($shift);
         // opening (1000) + cc_cash (5000) - expense (250) = 5750
         $this->assertEquals(5750.00, (float) $liveTotals['expected_balance']);
@@ -1028,14 +1069,14 @@ class Fase3AuditRegressionTest extends TestCase
         ]);
 
         $currentMonth = now()->format('Y-m');
-        $balanceData = app(\App\Repositories\SalesAnalyticsRepository::class)->getMonthlyBalance($currentMonth, $currentMonth);
+        $balanceData = app(SalesAnalyticsRepository::class)->getMonthlyBalance($currentMonth, $currentMonth);
         $monthRow = collect($balanceData['months'])->firstWhere('period', $currentMonth);
         $this->assertNotNull($monthRow);
         // Ganancia bruta = $600 (1000 - 400) menos el gasto operativo real ($250) = $350 (ignora el refund de $800)
         $this->assertEquals(350.00, (float) $monthRow['total_profit']);
 
         // 4. REP-11: Libro IVA Ventas (/api/reports/vat-sales)
-        \App\Models\ElectronicInvoice::create([
+        ElectronicInvoice::create([
             'sale_id' => $completedSale->id,
             'voucher_type' => 6,
             'voucher_letter' => 'B',
@@ -1173,7 +1214,7 @@ class Fase3AuditRegressionTest extends TestCase
                 'cashier_id' => $this->cashier->id,
             ], $overrides));
 
-            \App\Models\SalePayment::create([
+            SalePayment::create([
                 'sale_id' => $sale->id,
                 'payment_method_id' => $cash->id,
                 'base_amount' => 100.00,
@@ -1202,7 +1243,7 @@ class Fase3AuditRegressionTest extends TestCase
 
         // 4. Venta fallida con CAE ya asignado -> 403.
         $withCae = $makeSale();
-        \App\Models\ElectronicInvoice::create([
+        ElectronicInvoice::create([
             'sale_id' => $withCae->id,
             'voucher_type' => 6,
             'voucher_letter' => 'B',

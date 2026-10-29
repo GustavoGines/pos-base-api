@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\CashRegister;
 use App\Models\CashShift;
+use App\Models\DeliveryNote;
 use App\Models\PaymentMethod;
 use App\Models\Product;
 use App\Models\Sale;
@@ -197,5 +198,103 @@ class DeliveryNoteTest extends TestCase
 
         // Los movimientos de stock para este producto deben ser exactamente 1 (el del checkout original)
         $this->assertCount(1, StockMovement::where('product_id', $product->id)->get());
+    }
+
+    public function test_bk_conc_02_cannot_deliver_cancelled_or_voided_delivery_note()
+    {
+        $product = Product::create(['name' => 'Prod Test', 'internal_code' => 'BKC02', 'cost_price' => 10, 'selling_price' => 20, 'stock' => 50]);
+        $sale = Sale::create([
+            'cash_shift_id' => $this->shift->id,
+            'user_id' => $this->admin->id,
+            'total' => 20,
+            'status' => 'completed',
+        ]);
+        $sale->items()->create([
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
+            'unit_price' => 20,
+            'subtotal' => 20,
+        ]);
+
+        $note = DeliveryNote::create([
+            'sale_id' => $sale->id,
+            'status' => 'cancelled',
+            'notes' => 'Remito cancelado',
+        ]);
+        $item = $note->items()->create([
+            'product_id' => $product->id,
+            'quantity_purchased' => 1,
+            'quantity_delivered' => 0,
+        ]);
+
+        $res1 = $this->putJson("/api/delivery-notes/{$note->id}/deliver", [
+            'items' => [['id' => $item->id, 'delivered_now' => 1]],
+        ]);
+        $res1->assertStatus(422)
+            ->assertJson(['message' => 'No se puede despachar un remito cancelado.']);
+
+        // Ahora probar con venta anulada
+        $note->update(['status' => 'pending']);
+        $sale->update(['status' => 'voided']);
+
+        $res2 = $this->putJson("/api/delivery-notes/{$note->id}/deliver", [
+            'items' => [['id' => $item->id, 'delivered_now' => 1]],
+        ]);
+        $res2->assertStatus(422)
+            ->assertJson(['message' => 'No se puede despachar un remito asociado a una venta anulada.']);
+    }
+
+    public function test_bk_conc_03_generate_delivery_note_idempotently_returns_existing()
+    {
+        $product = Product::create(['name' => 'Prod Idempotent', 'internal_code' => 'BKC03', 'cost_price' => 10, 'selling_price' => 20, 'stock' => 50]);
+        $sale = Sale::create([
+            'cash_shift_id' => $this->shift->id,
+            'user_id' => $this->admin->id,
+            'total' => 20,
+            'status' => 'completed',
+        ]);
+        $sale->items()->create([
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
+            'unit_price' => 20,
+            'subtotal' => 20,
+        ]);
+
+        $res1 = $this->postJson("/api/delivery-notes/from-sale/{$sale->id}", ['status' => 'pending']);
+        $res1->assertStatus(201);
+        $firstId = $res1->json('id');
+
+        // Segunda llamada idéntica debe devolver 200 y el mismo remito
+        $res2 = $this->postJson("/api/delivery-notes/from-sale/{$sale->id}", ['status' => 'pending']);
+        $res2->assertStatus(200);
+        $this->assertEquals($firstId, $res2->json('id'));
+
+        $this->assertCount(1, DeliveryNote::where('sale_id', $sale->id)->get());
+    }
+
+    public function test_cannot_generate_delivery_note_for_voided_sale(): void
+    {
+        $product = Product::create(['name' => 'Prod Voided Sale', 'internal_code' => 'BKCVOID', 'cost_price' => 10, 'selling_price' => 20, 'stock' => 50]);
+        $sale = Sale::create([
+            'cash_shift_id' => $this->shift->id,
+            'user_id' => $this->admin->id,
+            'total' => 20,
+            'status' => 'voided',
+        ]);
+        $sale->items()->create([
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
+            'unit_price' => 20,
+            'subtotal' => 20,
+        ]);
+
+        $res = $this->postJson("/api/delivery-notes/from-sale/{$sale->id}", ['status' => 'pending']);
+        $res->assertStatus(422)
+            ->assertJson(['message' => 'No se puede generar un remito para una venta anulada.']);
+
+        $this->assertCount(0, DeliveryNote::where('sale_id', $sale->id)->get());
     }
 }
