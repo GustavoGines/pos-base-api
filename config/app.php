@@ -148,6 +148,6 @@ return [
     | reemplazarse desde el .env del cliente. La privada vive solo en Render.
     |
     */
-    'license_ed25519_public_key' => '9ba24a8a7f8e0b520dd4c104cf465a8c853c4ee4c545227a49fbdc8831d752c2',
+    'license_ed25519_public_key' => '218e7e6189e9e18877e93a82b8471d03536aee0bfd1eb9ffc34c7cc905333c0e',
 
 ];
