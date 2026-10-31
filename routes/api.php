@@ -175,6 +175,7 @@ Route::middleware(['session.validate', 'license.active'])->group(function () {
     Route::get('/sales/{sale}', [SalesController::class, 'show']);
     Route::post('/sales/{sale}/invoice', [ElectronicInvoiceController::class, 'issueInvoice']);
     Route::get('/sales/{sale}/electronic-invoice', [ElectronicInvoiceController::class, 'show']);
+    Route::get('/electronic-invoices/lookup-recipient', [ElectronicInvoiceController::class, 'lookupRecipient']);
 
     // ── Clientes: gestión completa y cuentas corrientes ──────────────
     Route::get('/customers', [CustomerController::class, 'index']);

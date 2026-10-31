@@ -10,6 +10,7 @@ use App\Models\CustomerTransaction;
 use App\Models\ElectronicInvoice;
 use App\Models\Sale;
 use App\Models\User;
+use App\Services\Afip\AfipPadronService;
 use App\Services\Afip\AfipWsfeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -21,8 +22,24 @@ use Throwable;
 class ElectronicInvoiceController extends Controller
 {
     public function __construct(
-        protected AfipWsfeService $wsfeService
+        protected AfipWsfeService $wsfeService,
+        protected AfipPadronService $padronService
     ) {}
+
+    /**
+     * Busca datos fiscales del receptor por DNI o CUIT/CUIL (Clientes locales -> Historial facturas -> Padrón ARCA).
+     * GET /api/electronic-invoices/lookup-recipient?doc_number=...
+     */
+    public function lookupRecipient(Request $request): JsonResponse
+    {
+        $docNumber = (string) $request->query('doc_number', '');
+        $result = $this->padronService->lookupByDocument($docNumber);
+
+        return response()->json([
+            'success' => true,
+            'data' => $result,
+        ]);
+    }
 
     /**
      * Emite y solicita autorización fiscal (CAE) para una venta (Factura A, B o C).
@@ -31,6 +48,7 @@ class ElectronicInvoiceController extends Controller
     public function issueInvoice(Request $request, Sale $sale): JsonResponse
     {
         $validated = $request->validate([
+            'customer_id' => 'nullable|integer|exists:customers,id',
             'voucher_type' => 'nullable|integer|in:1,6,11',
             'voucher_letter' => 'nullable|string|in:A,B,C,a,b,c',
             'doc_type' => 'nullable|integer',
@@ -56,8 +74,9 @@ class ElectronicInvoiceController extends Controller
             return DB::transaction(function () use ($sale, $validated) {
                 // BK-03: Respetar orden canónico de locks (Customer -> Sale) para evitar deadlock
                 // circular con CustomerController::registerPayment.
-                $lockedCustomer = $sale->customer_id
-                    ? Customer::where('id', $sale->customer_id)->lockForUpdate()->first()
+                $targetCustomerId = $sale->customer_id ?? ($validated['customer_id'] ?? null);
+                $lockedCustomer = $targetCustomerId
+                    ? Customer::where('id', $targetCustomerId)->lockForUpdate()->first()
                     : null;
 
                 $lockedSale = Sale::with('electronicInvoice')->lockForUpdate()->find($sale->id);
@@ -81,6 +100,11 @@ class ElectronicInvoiceController extends Controller
                 }
 
                 try {
+                    if (! $lockedSale->customer_id && $lockedCustomer) {
+                        $lockedSale->customer_id = $lockedCustomer->id;
+                        $lockedSale->setRelation('customer', $lockedCustomer);
+                    }
+
                     $invoiceData = $this->wsfeService->authorizeInvoice($lockedSale, $validated);
 
                     $invoice = ElectronicInvoice::updateOrCreate(
@@ -91,6 +115,9 @@ class ElectronicInvoiceController extends Controller
                     );
 
                     $saleUpdates = ['invoice_status' => 'invoiced'];
+                    if (! empty($validated['customer_id']) && ! $sale->customer_id) {
+                        $saleUpdates['customer_id'] = (int) $validated['customer_id'];
+                    }
 
                     // Fix F1-MED-09 / REP-06: Si se auto-calculó o aplicó una percepción IIBB al emitir la factura
                     // que no estaba registrada en la cabecera de la venta, sincronizarla en `sales` (y en la deuda

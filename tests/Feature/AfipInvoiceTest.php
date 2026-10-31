@@ -470,4 +470,104 @@ class AfipInvoiceTest extends TestCase
             ->assertJsonPath('invoice.cae', '74382910492819')
             ->assertJsonPath('invoice.formatted_number', '00001-00000124');
     }
+
+    /**
+     * 8. Endpoint GET /api/electronic-invoices/lookup-recipient resuelve en 3 capas:
+     *    1. Clientes locales (`customers`) con cruce DNI <-> CUIT
+     *    2. Historial de facturas (`electronic_invoices`)
+     *    3. Padrón Oficial ARCA (`ws_sr_padron_a13` / `ws_sr_constancia_inscripto`)
+     */
+    public function test_lookup_recipient_resolves_local_customer_invoice_history_and_arca_padron(): void
+    {
+        // Capa 1: Cliente local guardado con CUIT, consultado por su DNI de 8 dígitos
+        $customer = Customer::create([
+            'name' => 'Ferretería San Martín SRL',
+            'document_type' => 80,
+            'document_number' => '30500010912',
+            'tax_condition' => 'responsable_inscripto',
+            'fiscal_address' => 'Av. San Martín 123',
+            'is_active' => true,
+        ]);
+
+        $resLocal = $this->actingAsAdmin($this->adminUser)
+            ->getJson('/api/electronic-invoices/lookup-recipient?doc_number=50001091');
+        $resLocal->assertStatus(200)
+            ->assertJsonPath('data.found', true)
+            ->assertJsonPath('data.source', 'local_customer')
+            ->assertJsonPath('data.customer_id', $customer->id)
+            ->assertJsonPath('data.name', 'Ferretería San Martín SRL');
+
+        // Capa 2: Persona que no está en `customers`, pero se le emitió una factura antes
+        $sale = $this->createTestSale(1210.00);
+        ElectronicInvoice::create([
+            'sale_id' => $sale->id,
+            'voucher_type' => 6,
+            'voucher_letter' => 'B',
+            'point_of_sale' => 1,
+            'voucher_number' => 55,
+            'cae' => '74382910499999',
+            'cae_expiration' => '2026-10-17',
+            'doc_type' => 96,
+            'doc_number' => '38823149',
+            'receiver_name' => 'Lorena Caballero',
+            'receiver_address' => 'Jujuy 152',
+            'receiver_tax_condition' => 'consumidor_final',
+            'net_amount' => 1000.00,
+            'iva_amount' => 210.00,
+            'total_amount' => 1210.00,
+            'status' => 'authorized',
+            'issued_at' => now(),
+        ]);
+
+        $resHistory = $this->actingAsAdmin($this->adminUser)
+            ->getJson('/api/electronic-invoices/lookup-recipient?doc_number=38823149');
+        $resHistory->assertStatus(200)
+            ->assertJsonPath('data.found', true)
+            ->assertJsonPath('data.source', 'invoice_history')
+            ->assertJsonPath('data.name', 'Lorena Caballero')
+            ->assertJsonPath('data.address', 'Jujuy 152');
+
+        // Capa 3: Consulta online al Padrón de ARCA (A13) por DNI desconocido localmente
+        Cache::put("afip_ta_{$this->testCuit}_ws_sr_padron_a13_testing", [
+            'token' => 'FAKE_TOKEN_A13',
+            'sign' => 'FAKE_SIGN_A13',
+            'expiration_time' => date('c', time() + 36000),
+        ], 36000);
+
+        Http::fake([
+            '*personaServiceA13*' => function (HttpClientRequest $req) {
+                $body = $req->body();
+                if (str_contains($body, 'getIdPersonaListByDocumento')) {
+                    return Http::response(
+                        '<?xml version="1.0" encoding="UTF-8"?>'
+                        .'<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+                        .'<soap:Body><ns2:getIdPersonaListByDocumentoResponse xmlns:ns2="http://a13.soap.ws.server.puc.sr/">'
+                        .'<idPersonaListReturn><idPersona>20234567896</idPersona></idPersonaListReturn>'
+                        .'</ns2:getIdPersonaListByDocumentoResponse></soap:Body></soap:Envelope>',
+                        200
+                    );
+                }
+
+                return Http::response(
+                    '<?xml version="1.0" encoding="UTF-8"?>'
+                    .'<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+                    .'<soap:Body><ns2:getPersonaResponse xmlns:ns2="http://a13.soap.ws.server.puc.sr/">'
+                    .'<personaReturn><persona>'
+                    .'<apellido>GOMEZ</apellido><nombre>ROBERTO CARLOS</nombre>'
+                    .'<domicilio><direccion>AV LIBERTADOR 900</direccion><localidad>FORMOSA</localidad><descripcionProvincia>FORMOSA</descripcionProvincia></domicilio>'
+                    .'</persona></personaReturn>'
+                    .'</ns2:getPersonaResponse></soap:Body></soap:Envelope>',
+                    200
+                );
+            },
+        ]);
+
+        $resArca = $this->actingAsAdmin($this->adminUser)
+            ->getJson('/api/electronic-invoices/lookup-recipient?doc_number=23456789');
+        $resArca->assertStatus(200)
+            ->assertJsonPath('data.found', true)
+            ->assertJsonPath('data.source', 'arca_padron')
+            ->assertJsonPath('data.name', 'Gomez Roberto Carlos')
+            ->assertJsonPath('data.address', 'Av Libertador 900, Formosa, Formosa');
+    }
 }

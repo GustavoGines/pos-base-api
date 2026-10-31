@@ -199,6 +199,14 @@ class AfipWsfeService
 
         $voucherLetter = AfipHelper::getVoucherLetter($voucherType);
 
+        // Validar coherencia entre Condición IVA del Emisor y Clase de Comprobante (A/B vs C)
+        $issuerTaxCondition = BusinessSetting::where('key', 'tax_condition')->value('value');
+        if (! AfipHelper::isValidVoucherForIssuer($issuerTaxCondition, $voucherType)) {
+            throw new InvalidArgumentException(
+                "El tipo de comprobante Clase {$voucherLetter} no es válido para la condición frente al IVA del comercio emisor ({$issuerTaxCondition})."
+            );
+        }
+
         // Receptor
         $customer = $sale->customer;
         $docType = (int) ($options['doc_type'] ?? ($customer?->document_type ?? AfipHelper::DOC_CONSUMIDOR_FINAL));
@@ -207,7 +215,13 @@ class AfipWsfeService
 
         $receiverName = $options['receiver_name'] ?? ($customer?->name ?? 'Consumidor Final');
         $receiverAddress = $options['receiver_address'] ?? ($customer?->fiscal_address ?? $customer?->delivery_address ?? '');
-        $receiverTaxCondition = $options['receiver_tax_condition'] ?? ($customer?->tax_condition ?? 'consumidor_final');
+        $defaultTaxCondition = $voucherLetter === 'A' ? 'responsable_inscripto' : 'consumidor_final';
+        $receiverTaxCondition = $options['receiver_tax_condition'] ?? ($customer?->tax_condition ?? $defaultTaxCondition);
+        if ($voucherLetter === 'A' && ! in_array(AfipHelper::getCondicionIvaReceptorId((string) $receiverTaxCondition), [1, 6], true)) {
+            $receiverTaxCondition = 'responsable_inscripto';
+        } elseif ($voucherLetter === 'B' && ! in_array(AfipHelper::getCondicionIvaReceptorId((string) $receiverTaxCondition), [4, 5], true)) {
+            $receiverTaxCondition = 'consumidor_final';
+        }
 
         // Validaciones por tipo de comprobante
         // Clase A (Factura A, Nota de Débito A, Nota de Crédito A): CUIT receptor obligatorio
@@ -557,7 +571,7 @@ class AfipWsfeService
                 '<ImpIVA>'.number_format($ivaAmount, 2, '.', '').'</ImpIVA>'.
                 '<MonId>PES</MonId>'.
                 '<MonCotiz>1</MonCotiz>'.
-                '<CondicionIVAReceptorId>'.AfipHelper::getCondicionIvaReceptorId($receiverTaxCondition).'</CondicionIVAReceptorId>'.
+                '<CondicionIVAReceptorId>'.AfipHelper::getCondicionIvaReceptorId((string) $receiverTaxCondition, $voucherLetter).'</CondicionIVAReceptorId>'.
                 $cbtesAsocXml.
                 $tributosXml.
                 $ivaXml.

@@ -187,4 +187,53 @@ class AfipServiceTest extends TestCase
         $this->assertSame(AfipHelper::VOUCHER_FACTURA_B, AfipHelper::resolveVoucherTypeFromLetter('B'));
         $this->assertSame(AfipHelper::VOUCHER_FACTURA_C, AfipHelper::resolveVoucherTypeFromLetter('C'));
     }
+
+    /**
+     * Valida el mapeo y validación cruzada de CondicionIVAReceptorId (RG 5616).
+     */
+    public function test_rg_5616_condicion_iva_receptor_id_mapping_and_cross_validation(): void
+    {
+        $this->assertSame(1, AfipHelper::getCondicionIvaReceptorId('responsable_inscripto'));
+        $this->assertSame(1, AfipHelper::getCondicionIvaReceptorId('IVA Responsable Inscripto'));
+        $this->assertSame(4, AfipHelper::getCondicionIvaReceptorId('exento'));
+        $this->assertSame(4, AfipHelper::getCondicionIvaReceptorId('IVA Sujeto Exento'));
+        $this->assertSame(5, AfipHelper::getCondicionIvaReceptorId('consumidor_final'));
+        $this->assertSame(5, AfipHelper::getCondicionIvaReceptorId('A Consumidor Final'));
+        $this->assertSame(6, AfipHelper::getCondicionIvaReceptorId('monotributo'));
+        $this->assertSame(6, AfipHelper::getCondicionIvaReceptorId('Responsable Monotributo'));
+
+        // Validación cruzada: Factura A admite 1 y 6, corrige 5 a 1
+        $this->assertSame(1, AfipHelper::getCondicionIvaReceptorId('responsable_inscripto', 'A'));
+        $this->assertSame(6, AfipHelper::getCondicionIvaReceptorId('monotributo', 'A'));
+        $this->assertSame(1, AfipHelper::getCondicionIvaReceptorId('consumidor_final', 'A'));
+
+        // Validación cruzada: Factura B admite 4 y 5, corrige 1 o 6 a 5
+        $this->assertSame(5, AfipHelper::getCondicionIvaReceptorId('consumidor_final', 'B'));
+        $this->assertSame(4, AfipHelper::getCondicionIvaReceptorId('exento', 'B'));
+        $this->assertSame(5, AfipHelper::getCondicionIvaReceptorId('responsable_inscripto', 'B'));
+        $this->assertSame(5, AfipHelper::getCondicionIvaReceptorId('monotributo', 'B'));
+    }
+
+    /**
+     * Valida que la condición frente al IVA del comercio emisor restrinja las clases de comprobante (A/B vs C).
+     */
+    public function test_issuer_tax_condition_voucher_validation(): void
+    {
+        // Responsable Inscripto: permite A y B, rechaza C
+        $this->assertTrue(AfipHelper::isValidVoucherForIssuer('IVA Responsable Inscripto', AfipHelper::VOUCHER_FACTURA_A));
+        $this->assertTrue(AfipHelper::isValidVoucherForIssuer('IVA Responsable Inscripto', AfipHelper::VOUCHER_FACTURA_B));
+        $this->assertFalse(AfipHelper::isValidVoucherForIssuer('IVA Responsable Inscripto', AfipHelper::VOUCHER_FACTURA_C));
+        $this->assertFalse(AfipHelper::isValidVoucherForIssuer('responsable_inscripto', AfipHelper::VOUCHER_NOTA_CREDITO_C));
+
+        // Monotributo / Exento: permite C, rechaza A y B
+        $this->assertTrue(AfipHelper::isValidVoucherForIssuer('Responsable Monotributo', AfipHelper::VOUCHER_FACTURA_C));
+        $this->assertFalse(AfipHelper::isValidVoucherForIssuer('Responsable Monotributo', AfipHelper::VOUCHER_FACTURA_A));
+        $this->assertFalse(AfipHelper::isValidVoucherForIssuer('Responsable Monotributo', AfipHelper::VOUCHER_FACTURA_B));
+        $this->assertTrue(AfipHelper::isValidVoucherForIssuer('IVA Sujeto Exento', AfipHelper::VOUCHER_FACTURA_C));
+        $this->assertFalse(AfipHelper::isValidVoucherForIssuer('IVA Sujeto Exento', AfipHelper::VOUCHER_FACTURA_B));
+
+        // Sin configurar: permisivo
+        $this->assertTrue(AfipHelper::isValidVoucherForIssuer(null, AfipHelper::VOUCHER_FACTURA_B));
+        $this->assertTrue(AfipHelper::isValidVoucherForIssuer('', AfipHelper::VOUCHER_FACTURA_C));
+    }
 }

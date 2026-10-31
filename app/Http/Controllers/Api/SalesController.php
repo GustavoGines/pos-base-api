@@ -30,12 +30,15 @@ class SalesController extends Controller
         $userId = $request->query('user_id');
 
         $query = Sale::with([
-            'items.product:id,name,internal_code,stock,is_sold_by_weight',
+            'items.product:id,name,internal_code,stock,is_sold_by_weight,selling_price',
+            'items.product.offers',
             'user:id,name',
             'cashier:id,name',
+            'customer:id,name,document_type,document_number,tax_condition,fiscal_address,delivery_address',
             'cashShift.cashRegister:id,name',
             'payments.paymentMethod:id,name,code,is_cash',
             'electronicInvoice',
+            'deliveryNote.items.product:id,name,internal_code,is_sold_by_weight',
         ])
             ->where('status', '!=', 'pending')
             ->latest();
@@ -100,13 +103,15 @@ class SalesController extends Controller
     public function show(Sale $sale)
     {
         $sale->load([
-            'items.product:id,name,internal_code,is_sold_by_weight',
+            'items.product:id,name,internal_code,is_sold_by_weight,selling_price',
+            'items.product.offers',
             'user:id,name',
             'cashier:id,name',
             'cashShift.cashRegister:id,name',
             'customer:id,name,document_number',
             'payments.paymentMethod:id,name,code,is_cash',
             'electronicInvoice',
+            'deliveryNote.items.product:id,name,internal_code,is_sold_by_weight',
         ]);
 
         return response()->json($sale);
@@ -181,7 +186,7 @@ class SalesController extends Controller
 
         return response()->json([
             'message' => "Venta #{$completedSale->id} cobrada correctamente.",
-            'sale' => $completedSale->fresh()->load('items.product', 'user:id,name', 'cashier:id,name', 'customer', 'payments.paymentMethod:id,name,code,is_cash'),
+            'sale' => $completedSale->fresh()->load('items.product', 'user:id,name', 'cashier:id,name', 'customer', 'payments.paymentMethod:id,name,code,is_cash', 'deliveryNote.items.product'),
         ]);
     }
 

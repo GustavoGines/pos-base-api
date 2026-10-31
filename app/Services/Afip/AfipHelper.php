@@ -202,17 +202,61 @@ class AfipHelper
     /**
      * Resuelve el ID de la Condición Frente al IVA del Receptor
      * según la Resolución General Nro 5616.
-     *
-     * @param string
      */
-    public static function getCondicionIvaReceptorId(string $taxCondition): int
+    public static function getCondicionIvaReceptorId(string $taxCondition, ?string $voucherLetter = null): int
     {
-        return match (strtolower($taxCondition)) {
-            'responsable_inscripto' => 1,
-            'exento' => 4,
-            'consumidor_final' => 5,
-            'monotributo' => 6,
+        $normalized = strtolower(trim($taxCondition));
+        $normalized = str_replace(['_', '-'], ' ', $normalized);
+        $normalized = (string) preg_replace('/\s+/', ' ', $normalized);
+
+        $id = match (true) {
+            str_contains($normalized, 'inscripto') => 1,
+            str_contains($normalized, 'exento') => 4,
+            str_contains($normalized, 'monotributo') => 6,
+            str_contains($normalized, 'consumidor final') => 5,
             default => 5, // Fallback por defecto a Consumidor Final
         };
+
+        // RG 5616 Validación cruzada preventiva (evita rechazo ARCA 10243):
+        // - Clase A admite Receptor 1 (Resp. Inscripto) o 6 (Monotributo)
+        // - Clase B admite Receptor 5 (Consumidor Final) o 4 (Sujeto Exento)
+        if ($voucherLetter !== null) {
+            $letter = strtoupper(trim($voucherLetter));
+            if ($letter === 'A' && ! in_array($id, [1, 6], true)) {
+                return 1;
+            }
+            if ($letter === 'B' && ! in_array($id, [4, 5], true)) {
+                return 5;
+            }
+        }
+
+        return $id;
+    }
+
+    /**
+     * Valida si el tipo de comprobante es compatible con la condición frente al IVA del comercio emisor.
+     * - Responsable Inscripto: solo puede emitir Clase A (1, 2, 3) o Clase B (6, 7, 8).
+     * - Monotributo o Sujeto Exento: solo puede emitir Clase C (11, 12, 13).
+     * - Si la condición del emisor no está configurada, permite el comprobante por compatibilidad.
+     */
+    public static function isValidVoucherForIssuer(?string $issuerTaxCondition, int $voucherType): bool
+    {
+        if ($issuerTaxCondition === null || trim($issuerTaxCondition) === '') {
+            return true;
+        }
+
+        $normalized = strtolower(trim($issuerTaxCondition));
+        $normalized = str_replace(['_', '-'], ' ', $normalized);
+        $voucherLetter = self::getVoucherLetter($voucherType);
+
+        if (str_contains($normalized, 'inscripto')) {
+            return in_array($voucherLetter, ['A', 'B'], true);
+        }
+
+        if (str_contains($normalized, 'monotributo') || str_contains($normalized, 'exento')) {
+            return $voucherLetter === 'C';
+        }
+
+        return true;
     }
 }
