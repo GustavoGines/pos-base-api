@@ -31,7 +31,7 @@ class TiendaNubeAdapter extends AbstractEcommerceAdapter
         return parent::http()
             ->withHeaders([
                 'Authentication' => 'bearer '.$token,
-                'User-Agent' => 'Sistema POS (soporte@sistemapos.com)',
+                'User-Agent' => 'Caja4U (soporte@dev4u.com)',
             ]);
     }
 

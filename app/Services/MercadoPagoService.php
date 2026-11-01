@@ -175,7 +175,7 @@ class MercadoPagoService
         $payload = [
             'external_reference' => $externalRef,
             'title' => "Cobro Mostrador {$externalRef}",
-            'description' => 'Sistema POS Mostrador',
+            'description' => 'Caja4U Mostrador',
             'total_amount' => $roundedTotal,
             'items' => $mappedItems,
         ];

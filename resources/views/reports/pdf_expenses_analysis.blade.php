@@ -154,7 +154,7 @@
     <div class="header">
         <div class="header-top">
             <div>
-                <div class="brand-name">Sistema POS</div>
+                <div class="brand-name">Caja4U</div>
                 <div class="report-title">Análisis de Gastos</div>
             </div>
             <div class="header-info">

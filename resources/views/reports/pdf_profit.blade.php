@@ -232,7 +232,7 @@
 <div class="header">
     <div class="header-top">
         <div>
-            <div class="brand-name">Sistema POS</div>
+            <div class="brand-name">Caja4U</div>
             <div class="brand-subtitle">Módulo de Rentabilidad y Auditoría</div>
         </div>
         <div class="report-meta">
@@ -401,7 +401,7 @@
 
 {{-- ═══════════════════════ PIE DE PÁGINA ════════════════════ --}}
 <div class="footer" style="padding: 0 24px 14px;">
-    <span>Sistema POS · Módulo Enterprise · Confidencial</span>
+    <span>Caja4U · Módulo Enterprise · Confidencial</span>
     <span>Generado automáticamente el {{ $generatedAt }}</span>
 </div>
 
