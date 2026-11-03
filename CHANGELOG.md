@@ -1,6 +1,16 @@
-# Changelog - Sistema POS (Backend API)
+# Changelog - Caja4U (Backend API)
 Todos los cambios notables del servidor base están documentados aquí.
 
+
+## [2.1.0] - 2026-11-03
+### Facturación Electrónica ARCA / AFIP y Seguridad
+- Soporte integral para Factura A, B y C con cálculo de IVA discriminado y validación de padrón/receptor.
+- Generador de CSR y configuración guiada de certificados digitales ARCA/AFIP con soporte de entorno Demo (Homologación) y Producción.
+- Verificación criptográfica Ed25519 offline/online para validación de licencias y planes modulares.
+### Catálogo, Reportes y Branding Caja4U
+- Rebranding del motor backend a **Caja4U** manteniendo compatibilidad total con variables de entorno y sesiones existentes.
+- Optimización de consultas SQL en alertas predictivas de inventario (`havingRaw`) compatible con MySQL `only_full_group_by`.
+- Traducciones completas de validación al español (`lang/es/validation.php`) y seeder de datos de demostración (`DemoMarketingDataSeeder`).
 
 ## [2.0.1] - 2026-10-12
 ### Parches y Compatibilidad
