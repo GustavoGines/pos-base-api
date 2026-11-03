@@ -36,6 +36,7 @@ class InventoryAlertService
             ->leftJoin('categories', 'categories.id', '=', 'products.category_id')
             ->where('products.active', true)
             ->where('products.is_combo', false)
+            ->whereNull('products.deleted_at')
             ->selectRaw(sprintf("
                 products.id                     as product_id,
                 products.name                   as product_name,
