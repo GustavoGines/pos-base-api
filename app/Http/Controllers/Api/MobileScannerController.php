@@ -27,8 +27,14 @@ class MobileScannerController extends Controller
     public function printLabel(Request $request)
     {
         $request->validate(['product_id' => 'required|integer']);
-        broadcast(new PrintLabelRequested($request->product_id, $request->target_pc ?? 'caja-1'));
+        try {
+            broadcast(new PrintLabelRequested($request->product_id, $request->target_pc ?? 'caja-1'));
 
-        return response()->json(['status' => 'Print label event sent']);
+            return response()->json(['status' => 'Print label event sent']);
+        } catch (\Throwable $e) {
+            Log::error('Broadcast error in /mobile/print-label: '.$e->getMessage());
+
+            return response()->json(['status' => 'Event queued, but Reverb might be down', 'error' => $e->getMessage()]);
+        }
     }
 }

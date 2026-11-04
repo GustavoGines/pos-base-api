@@ -35,7 +35,7 @@ class BusinessSettingSeeder extends Seeder
         ];
 
         foreach ($settings as $setting) {
-            BusinessSetting::updateOrCreate(
+            BusinessSetting::firstOrCreate(
                 ['key' => $setting['key']],
                 ['value' => $setting['value']]
             );

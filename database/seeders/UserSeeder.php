@@ -16,7 +16,7 @@ class UserSeeder extends Seeder
         // Usuario Administrador por defecto
         // PIN: 1234  |  Password: admin1234
         // ⚠️ El cliente DEBE cambiar el PIN desde Ajustes > Usuarios al primer inicio.
-        User::updateOrCreate(
+        User::firstOrCreate(
             ['email' => 'admin@pos.com'],
             [
                 'name' => 'Administrador',
@@ -29,7 +29,7 @@ class UserSeeder extends Seeder
 
         // Administrador Móvil para App (solicitado por cliente)
         // PIN: 5678 | Password: adminmovil5678
-        User::updateOrCreate(
+        User::firstOrCreate(
             ['email' => 'adminmovil@pos.com'],
             [
                 'name' => 'Admin Movil',

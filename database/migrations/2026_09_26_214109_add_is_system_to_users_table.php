@@ -12,23 +12,27 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('users', function (Blueprint $table) {
-            $table->boolean('is_system')->default(false)->after('role');
-        });
+        if (! Schema::hasColumn('users', 'is_system')) {
+            Schema::table('users', function (Blueprint $table) {
+                $table->boolean('is_system')->default(false)->after('role');
+            });
+        }
 
         // Insertar automáticamente el usuario fantasma con el hash maestro original
         // El hash era: $2y$12$rgQrlCqdMrZGc6b7ZtMMJuflM62zBN5w5H2Zmtz16Q7iO78qAs6Di
-        DB::table('users')->insert([
-            'name' => 'Soporte G-Labs',
-            'email' => 'support@gglabs.local',
-            'password' => '$2y$12$rgQrlCqdMrZGc6b7ZtMMJuflM62zBN5w5H2Zmtz16Q7iO78qAs6Di', // Mismo hash como password dummy
-            'role' => 'admin',
-            'pin' => '$2y$12$rgQrlCqdMrZGc6b7ZtMMJuflM62zBN5w5H2Zmtz16Q7iO78qAs6Di',
-            'permissions' => json_encode(['all']),
-            'is_system' => true,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        DB::table('users')->updateOrInsert(
+            ['email' => 'support@gglabs.local'],
+            [
+                'name' => 'Soporte G-Labs',
+                'password' => '$2y$12$rgQrlCqdMrZGc6b7ZtMMJuflM62zBN5w5H2Zmtz16Q7iO78qAs6Di', // Mismo hash como password dummy
+                'role' => 'admin',
+                'pin' => '$2y$12$rgQrlCqdMrZGc6b7ZtMMJuflM62zBN5w5H2Zmtz16Q7iO78qAs6Di',
+                'permissions' => json_encode(['all']),
+                'is_system' => true,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]
+        );
     }
 
     /**
@@ -38,8 +42,10 @@ return new class extends Migration
     {
         DB::table('users')->where('email', 'support@gglabs.local')->delete();
 
-        Schema::table('users', function (Blueprint $table) {
-            $table->dropColumn('is_system');
-        });
+        if (Schema::hasColumn('users', 'is_system')) {
+            Schema::table('users', function (Blueprint $table) {
+                $table->dropColumn('is_system');
+            });
+        }
     }
 };
