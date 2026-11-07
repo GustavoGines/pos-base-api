@@ -677,7 +677,7 @@ class PermissionsV4SecurityChallengeTest extends TestCase
     {
         $admin = User::factory()->create(['role' => 'admin']);
         $allPermissions = Permissions::all();
-        $this->assertCount(25, $allPermissions);
+        $this->assertCount(26, $allPermissions);
 
         // 1. Create cashier with all 25 permissions
         $responseCreate = $this->actingAsAdmin($admin)->postJson('/api/users', [
