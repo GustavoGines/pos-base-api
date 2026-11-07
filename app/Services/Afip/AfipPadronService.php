@@ -237,11 +237,11 @@ class AfipPadronService
                 ? self::URL_PADRON_A13_PROD
                 : self::URL_PADRON_A13_HOMO;
 
-            $targetCuit = $len === 11
-                ? $digits
-                : $this->resolveCuitByDniInA13($endpointA13, $ticketA13, $issuerCuit, $digits);
+            $targetCuits = $len === 11
+                ? [$digits]
+                : $this->resolveCuitsByDniInA13($endpointA13, $ticketA13, $issuerCuit, $digits);
 
-            if ($targetCuit !== null) {
+            foreach ($targetCuits as $targetCuit) {
                 $persona = $this->getPersonaFromPadronSoap(
                     $endpointA13,
                     'http://a13.soap.ws.server.puc.sr/',
@@ -259,9 +259,9 @@ class AfipPadronService
             Log::debug('ARCA Padrón A13 no disponible o no delegado: '.$e->getMessage());
         }
 
-        // 2. Fallback a ws_sr_constancia_inscripto (Padrón A5)
+        // 2. Fallback a ws_sr_padron_a5 (Padrón A5)
         try {
-            $ticketA5 = $this->wsaaService->getAccessTicket('ws_sr_constancia_inscripto');
+            $ticketA5 = $this->wsaaService->getAccessTicket('ws_sr_padron_a5');
             $endpointA5 = $environment === 'production'
                 ? self::URL_PADRON_A5_PROD
                 : self::URL_PADRON_A5_HOMO;
@@ -285,21 +285,24 @@ class AfipPadronService
                 }
             }
         } catch (Throwable $e) {
-            Log::debug('ARCA Padrón A5 (Constancia Inscripto) no disponible: '.$e->getMessage());
+            Log::debug('ARCA Padrón A5 no disponible: '.$e->getMessage());
         }
 
         return null;
     }
 
     /**
-     * Traduce un DNI (7 u 8 dígitos) a su CUIT/CUIL activo en ARCA usando `getIdPersonaListByDocumento` de Padrón A13.
+     * Traduce un DNI (7 u 8 dígitos) a su lista de CUIT/CUIL candidatos en ARCA usando `getIdPersonaListByDocumento` de Padrón A13,
+     * priorizando aquellos cuyos 8 dígitos centrales coinciden con el DNI consultado.
+     *
+     * @return list<string>
      */
-    protected function resolveCuitByDniInA13(
+    protected function resolveCuitsByDniInA13(
         string $endpoint,
         array $ticket,
         string $issuerCuit,
         string $dni
-    ): ?string {
+    ): array {
         $soap = '<?xml version="1.0" encoding="UTF-8"?>'.
             '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:a13="http://a13.soap.ws.server.puc.sr/">'.
             '<soapenv:Header/>'.
@@ -319,15 +322,41 @@ class AfipPadronService
         ])->timeout(6)->send('POST', $endpoint, ['body' => $soap]);
 
         if (! $response->successful()) {
-            return null;
+            return [];
         }
 
         $xml = $response->body();
-        if (preg_match('/<idPersona>(\d{11})<\/idPersona>/', $xml, $m)) {
-            return $m[1];
+        if (preg_match_all('/<idPersona>(\d{11})<\/idPersona>/', $xml, $matches) && ! empty($matches[1])) {
+            $paddedDni = str_pad(preg_replace('/\D/', '', $dni), 8, '0', STR_PAD_LEFT);
+            $exactMatches = [];
+            $otherMatches = [];
+
+            foreach (array_unique($matches[1]) as $cuit) {
+                if (substr($cuit, 2, 8) === $paddedDni) {
+                    $exactMatches[] = $cuit;
+                } else {
+                    $otherMatches[] = $cuit;
+                }
+            }
+
+            return array_values(array_merge($exactMatches, $otherMatches));
         }
 
-        return null;
+        return [];
+    }
+
+    /**
+     * Compatibilidad con llamadas que esperen un único CUIT.
+     */
+    protected function resolveCuitByDniInA13(
+        string $endpoint,
+        array $ticket,
+        string $issuerCuit,
+        string $dni
+    ): ?string {
+        $cuits = $this->resolveCuitsByDniInA13($endpoint, $ticket, $issuerCuit, $dni);
+
+        return $cuits[0] ?? null;
     }
 
     /**
@@ -376,12 +405,15 @@ class AfipPadronService
             return null;
         }
 
+        $tipoPersona = strtoupper($this->extractXmlTag($xml, 'tipoPersona'));
         $razonSocial = $this->extractXmlTag($xml, 'razonSocial');
         $apellido = $this->extractXmlTag($xml, 'apellido');
         $nombre = $this->extractXmlTag($xml, 'nombre');
 
         $fullName = '';
-        if ($razonSocial !== '') {
+        if ($tipoPersona === 'FISICA' && ($apellido !== '' || $nombre !== '')) {
+            $fullName = trim($apellido.' '.$nombre);
+        } elseif ($razonSocial !== '') {
             $fullName = $razonSocial;
         } elseif ($apellido !== '' || $nombre !== '') {
             $fullName = trim($apellido.' '.$nombre);

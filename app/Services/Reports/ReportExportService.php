@@ -19,10 +19,10 @@ class ReportExportService
     /**
      * Export Profit by Rubro to Excel.
      */
-    public function exportProfitByRubroExcel(string $startDate, string $endDate, mixed $rubroFilter): BinaryFileResponse
+    public function exportProfitByRubroExcel(string $startDate, string $endDate, mixed $rubroFilter, string $fiscalFilter = 'all'): BinaryFileResponse
     {
         return Excel::download(
-            new ProfitByRubroExport($startDate, $endDate, $rubroFilter),
+            new ProfitByRubroExport($startDate, $endDate, $rubroFilter, null, $fiscalFilter),
             'reporte_ganancias_rubros.xlsx'
         );
     }
@@ -30,12 +30,12 @@ class ReportExportService
     /**
      * Export Profit by Category / Brand to Excel.
      */
-    public function exportProfitByCategoryExcel(string $startDate, string $endDate, string $type): BinaryFileResponse
+    public function exportProfitByCategoryExcel(string $startDate, string $endDate, string $type, string $fiscalFilter = 'all'): BinaryFileResponse
     {
         $filename = $type === 'brand' ? 'reporte_ganancias_marcas.xlsx' : 'reporte_ganancias_categorias.xlsx';
 
         return Excel::download(
-            new ProfitByCategoryExport($startDate, $endDate, $type),
+            new ProfitByCategoryExport($startDate, $endDate, $type, null, null, $fiscalFilter),
             $filename
         );
     }
@@ -49,7 +49,8 @@ class ReportExportService
         string $groupLabel,
         string $startDate,
         string $endDate,
-        string $type = 'category'
+        string $type = 'category',
+        string $fiscalFilter = 'all'
     ): Response {
         $totalRevenue = $data->sum('total_revenue');
         $totalProfit = $data->sum('total_profit');
@@ -57,7 +58,7 @@ class ReportExportService
         $totalCost = $totalWithCost - $data->sum('total_profit');
         $avgMargin = $totalWithCost > 0 ? ($totalProfit / $totalWithCost) * 100 : 0;
 
-        $salesByPlan = DB::table('sales')
+        $salesByPlanQuery = DB::table('sales')
             ->selectRaw("COALESCE(price_list, 'base') as plan_name, COUNT(*) as total_tickets, SUM(total) as total_revenue")
             ->whereBetween('created_at', [Carbon::parse($startDate)->startOfDay(), Carbon::parse($endDate)->endOfDay()])
             ->where('status', 'completed')
@@ -66,7 +67,18 @@ class ReportExportService
                     ->from('customers')
                     ->whereColumn('customers.id', 'sales.customer_id')
                     ->where('customers.is_internal_account', true);
-            })
+            });
+
+        if ($fiscalFilter === 'fiscal') {
+            $salesByPlanQuery->where('invoice_status', 'invoiced');
+        } elseif ($fiscalFilter === 'non_fiscal') {
+            $salesByPlanQuery->where(function ($q) {
+                $q->whereNull('invoice_status')
+                    ->orWhere('invoice_status', '!=', 'invoiced');
+            });
+        }
+
+        $salesByPlan = $salesByPlanQuery
             ->groupByRaw("COALESCE(price_list, 'base')")
             ->orderByDesc('total_revenue')
             ->get();
@@ -97,10 +109,10 @@ class ReportExportService
     /**
      * Export Monthly Balance to Excel.
      */
-    public function exportMonthlyBalanceExcel(string $startMonth, string $endMonth): BinaryFileResponse
+    public function exportMonthlyBalanceExcel(string $startMonth, string $endMonth, string $fiscalFilter = 'all'): BinaryFileResponse
     {
         return Excel::download(
-            new MonthlyBalanceExport($startMonth, $endMonth),
+            new MonthlyBalanceExport($startMonth, $endMonth, null, $fiscalFilter),
             'balance_mensual_'.$startMonth.'_al_'.$endMonth.'.xlsx'
         );
     }

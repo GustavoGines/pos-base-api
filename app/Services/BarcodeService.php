@@ -17,14 +17,14 @@ class BarcodeService
             $lastCode = Product::withTrashed()
                 ->lockForUpdate()
                 ->get(['internal_code'])
-                ->filter(fn ($p) => ctype_digit((string) $p->internal_code))
+                ->filter(fn ($p) => ctype_digit((string) $p->internal_code) && strlen((string) $p->internal_code) <= 5)
                 ->max(fn ($p) => (int) $p->internal_code);
             $nextNumber = $lastCode ? $lastCode + 1 : 1;
         } else {
-            // Obtener el último código interno numérico (incluso si fue borrado)
+            // Obtener el último código interno numérico de hasta 5 dígitos (incluso si fue borrado)
             $lastCode = Product::withTrashed()
                 ->lockForUpdate()
-                ->whereRaw('internal_code REGEXP "^[0-9]+$"')
+                ->whereRaw('internal_code REGEXP "^[0-9]{1,5}$"')
                 ->orderByRaw('CAST(internal_code AS UNSIGNED) DESC')
                 ->first();
             $nextNumber = $lastCode ? (int) $lastCode->internal_code + 1 : 1;

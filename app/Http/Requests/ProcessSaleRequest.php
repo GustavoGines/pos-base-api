@@ -35,6 +35,8 @@ class ProcessSaleRequest extends FormRequest
             'payments.*.mp_payment_id' => 'nullable|string|max:50',
             'payments.*.mp_order_id' => 'nullable|string|max:50',
             'payments.*.reference_id' => 'nullable|string|max:100',
+            'payments.*.transfer_account_alias' => 'nullable|string|max:100',
+            'payments.*.transfer_sender_name' => 'nullable|string|max:150',
             'tendered_amount' => 'nullable|numeric|min:0',
             'change_amount' => 'nullable|numeric|min:0',
             'cash_shift_id' => [
@@ -48,10 +50,27 @@ class ProcessSaleRequest extends FormRequest
             'status' => 'nullable|string|in:pending,completed',
             'items' => 'required|array|min:1',
             'items.*.product_id' => [
-                'required',
+                'nullable',
                 'integer',
                 Rule::exists('products', 'id')->whereNull('deleted_at'),
             ],
+            'items.*.is_temporary' => 'nullable|boolean',
+            'items.*.save_to_catalog' => 'nullable|boolean',
+            'items.*.name' => 'nullable|string|max:255',
+            'items.*.product_name' => 'nullable|string|max:255',
+            'items.*.custom_description' => 'nullable|string|max:255',
+            'items.*.custom_details' => 'nullable|string|max:1000',
+            'items.*.cost_price' => 'nullable|numeric|min:0',
+            'items.*.iva_rate' => 'nullable|numeric|in:0,10.5,21,27',
+            'items.*.is_sold_by_weight' => 'nullable|boolean',
+            'items.*.is_combo' => 'nullable|boolean',
+            'items.*.combo_ingredients' => 'nullable|array',
+            'items.*.combo_ingredients.*.id' => [
+                'required_with:items.*.combo_ingredients',
+                'integer',
+                Rule::exists('products', 'id')->whereNull('deleted_at'),
+            ],
+            'items.*.combo_ingredients.*.quantity' => 'required_with:items.*.combo_ingredients|numeric|min:0.001',
             'items.*.quantity' => 'required|numeric|min:0.001',
             'items.*.unit_price' => 'required|numeric|min:0',
             'items.*.subtotal' => 'required|numeric|min:0',
@@ -99,6 +118,32 @@ class ProcessSaleRequest extends FormRequest
     {
         return [
             function ($validator) {
+                $items = $this->input('items', []);
+                if (is_array($items)) {
+                    foreach ($items as $idx => $item) {
+                        $hasProductId = ! empty($item['product_id']);
+                        $isTemporary = filter_var($item['is_temporary'] ?? false, FILTER_VALIDATE_BOOLEAN);
+                        $saveToCatalog = filter_var($item['save_to_catalog'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
+                        if (! $hasProductId && ! $isTemporary && ! $saveToCatalog) {
+                            $validator->errors()->add(
+                                "items.{$idx}.product_id",
+                                'Debe especificar un producto del catálogo o marcar el ítem como temporal / creación rápida.'
+                            );
+                        }
+
+                        if (! $hasProductId && ($isTemporary || $saveToCatalog)) {
+                            $name = trim((string) ($item['name'] ?? $item['product_name'] ?? $item['custom_description'] ?? ''));
+                            if ($name === '') {
+                                $validator->errors()->add(
+                                    "items.{$idx}.name",
+                                    'La descripción o nombre es obligatoria para productos temporales o rápidos.'
+                                );
+                            }
+                        }
+                    }
+                }
+
                 if ($this->input('status') === 'pending') {
                     return;
                 }

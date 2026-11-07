@@ -191,7 +191,12 @@
                     <td class="text-center">
                         {{ fmod($item->quantity, 1) == 0 ? number_format($item->quantity, 0) : number_format($item->quantity, 3) }}
                     </td>
-                    <td>{{ $item->product_name }}</td>
+                    <td>
+                        {{ !empty($item->custom_description) ? $item->custom_description : $item->product_name }}
+                        @if(!empty($item->custom_details))
+                            <br><span style="font-size: 11px; color: #666;">{{ $item->custom_details }}</span>
+                        @endif
+                    </td>
                     <td class="text-right">${{ number_format($item->unit_price, 2, ',', '.') }}</td>
                     <td class="text-right">${{ number_format($item->subtotal, 2, ',', '.') }}</td>
                 </tr>

@@ -12,6 +12,26 @@ use Illuminate\Support\Facades\Hash;
 
 abstract class TestCase extends BaseTestCase
 {
+    protected function setUp(): void
+    {
+        // BLINDAJE CRÍTICO: Si alguien ejecuta phpunit fuera de pos-backend (sin cargar phpunit.xml),
+        // forzar entorno testing y SQLite en memoria ANTES de que RefreshDatabase toque MySQL.
+        foreach ([
+            'APP_ENV' => 'testing',
+            'DB_CONNECTION' => 'sqlite',
+            'DB_DATABASE' => ':memory:',
+            'CACHE_STORE' => 'array',
+            'SESSION_DRIVER' => 'array',
+            'QUEUE_CONNECTION' => 'sync',
+        ] as $key => $value) {
+            $_ENV[$key] = $value;
+            $_SERVER[$key] = $value;
+            putenv("{$key}={$value}");
+        }
+
+        parent::setUp();
+    }
+
     /**
      * Retorna el usuario admin con un token válido.
      * Usar como: $this->withAdminToken($user)->postJson(...)

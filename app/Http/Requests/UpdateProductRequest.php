@@ -24,9 +24,11 @@ class UpdateProductRequest extends FormRequest
 
         if ($this->boolean('is_combo')) {
             $this->merge(['cost_price' => 0]);
+        } elseif ($this->exists('cost_price') && ! $this->filled('cost_price')) {
+            $this->merge(['cost_price' => 0]);
         } elseif ($this->has('selling_price') && ! $this->has('cost_price')) {
             // CP-07: En actualizaciones parciales que sólo envían selling_price, inyectar el cost_price actual
-            // para que la regla gte:cost_price tenga contra qué comparar sin fallar por campo ausente.
+            // para que la validación tenga contra qué comparar sin fallar por campo ausente.
             $routeProduct = $this->route('product');
             if ($routeProduct instanceof Product) {
                 $this->merge(['cost_price' => (float) $routeProduct->cost_price]);
@@ -50,16 +52,28 @@ class UpdateProductRequest extends FormRequest
                 'string',
                 Rule::unique('products')->ignore($productId)->whereNull('deleted_at'),
             ],
-            'cost_price' => 'numeric|min:0',
-            'selling_price' => 'numeric|min:0|gte:cost_price',
+            'cost_price' => 'nullable|numeric|min:0',
+            'selling_price' => [
+                'numeric',
+                'min:0',
+                function (string $attribute, mixed $value, \Closure $fail) {
+                    $cost = is_numeric($this->input('cost_price')) ? (float) $this->input('cost_price') : 0.0;
+                    if ($cost > 0 && is_numeric($value) && (float) $value < $cost) {
+                        $fail('El precio de venta no puede ser menor al precio de costo.');
+                    }
+                },
+            ],
             'price_wholesale' => 'nullable|numeric|min:0',
             'price_card' => 'nullable|numeric|min:0',
             'stock' => 'numeric',
             'min_stock' => 'nullable|numeric|min:0',
             'active' => 'boolean',
+            'needs_catalog_review' => 'boolean',
             'is_sold_by_weight' => 'boolean',
             'unit_type' => 'sometimes|in:un,kg,lt,g',
             'vencimiento_dias' => 'nullable|integer|min:1|max:3650',
+            'expiration_date' => 'nullable|date',
+            'expiry_alert_days' => 'nullable|integer|min:1|max:365',
             'category_id' => ['nullable', 'integer', 'exists:categories,id'],
             'brand_id' => 'nullable|exists:brands,id',
             'supplier_id' => ['nullable', Rule::exists('suppliers', 'id')->whereNull('deleted_at')],

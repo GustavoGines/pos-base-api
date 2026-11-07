@@ -570,4 +570,68 @@ class AfipInvoiceTest extends TestCase
             ->assertJsonPath('data.name', 'Gomez Roberto Carlos')
             ->assertJsonPath('data.address', 'Av Libertador 900, Formosa, Formosa');
     }
+
+    /**
+     * 9. Si getIdPersonaListByDocumento en Padrón A13 devuelve múltiples idPersona (ej. homónimos o claves inactivas),
+     *    prioriza la clave cuyos 8 dígitos centrales coinciden con el DNI y descarta claves inactivas hasta encontrar la activa.
+     */
+    public function test_lookup_recipient_handles_multiple_id_persona_in_a13_and_skips_inactive(): void
+    {
+        Cache::put("afip_ta_{$this->testCuit}_ws_sr_padron_a13_testing", [
+            'token' => 'FAKE_TOKEN_A13',
+            'sign' => 'FAKE_SIGN_A13',
+            'expiration_time' => date('c', time() + 36000),
+        ], 36000);
+
+        Http::fake([
+            '*personaServiceA13*' => function (HttpClientRequest $req) {
+                $body = $req->body();
+                if (str_contains($body, 'getIdPersonaListByDocumento')) {
+                    return Http::response(
+                        '<?xml version="1.0" encoding="UTF-8"?>'
+                        .'<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+                        .'<soap:Body><ns2:getIdPersonaListByDocumentoResponse xmlns:ns2="http://a13.soap.ws.server.puc.sr/">'
+                        .'<idPersonaListReturn>'
+                        .'<idPersona>20113356120</idPersona>'
+                        .'<idPersona>20221062583</idPersona>'
+                        .'<idPersona>20929014731</idPersona>'
+                        .'</idPersonaListReturn>'
+                        .'</ns2:getIdPersonaListByDocumentoResponse></soap:Body></soap:Envelope>',
+                        200
+                    );
+                }
+
+                if (str_contains($body, '<idPersona>20221062583</idPersona>')) {
+                    return Http::response(
+                        '<?xml version="1.0" encoding="UTF-8"?>'
+                        .'<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+                        .'<soap:Body><ns2:getPersonaResponse xmlns:ns2="http://a13.soap.ws.server.puc.sr/">'
+                        .'<personaReturn><persona>'
+                        .'<apellido>SUSUS</apellido><nombre>PVPR SPRSUK SGIRUPE</nombre>'
+                        .'<razonSocial>EEE S. G. S.</razonSocial>'
+                        .'<tipoPersona>FISICA</tipoPersona>'
+                        .'<domicilio><direccion>YATAY 2059</direccion><localidad>PASO DE LOS LIBRES</localidad><descripcionProvincia>CORRIENTES</descripcionProvincia></domicilio>'
+                        .'</persona></personaReturn>'
+                        .'</ns2:getPersonaResponse></soap:Body></soap:Envelope>',
+                        200
+                    );
+                }
+
+                return Http::response(
+                    '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><soap:Fault><faultstring>La clave (CUIT/CUIL) consultada se encuentra INACTIVA</faultstring></soap:Fault></soap:Body></soap:Envelope>',
+                    500
+                );
+            },
+        ]);
+
+        $res = $this->actingAsAdmin($this->adminUser)
+            ->getJson('/api/electronic-invoices/lookup-recipient?doc_number=22106258');
+
+        $res->assertStatus(200)
+            ->assertJsonPath('data.found', true)
+            ->assertJsonPath('data.source', 'arca_padron')
+            ->assertJsonPath('data.cuit', '20221062583')
+            ->assertJsonPath('data.name', 'Susus Pvpr Sprsuk Sgirupe')
+            ->assertJsonPath('data.address', 'Yatay 2059, Paso De Los Libres, Corrientes');
+    }
 }

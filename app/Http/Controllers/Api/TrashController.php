@@ -9,6 +9,7 @@ use App\Models\Customer;
 use App\Models\ExpenseCategory;
 use App\Models\Product;
 use App\Models\Supplier;
+use App\Models\SupplierInvoice;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -27,6 +28,8 @@ class TrashController extends Controller
                 return Product::onlyTrashed();
             case 'suppliers':
                 return Supplier::onlyTrashed();
+            case 'supplier_invoices':
+                return SupplierInvoice::with(['supplier:id,name,cuit', 'user:id,name', 'deletedBy:id,name'])->onlyTrashed();
             case 'cash_movements':
                 return CashMovement::with(['user', 'authorizer', 'deletedBy', 'supplier', 'check'])->onlyTrashed();
             case 'cash_registers':
@@ -59,6 +62,12 @@ class TrashController extends Controller
                     $q->where('name', 'like', $like)
                         ->orWhere('cuit', 'like', $like)
                         ->orWhere('contact_name', 'like', $like);
+                } elseif ($model === 'supplier_invoices') {
+                    $q->where('invoice_number', 'like', $like)
+                        ->orWhere('description', 'like', $like)
+                        ->orWhereHas('supplier', function ($sq) use ($like) {
+                            $sq->where('name', 'like', $like)->orWhere('cuit', 'like', $like);
+                        });
                 } elseif ($model === 'cash_movements') {
                     $q->where('category', 'like', $like)
                         ->orWhere('description', 'like', $like)
@@ -76,12 +85,27 @@ class TrashController extends Controller
     /**
      * Restaurar un elemento eliminado.
      */
-    public function restore($model, $id)
+    public function restore(Request $request, $model, $id)
     {
         if ($model === 'cash_movements') {
             return response()->json([
                 'message' => 'Por seguridad contable, los movimientos de dinero anulados no se pueden restaurar. Debe registrar un movimiento nuevo.',
             ], 422);
+        }
+
+        if ($model === 'supplier_invoices') {
+            try {
+                $restored = app(SupplierInvoiceController::class)->restoreTrashedInvoice($request, (int) $id);
+
+                return response()->json([
+                    'message' => 'Comprobante de proveedor restaurado exitosamente (stock y deuda reaplicados).',
+                    'data' => $restored,
+                ]);
+            } catch (\InvalidArgumentException $e) {
+                return response()->json([
+                    'message' => $e->getMessage(),
+                ], 422);
+            }
         }
 
         $item = $this->getModelQuery($model)->findOrFail($id);

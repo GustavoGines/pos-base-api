@@ -68,6 +68,7 @@ class BusinessSetting extends Model
         'pos_popularity_metric',
         'pos_demote_out_of_stock',
         'pos_popularity_reset_at',
+        'bank_transfer_accounts',
     ];
 
     public static function getSecret(string $key, ?string $default = null): ?string

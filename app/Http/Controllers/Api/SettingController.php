@@ -448,6 +448,38 @@ class SettingController extends Controller
     }
 
     /**
+     * Genera una solicitud de certificado digital CSR (.csr) para ARCA/AFIP.
+     * Utiliza la clave privada instalada o genera una nueva RSA 2048 bits en el servidor.
+     */
+    public function generateAfipCsr(Request $request, AfipCertificateService $certService)
+    {
+        $request->validate([
+            'cuit' => 'required|string',
+            'company_name' => 'nullable|string|max:100',
+            'force_new_key' => 'nullable|boolean',
+        ]);
+
+        try {
+            $result = $certService->generateCsr(
+                $request->input('cuit'),
+                $request->input('company_name'),
+                $request->boolean('force_new_key', false)
+            );
+
+            return response()->json(array_merge([
+                'message' => 'Solicitud CSR (.csr) generada correctamente. Suba este archivo en el portal de ARCA.',
+            ], $result));
+        } catch (DomainException $e) {
+            [$code, $message] = explode(':', $e->getMessage(), 2);
+
+            return response()->json([
+                'message' => $message,
+                'error_code' => $code,
+            ], 422);
+        }
+    }
+
+    /**
      * Sube y almacena el logotipo del negocio.
      */
     public function uploadLogo(UploadLogoRequest $request)

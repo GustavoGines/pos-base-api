@@ -13,8 +13,18 @@ class SupplierInvoiceItem extends Model
         'supplier_invoice_id',
         'product_id',
         'quantity',
+        'previous_cost',
         'unit_cost',
+        'new_selling_price',
         'subtotal',
+    ];
+
+    protected $casts = [
+        'quantity' => 'float',
+        'previous_cost' => 'float',
+        'unit_cost' => 'float',
+        'new_selling_price' => 'float',
+        'subtotal' => 'float',
     ];
 
     public function invoice()
@@ -24,6 +34,6 @@ class SupplierInvoiceItem extends Model
 
     public function product()
     {
-        return $this->belongsTo(Product::class);
+        return $this->belongsTo(Product::class)->withTrashed();
     }
 }

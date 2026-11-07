@@ -76,6 +76,24 @@ class CatalogController extends Controller
         ]);
     }
 
+    private function _isSuppliersFeatureLicensed(): bool
+    {
+        $appPlan = strtolower(trim((string) (DB::table('business_settings')->where('key', 'app_plan')->value('value') ?? '')));
+        if (in_array($appPlan, ['pro', 'premium'], true)) {
+            return true;
+        }
+
+        $featuresJson = DB::table('business_settings')->where('key', 'license_features_dict')->value('value');
+        if (! empty($featuresJson)) {
+            $decoded = json_decode($featuresJson, true);
+            if (is_array($decoded) && ! empty($decoded['suppliers'])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     // Método auxiliar para construir la consulta base de filtros
     private function _buildBulkPriceQuery($validated)
     {
@@ -121,6 +139,14 @@ class CatalogController extends Controller
     {
         $validated = $request->validated();
 
+        if (isset($validated['supplier_id']) && ! $this->_isSuppliersFeatureLicensed()) {
+            return response()->json([
+                'message' => "La licencia activa no incluye el módulo requerido: 'suppliers'. Actualice su plan o active el Add-on de Proveedores.",
+                'error_code' => 'FEATURE_NOT_LICENSED',
+                'required' => 'suppliers',
+            ], 403);
+        }
+
         $query = $this->_buildBulkPriceQuery($validated);
         $totalCount = $query->count();
 
@@ -150,6 +176,14 @@ class CatalogController extends Controller
     {
         $validated = $request->validated();
 
+        if (isset($validated['supplier_id']) && ! $this->_isSuppliersFeatureLicensed()) {
+            return response()->json([
+                'message' => "La licencia activa no incluye el módulo requerido: 'suppliers'. Actualice su plan o active el Add-on de Proveedores.",
+                'error_code' => 'FEATURE_NOT_LICENSED',
+                'required' => 'suppliers',
+            ], 403);
+        }
+
         $query = $this->_buildBulkPriceQuery($validated);
 
         $products = $query->select('id', 'cost_price', 'selling_price')->get();
@@ -173,14 +207,16 @@ class CatalogController extends Controller
         $historyItems = [];
         $multiplier = 1 + ($validated['percentage'] / 100);
         foreach ($products as $p) {
-            $newCostPrice = $p->cost_price;
-            $newSellingPrice = $p->selling_price;
+            $oldCost = (float) ($p->cost_price ?? 0);
+            $oldSelling = (float) ($p->selling_price ?? 0);
+            $newCostPrice = $oldCost;
+            $newSellingPrice = $oldSelling;
 
             if ($targetField === 'cost_price' || $targetField === 'cost_and_selling_price') {
-                $newCostPrice = round($p->cost_price * $multiplier, 2);
+                $newCostPrice = round($oldCost * $multiplier, 2);
             }
             if ($targetField === 'selling_price' || $targetField === 'cost_and_selling_price') {
-                $raw = $p->selling_price * $multiplier;
+                $raw = $oldSelling * $multiplier;
                 $newSellingPrice = match ($roundingRule) {
                     'nearest_10' => round($raw / 10) * 10,
                     'nearest_50' => round($raw / 50) * 50,
@@ -193,8 +229,8 @@ class CatalogController extends Controller
             $historyItems[] = [
                 'bulk_price_history_id' => $history->id,
                 'product_id' => $p->id,
-                'old_cost_price' => $p->cost_price,
-                'old_selling_price' => $p->selling_price,
+                'old_cost_price' => $oldCost,
+                'old_selling_price' => $oldSelling,
                 'new_cost_price' => $newCostPrice,
                 'new_selling_price' => $newSellingPrice,
             ];

@@ -20,7 +20,18 @@ class AfipCertificateService
             throw new DomainException('INVALID_CUIT:El CUIT es obligatorio y debe contener dígitos numéricos.');
         }
 
-        if (empty($certContent) || empty($keyContent)) {
+        if (empty($certContent)) {
+            throw new DomainException('MISSING_CERT_OR_KEY:Debe adjuntar el certificado (.crt) emitido por ARCA/AFIP.');
+        }
+
+        if (empty($keyContent)) {
+            $existingKeyPath = storage_path('app/private/afip/'.$cuit.'/cert.key');
+            if (file_exists($existingKeyPath)) {
+                $keyContent = @file_get_contents($existingKeyPath);
+            }
+        }
+
+        if (empty($keyContent)) {
             throw new DomainException('MISSING_CERT_OR_KEY:Debe adjuntar tanto el certificado (.crt) como la clave privada (.key).');
         }
 
@@ -71,5 +82,112 @@ class AfipCertificateService
             'afip_has_key' => true,
             'afip_cert_expires_at' => $expiresAt,
         ];
+    }
+
+    /**
+     * Genera una Solicitud de Certificado Digital (CSR - PKCS#10) para ARCA/AFIP.
+     * Reutiliza la clave privada existente del CUIT si ya existe (salvo que $forceNewKey sea true),
+     * o genera una nueva clave privada RSA de 2048 bits y la almacena de forma segura en el servidor.
+     *
+     * @throws DomainException
+     */
+    public function generateCsr(?string $rawCuit, ?string $companyName = null, bool $forceNewKey = false): array
+    {
+        $cuit = preg_replace('/\D/', '', $rawCuit ?? '');
+        if (empty($cuit) || strlen($cuit) !== 11) {
+            throw new DomainException('INVALID_CUIT:El CUIT comercial debe tener exactamente 11 dígitos numéricos.');
+        }
+
+        $this->ensureOpenSslConfig();
+
+        $targetDir = storage_path('app/private/afip/'.$cuit);
+        if (! file_exists($targetDir)) {
+            mkdir($targetDir, 0700, true);
+        }
+
+        $keyPath = $targetDir.DIRECTORY_SEPARATOR.'cert.key';
+        $pkey = false;
+        $keyContent = '';
+
+        if (! $forceNewKey && file_exists($keyPath)) {
+            $existingKey = @file_get_contents($keyPath);
+            if ($existingKey) {
+                $pkey = @openssl_pkey_get_private($existingKey);
+                if ($pkey) {
+                    $keyContent = $existingKey;
+                }
+            }
+        }
+
+        $openSslConfig = $this->buildOpenSslConfig();
+
+        if (! $pkey) {
+            $pkey = @openssl_pkey_new($openSslConfig);
+            if (! $pkey) {
+                throw new DomainException('OPENSSL_KEY_ERROR:No se pudo generar la clave privada RSA 2048 bits en el servidor.');
+            }
+            if (! @openssl_pkey_export($pkey, $keyContent, null, $openSslConfig)) {
+                throw new DomainException('OPENSSL_KEY_EXPORT_ERROR:No se pudo exportar la clave privada generada.');
+            }
+            file_put_contents($keyPath, $keyContent);
+            @chmod($keyPath, 0600);
+        }
+
+        $orgName = trim((string) ($companyName ?? BusinessSetting::where('key', 'company_name')->value('value') ?? 'Empresa POS'));
+        $orgName = preg_replace('/[^\w\s\.\-]/u', '', $orgName) ?: 'Empresa POS';
+
+        $dn = [
+            'countryName' => 'AR',
+            'organizationName' => mb_substr($orgName, 0, 64),
+            'commonName' => 'SistemaPOS',
+            'serialNumber' => "CUIT {$cuit}",
+        ];
+
+        $csr = @openssl_csr_new($dn, $pkey, $openSslConfig);
+        if (! $csr || ! @openssl_csr_export($csr, $csrContent)) {
+            throw new DomainException('OPENSSL_CSR_ERROR:No se pudo generar la solicitud CSR (PKCS#10).');
+        }
+
+        $csrPath = $targetDir.DIRECTORY_SEPARATOR."solicitud_arca_{$cuit}.csr";
+        file_put_contents($csrPath, $csrContent);
+        @chmod($csrPath, 0600);
+
+        BusinessSetting::updateOrCreate(['key' => 'afip_cuit'], ['value' => $cuit]);
+        BusinessSetting::setSecret('afip_key_path', "afip/{$cuit}/cert.key");
+
+        return [
+            'afip_cuit' => $cuit,
+            'afip_has_key' => true,
+            'csr_filename' => "solicitud_arca_{$cuit}.csr",
+            'csr_content' => $csrContent,
+        ];
+    }
+
+    protected function ensureOpenSslConfig(): void
+    {
+        $envConf = getenv('OPENSSL_CONF');
+        if (empty($envConf)) {
+            $candidate = dirname(PHP_BINARY).'/extras/ssl/openssl.cnf';
+            if (file_exists($candidate)) {
+                putenv("OPENSSL_CONF={$candidate}");
+                $_ENV['OPENSSL_CONF'] = $candidate;
+            }
+        }
+    }
+
+    protected function buildOpenSslConfig(): array
+    {
+        $config = [
+            'digest_alg' => 'sha256',
+            'private_key_bits' => 2048,
+            'private_key_type' => OPENSSL_KEYTYPE_RSA,
+        ];
+
+        $envConf = getenv('OPENSSL_CONF');
+        if (! empty($envConf) && file_exists($envConf)) {
+            $config['config'] = $envConf;
+        }
+
+        return $config;
     }
 }

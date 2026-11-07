@@ -53,7 +53,29 @@ class CheckFeatureAccess
             }
         }
 
-        if (! isset($features[$feature]) || $features[$feature] !== true) {
+        $isEnabled = isset($features[$feature]) && ($features[$feature] === true || $features[$feature] === 1);
+
+        // Si el plan activo es Premium/Pro (Retail o Ferretería), los módulos incluidos en Premium están habilitados
+        if (! $isEnabled && in_array($appPlan, ['pro', 'premium'], true)) {
+            $premiumIncludedFeatures = [
+                'current_accounts',
+                'multi_caja',
+                'predictive_alerts',
+                'checks',
+                'suppliers',
+                'expenses',
+                'multi_rubro',
+                'ecommerce_sync',
+                'quotes',
+                'multiple_prices',
+                'advanced_reports',
+            ];
+            if (in_array($feature, $premiumIncludedFeatures, true)) {
+                $isEnabled = true;
+            }
+        }
+
+        if (! $isEnabled) {
             return response()->json([
                 'message' => "La licencia activa no incluye el módulo requerido: '{$feature}'. Actualice su plan.",
                 'error_code' => 'FEATURE_NOT_LICENSED',

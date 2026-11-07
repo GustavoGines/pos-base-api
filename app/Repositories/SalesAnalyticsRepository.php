@@ -10,30 +10,62 @@ use Illuminate\Support\Facades\DB;
 class SalesAnalyticsRepository
 {
     /**
+     * Aplica filtro por condición fiscal de la venta ('all' | 'fiscal' | 'non_fiscal').
+     */
+    public function applyFiscalFilter($query, ?string $fiscalFilter = 'all'): void
+    {
+        if ($fiscalFilter === 'fiscal') {
+            $query->where(function ($fq) {
+                $fq->whereIn('sales.invoice_status', ['invoiced', 'authorized', 'pending'])
+                    ->orWhereExists(function ($eq) {
+                        $eq->select(DB::raw(1))
+                            ->from('electronic_invoices')
+                            ->whereColumn('electronic_invoices.sale_id', 'sales.id')
+                            ->whereIn('electronic_invoices.status', ['authorized', 'pending']);
+                    });
+            });
+        } elseif ($fiscalFilter === 'non_fiscal') {
+            $query->where(function ($fq) {
+                $fq->whereNull('sales.invoice_status')
+                    ->orWhereIn('sales.invoice_status', ['not_invoiced', 'none', '']);
+            })->whereNotExists(function ($eq) {
+                $eq->select(DB::raw(1))
+                    ->from('electronic_invoices')
+                    ->whereColumn('electronic_invoices.sale_id', 'sales.id')
+                    ->whereIn('electronic_invoices.status', ['authorized', 'pending']);
+            });
+        }
+    }
+
+    /**
      * Obtiene el reporte de rentabilidad agrupado por Rubro, Categoría o Marca.
      *
      * @param  string  $startDate  Fecha inicio (Y-m-d)
      * @param  string  $endDate  Fecha fin (Y-m-d)
      * @param  string  $groupBy  'category', 'brand' o 'rubro'
      * @param  mixed  $rubroFilter  ID único o array de IDs de rubros para filtrar/comparar
+     * @param  string|null  $fiscalFilter  'all', 'fiscal' o 'non_fiscal'
      */
-    public function getProfitReport(string $startDate, string $endDate, string $groupBy = 'category', mixed $rubroFilter = null): Collection
+    public function getProfitReport(string $startDate, string $endDate, string $groupBy = 'category', mixed $rubroFilter = null, ?string $fiscalFilter = 'all'): Collection
     {
         $query = SaleItem::join('sales', 'sales.id', '=', 'sale_items.sale_id')
-            ->join('products', 'products.id', '=', 'sale_items.product_id');
+            ->leftJoin('products', 'products.id', '=', 'sale_items.product_id');
+
+        $productNameExpr = "COALESCE(products.name, sale_items.custom_description, sale_items.product_name, 'Ítem Temporal')";
+        $productIdExpr = 'COALESCE(products.id, 0)';
 
         if ($groupBy === 'rubro') {
             $query->leftJoin('categories', 'categories.id', '=', 'products.category_id')
                 ->leftJoin('rubros', 'rubros.id', '=', 'categories.rubro_id')
-                ->selectRaw("COALESCE(rubros.name, 'Sin Rubro') as group_name, rubros.id as group_id, products.id as product_id, products.name as product_name");
+                ->selectRaw("COALESCE(rubros.name, 'Sin Rubro') as group_name, rubros.id as group_id, {$productIdExpr} as product_id, {$productNameExpr} as product_name");
             $groupFields = ['rubros.id', 'rubros.name'];
         } elseif ($groupBy === 'brand') {
             $query->leftJoin('brands', 'brands.id', '=', 'products.brand_id')
-                ->selectRaw("COALESCE(brands.name, 'Sin Marca') as group_name, products.brand_id as group_id, products.id as product_id, products.name as product_name");
+                ->selectRaw("COALESCE(brands.name, 'Sin Marca') as group_name, products.brand_id as group_id, {$productIdExpr} as product_id, {$productNameExpr} as product_name");
             $groupFields = ['products.brand_id', 'brands.name'];
         } else {
             $query->leftJoin('categories', 'categories.id', '=', 'products.category_id')
-                ->selectRaw("COALESCE(categories.name, 'Sin Categoría') as group_name, products.category_id as group_id, products.id as product_id, products.name as product_name");
+                ->selectRaw("COALESCE(categories.name, 'Sin Categoría') as group_name, products.category_id as group_id, {$productIdExpr} as product_id, {$productNameExpr} as product_name");
             $groupFields = ['products.category_id', 'categories.name'];
         }
 
@@ -70,6 +102,8 @@ class SalesAnalyticsRepository
             [$start, $end] = [Carbon::parse($endDate)->startOfDay(), Carbon::parse($startDate)->endOfDay()];
         }
 
+        $this->applyFiscalFilter($query, $fiscalFilter);
+
         $productStats = $query->selectRaw('
                 SUM(sale_items.quantity) as items_sold,
                 SUM(sale_items.subtotal) as total_revenue,
@@ -97,9 +131,9 @@ class SalesAnalyticsRepository
                 END) as items_with_cost,
                 COUNT(*) as total_items,
                 COUNT(DISTINCT sales.id) as tickets_count,
-                MAX(products.sales_count) as pos_sales_count,
-                MAX(products.stock) as current_stock,
-                MAX(products.is_sold_by_weight) as is_sold_by_weight
+                MAX(COALESCE(products.sales_count, 0)) as pos_sales_count,
+                MAX(COALESCE(products.stock, 0)) as current_stock,
+                MAX(COALESCE(products.is_sold_by_weight, 0)) as is_sold_by_weight
             ')
             ->whereBetween('sales.created_at', [$start, $end])
             ->where('sales.status', 'completed')
@@ -109,7 +143,7 @@ class SalesAnalyticsRepository
                     ->whereColumn('customers.id', 'sales.customer_id')
                     ->where('customers.is_internal_account', true);
             })
-            ->groupBy(array_merge($groupFields, ['products.id', 'products.name']))
+            ->groupBy(array_merge($groupFields, [DB::raw($productIdExpr), DB::raw($productNameExpr)]))
             ->get();
 
         return $productStats->groupBy('group_name')->map(function ($items, $groupName) {
@@ -154,7 +188,7 @@ class SalesAnalyticsRepository
      * @param  string|int  $startMonthOrYear  Año (ej. 2026) o mes inicial (ej. '2026-01')
      * @param  string|null  $endMonth  Mes final opcional (ej. '2026-12')
      */
-    public function getMonthlyBalance(string|int $startMonthOrYear, ?string $endMonth = null): array
+    public function getMonthlyBalance(string|int $startMonthOrYear, ?string $endMonth = null, ?string $fiscalFilter = 'all'): array
     {
         if ($endMonth === null) {
             if (is_int($startMonthOrYear) || (is_numeric($startMonthOrYear) && strlen((string) $startMonthOrYear) === 4)) {
@@ -175,9 +209,9 @@ class SalesAnalyticsRepository
         $isSqlite = DB::connection()->getDriverName() === 'sqlite';
         $periodSql = $isSqlite ? "strftime('%Y-%m', sales.created_at)" : "DATE_FORMAT(sales.created_at, '%Y-%m')";
 
-        $rows = DB::table('sale_items')
+        $query = DB::table('sale_items')
             ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
-            ->join('products', 'products.id', '=', 'sale_items.product_id')
+            ->leftJoin('products', 'products.id', '=', 'sale_items.product_id')
             ->where('sales.status', 'completed')
             ->whereNotExists(function ($query) {
                 $query->select(DB::raw(1))
@@ -188,8 +222,11 @@ class SalesAnalyticsRepository
             ->whereBetween('sales.created_at', [
                 $startDate->toDateTimeString(),
                 $endDate->toDateTimeString(),
-            ])
-            ->selectRaw("
+            ]);
+
+        $this->applyFiscalFilter($query, $fiscalFilter);
+
+        $rows = $query->selectRaw("
                 {$periodSql} as period,
                 SUM(sale_items.subtotal)               as total_revenue,
                 SUM(

@@ -59,6 +59,12 @@ class PaymentService
                 'mp_payment_id' => $payment['mp_payment_id'] ?? null,
                 'mp_order_id' => $payment['mp_order_id'] ?? null,
                 'reference_id' => $payment['reference_id'] ?? null,
+                'transfer_account_alias' => ! empty($payment['transfer_account_alias'])
+                    ? trim((string) $payment['transfer_account_alias'])
+                    : null,
+                'transfer_sender_name' => ! empty($payment['transfer_sender_name'])
+                    ? trim((string) $payment['transfer_sender_name'])
+                    : null,
             ]);
 
             // Si existe reference_id, asociar la transacción MP a la venta

@@ -46,6 +46,8 @@ final class Permissions
 
     public const CREATE_SUPPLIER_INVOICE = 'create_supplier_invoice';
 
+    public const MANAGE_SUPPLIER_INVOICES = 'manage_supplier_invoices';
+
     public const PAY_SUPPLIERS = 'pay_suppliers';
 
     public const MANAGE_DELIVERY_NOTES = 'manage_delivery_notes';
@@ -86,6 +88,7 @@ final class Permissions
             self::VOID_SALES,
             self::VIEW_SUPPLIERS,
             self::CREATE_SUPPLIER_INVOICE,
+            self::MANAGE_SUPPLIER_INVOICES,
             self::PAY_SUPPLIERS,
             self::MANAGE_DELIVERY_NOTES,
             self::VIEW_CHECKS,

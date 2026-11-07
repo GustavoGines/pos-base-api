@@ -36,21 +36,21 @@ class ReportController extends Controller
         $this->expenseService = $expenseService;
     }
 
-    private function getProfitDataArray(string $startDate, string $endDate): Collection
+    private function getProfitDataArray(string $startDate, string $endDate, string $fiscalFilter = 'all'): Collection
     {
-        $cacheKey = ReportCacheService::key('profit_data', $startDate, $endDate);
+        $cacheKey = ReportCacheService::key('profit_data', $startDate, $endDate, $fiscalFilter);
 
-        return ReportCacheService::remember($cacheKey, 900, function () use ($startDate, $endDate) {
-            return $this->analyticsRepo->getProfitReport($startDate, $endDate, 'category');
+        return ReportCacheService::remember($cacheKey, 900, function () use ($startDate, $endDate, $fiscalFilter) {
+            return $this->analyticsRepo->getProfitReport($startDate, $endDate, 'category', null, $fiscalFilter);
         });
     }
 
-    private function getProfitByBrandDataArray(string $startDate, string $endDate): Collection
+    private function getProfitByBrandDataArray(string $startDate, string $endDate, string $fiscalFilter = 'all'): Collection
     {
-        $cacheKey = ReportCacheService::key('profit_brand', $startDate, $endDate);
+        $cacheKey = ReportCacheService::key('profit_brand', $startDate, $endDate, $fiscalFilter);
 
-        return ReportCacheService::remember($cacheKey, 900, function () use ($startDate, $endDate) {
-            return $this->analyticsRepo->getProfitReport($startDate, $endDate, 'brand');
+        return ReportCacheService::remember($cacheKey, 900, function () use ($startDate, $endDate, $fiscalFilter) {
+            return $this->analyticsRepo->getProfitReport($startDate, $endDate, 'brand', null, $fiscalFilter);
         });
     }
 
@@ -117,21 +117,21 @@ class ReportController extends Controller
         return [$start, $end];
     }
 
-    private function getProfitByRubroDataArray(string $startDate, string $endDate, mixed $rubroFilter = null): Collection
+    private function getProfitByRubroDataArray(string $startDate, string $endDate, mixed $rubroFilter = null, string $fiscalFilter = 'all'): Collection
     {
         [$start, $end] = $this->normalizeDateRange($startDate, $endDate);
 
-        $cacheSuffix = $this->normalizeRubroFilter($rubroFilter) ?? 'all';
+        $cacheSuffix = ($this->normalizeRubroFilter($rubroFilter) ?? 'all').'_'.$fiscalFilter;
         $cacheKey = ReportCacheService::key('profit_rubro', $start, $end, $cacheSuffix);
 
-        return ReportCacheService::remember($cacheKey, 900, function () use ($start, $end, $rubroFilter) {
-            return $this->analyticsRepo->getProfitReport($start, $end, 'rubro', $rubroFilter);
+        return ReportCacheService::remember($cacheKey, 900, function () use ($start, $end, $rubroFilter, $fiscalFilter) {
+            return $this->analyticsRepo->getProfitReport($start, $end, 'rubro', $rubroFilter, $fiscalFilter);
         });
     }
 
     // ─── Endpoint: JSON para el Dashboard Flutter ─────────────────────────────
 
-    private function getCommonStatsAndDailySales(string $startDate, string $endDate)
+    private function getCommonStatsAndDailySales(string $startDate, string $endDate, string $fiscalFilter = 'all')
     {
         [$startDate, $endDate] = $this->normalizeDateRange($startDate, $endDate);
         $start = Carbon::parse($startDate);
@@ -141,8 +141,8 @@ class ReportController extends Controller
         $prevStart = $start->copy()->subDays($diffDays)->toDateString();
         $prevEnd = $end->copy()->subDays($diffDays)->toDateString();
 
-        $prevStats = SaleItem::join('sales', 'sales.id', '=', 'sale_items.sale_id')
-            ->join('products', 'products.id', '=', 'sale_items.product_id')
+        $prevQuery = SaleItem::join('sales', 'sales.id', '=', 'sale_items.sale_id')
+            ->leftJoin('products', 'products.id', '=', 'sale_items.product_id')
             ->selectRaw('
                 SUM(sale_items.subtotal) as total_revenue,
                 SUM(
@@ -162,21 +162,27 @@ class ReportController extends Controller
                     ->from('customers')
                     ->whereColumn('customers.id', 'sales.customer_id')
                     ->where('customers.is_internal_account', true);
-            })
-            ->first();
+            });
 
-        $dailySales = DB::table('sales')
-            ->whereBetween('created_at', [Carbon::parse($startDate)->startOfDay(), Carbon::parse($endDate)->endOfDay()])
-            ->where('status', 'completed')
+        $this->analyticsRepo->applyFiscalFilter($prevQuery, $fiscalFilter);
+        $prevStats = $prevQuery->first();
+
+        $dailyQuery = DB::table('sales')
+            ->whereBetween('sales.created_at', [Carbon::parse($startDate)->startOfDay(), Carbon::parse($endDate)->endOfDay()])
+            ->where('sales.status', 'completed')
             ->whereNotExists(function ($query) {
                 $query->select(DB::raw(1))
                     ->from('customers')
                     ->whereColumn('customers.id', 'sales.customer_id')
                     ->where('customers.is_internal_account', true);
-            })
-            ->selectRaw('DATE(created_at) as date, SUM(total) as daily_revenue')
-            ->groupByRaw('DATE(created_at)')
-            ->orderByRaw('DATE(created_at) ASC')
+            });
+
+        $this->analyticsRepo->applyFiscalFilter($dailyQuery, $fiscalFilter);
+
+        $dailySales = $dailyQuery
+            ->selectRaw('DATE(sales.created_at) as date, SUM(sales.total) as daily_revenue')
+            ->groupByRaw('DATE(sales.created_at)')
+            ->orderByRaw('DATE(sales.created_at) ASC')
             ->get();
 
         return [
@@ -191,13 +197,15 @@ class ReportController extends Controller
     {
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
         $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        $fiscalFilter = (string) $request->query('fiscal_filter', 'all');
 
-        $common = $this->getCommonStatsAndDailySales($startDate, $endDate);
-        $report = $this->getProfitDataArray($startDate, $endDate);
+        $common = $this->getCommonStatsAndDailySales($startDate, $endDate, $fiscalFilter);
+        $report = $this->getProfitDataArray($startDate, $endDate, $fiscalFilter);
 
         return response()->json([
             'start_date' => $startDate,
             'end_date' => $endDate,
+            'fiscal_filter' => $fiscalFilter,
             'previous_period' => [
                 'start_date' => $common['prevStart'],
                 'end_date' => $common['prevEnd'],
@@ -213,13 +221,15 @@ class ReportController extends Controller
     {
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
         $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        $fiscalFilter = (string) $request->query('fiscal_filter', 'all');
 
-        $common = $this->getCommonStatsAndDailySales($startDate, $endDate);
-        $report = $this->getProfitByBrandDataArray($startDate, $endDate);
+        $common = $this->getCommonStatsAndDailySales($startDate, $endDate, $fiscalFilter);
+        $report = $this->getProfitByBrandDataArray($startDate, $endDate, $fiscalFilter);
 
         return response()->json([
             'start_date' => $startDate,
             'end_date' => $endDate,
+            'fiscal_filter' => $fiscalFilter,
             'previous_period' => [
                 'start_date' => $common['prevStart'],
                 'end_date' => $common['prevEnd'],
@@ -239,6 +249,7 @@ class ReportController extends Controller
 
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
         $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        $fiscalFilter = (string) $request->query('fiscal_filter', 'all');
         [$startDate, $endDate] = $this->normalizeDateRange($startDate, $endDate);
 
         $rubroFilter = $request->query('rubro_ids');
@@ -246,12 +257,13 @@ class ReportController extends Controller
             $rubroFilter = $request->query('rubro_id');
         }
 
-        $common = $this->getCommonStatsAndDailySales($startDate, $endDate);
-        $report = $this->getProfitByRubroDataArray($startDate, $endDate, $rubroFilter);
+        $common = $this->getCommonStatsAndDailySales($startDate, $endDate, $fiscalFilter);
+        $report = $this->getProfitByRubroDataArray($startDate, $endDate, $rubroFilter, $fiscalFilter);
 
         return response()->json([
             'start_date' => $startDate,
             'end_date' => $endDate,
+            'fiscal_filter' => $fiscalFilter,
             'previous_period' => [
                 'start_date' => $common['prevStart'],
                 'end_date' => $common['prevEnd'],
@@ -273,6 +285,7 @@ class ReportController extends Controller
 
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
         $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        $fiscalFilter = (string) $request->query('fiscal_filter', 'all');
         [$startDate, $endDate] = $this->normalizeDateRange($startDate, $endDate);
 
         $rubroFilter = $request->query('rubro_ids');
@@ -280,7 +293,7 @@ class ReportController extends Controller
             $rubroFilter = $request->query('rubro_id');
         }
 
-        return $this->exportService->exportProfitByRubroExcel($startDate, $endDate, $rubroFilter);
+        return $this->exportService->exportProfitByRubroExcel($startDate, $endDate, $rubroFilter, $fiscalFilter);
     }
 
     public function exportProfitByCategory(Request $request)
@@ -288,6 +301,7 @@ class ReportController extends Controller
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
         $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
         $type = $request->query('type', 'category');
+        $fiscalFilter = (string) $request->query('fiscal_filter', 'all');
 
         if ($type === 'rubro') {
             if ($response = $this->ensureMultiRubroEnabled()) {
@@ -299,10 +313,10 @@ class ReportController extends Controller
                 $rubroFilter = $request->query('rubro_id');
             }
 
-            return $this->exportService->exportProfitByRubroExcel($startDate, $endDate, $rubroFilter);
+            return $this->exportService->exportProfitByRubroExcel($startDate, $endDate, $rubroFilter, $fiscalFilter);
         }
 
-        return $this->exportService->exportProfitByCategoryExcel($startDate, $endDate, $type);
+        return $this->exportService->exportProfitByCategoryExcel($startDate, $endDate, $type, $fiscalFilter);
     }
 
     // ─── Endpoint: Exportar PDF ───────────────────────────────────────────────
@@ -315,6 +329,7 @@ class ReportController extends Controller
 
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
         $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        $fiscalFilter = (string) $request->query('fiscal_filter', 'all');
         [$startDate, $endDate] = $this->normalizeDateRange($startDate, $endDate);
 
         $rubroFilter = $request->query('rubro_ids');
@@ -322,7 +337,7 @@ class ReportController extends Controller
             $rubroFilter = $request->query('rubro_id');
         }
 
-        $data = $this->getProfitByRubroDataArray($startDate, $endDate, $rubroFilter);
+        $data = $this->getProfitByRubroDataArray($startDate, $endDate, $rubroFilter, $fiscalFilter);
 
         return $this->exportService->exportProfitPdf(
             $data,
@@ -330,7 +345,8 @@ class ReportController extends Controller
             'Rubro',
             $startDate,
             $endDate,
-            'rubro'
+            'rubro',
+            $fiscalFilter
         );
     }
 
@@ -339,9 +355,10 @@ class ReportController extends Controller
         $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
         $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
         $type = $request->query('type', 'category');
+        $fiscalFilter = (string) $request->query('fiscal_filter', 'all');
 
         if ($type === 'brand') {
-            $data = $this->getProfitByBrandDataArray($startDate, $endDate);
+            $data = $this->getProfitByBrandDataArray($startDate, $endDate, $fiscalFilter);
             $reportTitle = 'Reporte de Rentabilidad por Marca';
             $groupLabel = 'Marca';
         } elseif ($type === 'rubro') {
@@ -353,11 +370,11 @@ class ReportController extends Controller
             if ($rubroFilter === null || $rubroFilter === '' || $rubroFilter === []) {
                 $rubroFilter = $request->query('rubro_id');
             }
-            $data = $this->getProfitByRubroDataArray($startDate, $endDate, $rubroFilter);
+            $data = $this->getProfitByRubroDataArray($startDate, $endDate, $rubroFilter, $fiscalFilter);
             $reportTitle = 'Reporte de Rentabilidad por Rubro';
             $groupLabel = 'Rubro';
         } else {
-            $data = $this->getProfitDataArray($startDate, $endDate);
+            $data = $this->getProfitDataArray($startDate, $endDate, $fiscalFilter);
             $reportTitle = 'Reporte de Rentabilidad por Categoría';
             $groupLabel = 'Categoría';
         }
@@ -368,36 +385,39 @@ class ReportController extends Controller
             $groupLabel,
             $startDate,
             $endDate,
-            $type
+            $type,
+            $fiscalFilter
         );
     }
 
     // ─── Endpoint: Balance Mensual Flexible ──────────────────────────────────
 
-    private function getMonthlyBalanceData(string $startMonth, string $endMonth)
+    private function getMonthlyBalanceData(string $startMonth, string $endMonth, string $fiscalFilter = 'all')
     {
-        $cacheKey = ReportCacheService::key('balance_monthly', $startMonth, $endMonth);
+        $cacheKey = ReportCacheService::key('balance_monthly', $startMonth, $endMonth, $fiscalFilter);
 
-        return ReportCacheService::remember($cacheKey, 900, function () use ($startMonth, $endMonth) {
-            return $this->getMonthlyBalanceDataUncached($startMonth, $endMonth);
+        return ReportCacheService::remember($cacheKey, 900, function () use ($startMonth, $endMonth, $fiscalFilter) {
+            return $this->getMonthlyBalanceDataUncached($startMonth, $endMonth, $fiscalFilter);
         });
     }
 
-    private function getMonthlyBalanceDataUncached(string $startMonth, string $endMonth)
+    private function getMonthlyBalanceDataUncached(string $startMonth, string $endMonth, string $fiscalFilter = 'all')
     {
-        return $this->analyticsRepo->getMonthlyBalance($startMonth, $endMonth);
+        return $this->analyticsRepo->getMonthlyBalance($startMonth, $endMonth, $fiscalFilter);
     }
 
     public function monthlyBalance(Request $request)
     {
         $startMonth = $request->query('start_month', Carbon::now()->subMonths(5)->format('Y-m'));
         $endMonth = $request->query('end_month', Carbon::now()->format('Y-m'));
+        $fiscalFilter = (string) $request->query('fiscal_filter', 'all');
 
-        $data = $this->getMonthlyBalanceData($startMonth, $endMonth);
+        $data = $this->getMonthlyBalanceData($startMonth, $endMonth, $fiscalFilter);
 
         return response()->json([
             'start_month' => $startMonth,
             'end_month' => $endMonth,
+            'fiscal_filter' => $fiscalFilter,
             'months' => $data['months'],
             'totals' => $data['totals'],
         ]);
@@ -407,16 +427,18 @@ class ReportController extends Controller
     {
         $startMonth = $request->query('start_month', Carbon::now()->subMonths(5)->format('Y-m'));
         $endMonth = $request->query('end_month', Carbon::now()->format('Y-m'));
+        $fiscalFilter = (string) $request->query('fiscal_filter', 'all');
 
-        return $this->exportService->exportMonthlyBalanceExcel($startMonth, $endMonth);
+        return $this->exportService->exportMonthlyBalanceExcel($startMonth, $endMonth, $fiscalFilter);
     }
 
     public function exportMonthlyBalancePdf(Request $request)
     {
         $startMonth = $request->query('start_month', Carbon::now()->subMonths(5)->format('Y-m'));
         $endMonth = $request->query('end_month', Carbon::now()->format('Y-m'));
+        $fiscalFilter = (string) $request->query('fiscal_filter', 'all');
 
-        $data = $this->getMonthlyBalanceData($startMonth, $endMonth);
+        $data = $this->getMonthlyBalanceData($startMonth, $endMonth, $fiscalFilter);
 
         return $this->exportService->exportMonthlyBalancePdf($data, $startMonth, $endMonth);
     }

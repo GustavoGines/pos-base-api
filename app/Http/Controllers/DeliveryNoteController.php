@@ -62,6 +62,16 @@ class DeliveryNoteController extends Controller
                 return response()->json($existingNote->load(['items.product', 'sale.payments.paymentMethod', 'sale.customer']), 200);
             }
 
+            $deliverableItems = $sale->items->filter(
+                fn ($item) => ! empty($item->product_id) && ! $item->is_temporary
+            );
+
+            if ($deliverableItems->isEmpty()) {
+                return response()->json([
+                    'message' => 'Esta venta solo contiene ítems rápidos temporales sin stock inventariable para generar remito.',
+                ], 422);
+            }
+
             $status = $request->input('status', 'pending');
 
             $note = DeliveryNote::create([
@@ -70,7 +80,7 @@ class DeliveryNoteController extends Controller
                 'notes' => 'Generado a partir del comprobante nº '.$sale->id.($status === 'delivered' ? ' (Entregado en mostrador)' : ''),
             ]);
 
-            foreach ($sale->items as $item) {
+            foreach ($deliverableItems as $item) {
                 $note->items()->create([
                     'product_id' => $item->product_id,
                     'quantity_purchased' => $item->quantity,

@@ -13,6 +13,7 @@ class SalePayment extends Model
         'sale_id', 'payment_method_id',
         'base_amount', 'surcharge_amount', 'total_amount',
         'mp_payment_id', 'mp_order_id', 'reference_id',
+        'transfer_account_alias', 'transfer_sender_name',
     ];
 
     protected $casts = [

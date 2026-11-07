@@ -22,7 +22,7 @@ class StoreProductRequest extends FormRequest
             ]);
         }
 
-        if ($this->boolean('is_combo')) {
+        if ($this->boolean('is_combo') || ! $this->filled('cost_price')) {
             $this->merge(['cost_price' => 0]);
         }
     }
@@ -41,16 +41,28 @@ class StoreProductRequest extends FormRequest
                 'string',
                 Rule::unique('products')->whereNull('deleted_at'),
             ],
-            'cost_price' => 'numeric|min:0',
-            'selling_price' => 'numeric|min:0|gte:cost_price',
+            'cost_price' => 'nullable|numeric|min:0',
+            'selling_price' => [
+                'numeric',
+                'min:0',
+                function (string $attribute, mixed $value, \Closure $fail) {
+                    $cost = is_numeric($this->input('cost_price')) ? (float) $this->input('cost_price') : 0.0;
+                    if ($cost > 0 && is_numeric($value) && (float) $value < $cost) {
+                        $fail('El precio de venta no puede ser menor al precio de costo.');
+                    }
+                },
+            ],
             'price_wholesale' => 'nullable|numeric|min:0',
             'price_card' => 'nullable|numeric|min:0',
             'stock' => 'numeric',
             'min_stock' => 'nullable|numeric|min:0',
             'active' => 'boolean',
+            'needs_catalog_review' => 'boolean',
             'is_sold_by_weight' => 'boolean',
             'unit_type' => 'sometimes|in:un,kg,lt,g',
             'vencimiento_dias' => 'nullable|integer|min:1|max:3650',
+            'expiration_date' => 'nullable|date',
+            'expiry_alert_days' => 'nullable|integer|min:1|max:365',
             'category_id' => ['nullable', 'integer', 'exists:categories,id'],
             'brand_id' => 'nullable|exists:brands,id',
             'supplier_id' => ['nullable', Rule::exists('suppliers', 'id')->whereNull('deleted_at')],

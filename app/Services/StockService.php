@@ -61,6 +61,11 @@ class StockService
         $allDeductedIds = [];
 
         foreach ($items as $itemData) {
+            $isTemporary = filter_var($itemData['is_temporary'] ?? false, FILTER_VALIDATE_BOOLEAN);
+            if (empty($itemData['product_id']) || $isTemporary) {
+                continue;
+            }
+
             if (! isset($products[$itemData['product_id']])) {
                 throw new \InvalidArgumentException("El producto con ID {$itemData['product_id']} ya no está disponible o fue dado de baja.");
             }
@@ -76,6 +81,18 @@ class StockService
                 } else {
                     $countedInTicket[$product->id] = true;
                 }
+            }
+
+            // Si el producto fue creado al vuelo con save_to_catalog = true y stock = 0,
+            // mantener stock = 0 para productos simples (o descontar ingredientes si es combo)
+            if (! empty($itemData['_created_on_the_fly']) && ! $product->is_combo) {
+                if ($trackPopularity && ! $context->isInternalAccount && $qty > 0) {
+                    $product->sales_count += $this->popularityPoints($qty);
+                    $product->save();
+                }
+                $allDeductedIds[] = $product->id;
+
+                continue;
             }
 
             $deducted = $this->deductProductStock($product, $qty, $sale, $context, false, $products, $trackPopularity);
@@ -165,15 +182,30 @@ class StockService
     {
         $originalQuantities = [];
         foreach ($sale->items as $oldItem) {
+            if (empty($oldItem->product_id) || $oldItem->is_temporary) {
+                continue;
+            }
             $originalQuantities[$oldItem->product_id] = ($originalQuantities[$oldItem->product_id] ?? 0) + $oldItem->quantity;
         }
 
         $newQuantities = [];
+        $extraComboChildIds = [];
         foreach ($newItems as $newItem) {
+            if (! empty($newItem['combo_ingredients']) && is_array($newItem['combo_ingredients'])) {
+                foreach ($newItem['combo_ingredients'] as $ing) {
+                    if (! empty($ing['id'])) {
+                        $extraComboChildIds[] = (int) $ing['id'];
+                    }
+                }
+            }
+            $isTemp = filter_var($newItem['is_temporary'] ?? false, FILTER_VALIDATE_BOOLEAN);
+            if (empty($newItem['product_id']) || $isTemp) {
+                continue;
+            }
             $newQuantities[$newItem['product_id']] = ($newQuantities[$newItem['product_id']] ?? 0) + $newItem['quantity'];
         }
 
-        $allProductIds = array_unique(array_merge(array_keys($originalQuantities), array_keys($newQuantities)));
+        $allProductIds = array_unique(array_merge(array_keys($originalQuantities), array_keys($newQuantities), $extraComboChildIds));
 
         $products = $this->lockProducts($allProductIds);
 
@@ -206,7 +238,7 @@ class StockService
      */
     public function restoreStockForVoid(Sale $sale, SaleContextDTO $context, ?DeliveryNote $deliveryNote): array
     {
-        $productIds = $sale->items->pluck('product_id')->unique()->toArray();
+        $productIds = $sale->items->pluck('product_id')->filter()->unique()->values()->toArray();
 
         $products = $this->lockProducts($productIds);
 
@@ -217,7 +249,7 @@ class StockService
         $physicallyRestoredIds = [];
 
         foreach ($sale->items as $item) {
-            if (! isset($products[$item->product_id])) {
+            if (empty($item->product_id) || $item->is_temporary || ! isset($products[$item->product_id])) {
                 continue;
             }
 

@@ -159,8 +159,48 @@ class CashShiftService
         $directTransferSales = (float) SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
             ->whereHas('paymentMethod', fn ($q) => $q->where('code', 'transfer'))
             ->sum('total_amount');
-        $ccCollectionsTransfer = (float) CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'transfer')->sum('amount');
+        $ccCollectionsTransferQuery = CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'payment')->where('payment_method', 'transfer');
+        $ccCollectionsTransfer = (float) (clone $ccCollectionsTransferQuery)->sum('amount');
+        $ccCollectionsTransferCount = (int) (clone $ccCollectionsTransferQuery)->count();
         $transferSales = $directTransferSales + $ccCollectionsTransfer;
+
+        $transferByAlias = SalePayment::whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+            ->whereHas('paymentMethod', fn ($q) => $q->where('code', 'transfer'))
+            ->selectRaw("COALESCE(NULLIF(TRIM(transfer_account_alias), ''), 'Sin Alias / General') as alias_label, SUM(total_amount) as total_amount, COUNT(*) as count")
+            ->groupBy('alias_label')
+            ->get()
+            ->map(fn ($row) => [
+                'alias' => $row->alias_label,
+                'total_amount' => round((float) $row->total_amount, 2),
+                'count' => (int) $row->count,
+            ])
+            ->values()
+            ->toArray();
+
+        if ($ccCollectionsTransfer > 0) {
+            $transferByAlias[] = [
+                'alias' => 'Cobros Cta. Cte.',
+                'total_amount' => round($ccCollectionsTransfer, 2),
+                'count' => $ccCollectionsTransferCount,
+            ];
+        }
+
+        $transferDetails = SalePayment::with(['sale:id,customer_id,created_at', 'sale.customer:id,name'])
+            ->whereHas('sale', fn ($q) => $q->where('cash_shift_id', $shiftId)->where('status', 'completed'))
+            ->whereHas('paymentMethod', fn ($q) => $q->where('code', 'transfer'))
+            ->get(['id', 'sale_id', 'total_amount', 'reference_id', 'transfer_account_alias', 'transfer_sender_name', 'created_at'])
+            ->map(fn ($p) => [
+                'id' => $p->id,
+                'sale_id' => $p->sale_id,
+                'amount' => round((float) $p->total_amount, 2),
+                'reference_id' => $p->reference_id,
+                'transfer_account_alias' => $p->transfer_account_alias,
+                'transfer_sender_name' => $p->transfer_sender_name,
+                'customer_name' => $p->sale?->customer?->name,
+                'created_at' => $p->created_at,
+            ])
+            ->values()
+            ->toArray();
 
         $customerCollectionsTotal = $ccCollectionsCash + $ccCollectionsCard + $ccCollectionsTransfer;
 
@@ -217,6 +257,8 @@ class CashShiftService
             'cash_sales' => $cashSales,
             'card_sales' => $cardSales,
             'transfer_sales' => $transferSales,
+            'transfer_by_alias' => $transferByAlias,
+            'transfer_details' => $transferDetails,
             'cc_collections_cash' => $ccCollectionsCash,
             'cc_collections_card' => $ccCollectionsCard,
             'cc_collections_transfer' => $ccCollectionsTransfer,
@@ -278,6 +320,9 @@ class CashShiftService
                 'status' => 'closed',
                 'closed_by_user_id' => $closerUserId,
             ]);
+
+            $shift->setAttribute('transfer_by_alias', $totals['transfer_by_alias'] ?? []);
+            $shift->setAttribute('transfer_details', $totals['transfer_details'] ?? []);
 
             // Recalibrar ventana móvil del Acceso Rápido POS al cerrar caja
             // (para que el próximo turno inicie con el ranking limpio y actualizado).

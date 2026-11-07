@@ -122,6 +122,8 @@ Route::middleware(['session.validate', 'license.active'])->group(function () {
         ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     Route::post('/settings/afip/upload-certificates', [SettingController::class, 'uploadAfipCertificates'])
         ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
+    Route::post('/settings/afip/generate-csr', [SettingController::class, 'generateAfipCsr'])
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     Route::post('/settings/logo', [SettingController::class, 'uploadLogo'])
         ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     Route::get('/system/backup', [SystemController::class, 'downloadBackup'])
@@ -233,10 +235,24 @@ Route::middleware(['session.validate', 'license.active'])->group(function () {
         Route::delete('/suppliers/{supplier}', [SupplierController::class, 'destroy'])
             ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
 
+        Route::get('/supplier-invoices', [SupplierInvoiceController::class, 'index'])
+            ->middleware('permission.or.pin:'.Permissions::VIEW_SUPPLIERS);
+        Route::get('/supplier-invoices/{invoice}', [SupplierInvoiceController::class, 'show'])
+            ->middleware('permission.or.pin:'.Permissions::VIEW_SUPPLIERS)
+            ->where(['invoice' => '[0-9]+']);
         Route::post('/suppliers/{supplier}/invoices', [SupplierInvoiceController::class, 'store'])
             ->middleware('permission.or.pin:'.Permissions::CREATE_SUPPLIER_INVOICE);
+        Route::put('/supplier-invoices/{invoice}', [SupplierInvoiceController::class, 'update'])
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_SUPPLIER_INVOICES)
+            ->where(['invoice' => '[0-9]+']);
+        Route::delete('/supplier-invoices/{invoice}', [SupplierInvoiceController::class, 'destroy'])
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_SUPPLIER_INVOICES)
+            ->where(['invoice' => '[0-9]+']);
+        Route::post('/supplier-invoices/{invoice}/restore', [SupplierInvoiceController::class, 'restore'])
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_SUPPLIER_INVOICES)
+            ->where(['invoice' => '[0-9]+']);
         Route::post('/supplier-invoices/upload', [SupplierInvoiceController::class, 'uploadAttachment'])
-            ->middleware('permission.or.pin:'.Permissions::CREATE_SUPPLIER_INVOICE);
+            ->middleware('permission.or.pin:'.Permissions::CREATE_SUPPLIER_INVOICE.','.Permissions::MANAGE_SUPPLIER_INVOICES);
     });
 
     // ── Catálogo: escritura (crear, editar, borrar productos) ────────
@@ -355,8 +371,9 @@ Route::middleware(['session.validate', 'license.active'])->group(function () {
         });
     });
 
-    // ── Módulo de Inteligencia de Inventario ──────────────────────────
+    // ── Módulo de Inteligencia de Inventario y Alertas de Vencimiento ──
     Route::get('/inventory/alerts', [ProductController::class, 'inventoryAlerts']);
+    Route::post('/inventory/alerts/{product}/snooze', [ProductController::class, 'snoozeExpirationAlert']);
 
     // ── Módulo Logística (Remitos / Corralón) ──────────────────────────
     Route::prefix('delivery-notes')->middleware('permission.or.pin:'.Permissions::MANAGE_DELIVERY_NOTES)->group(function () {

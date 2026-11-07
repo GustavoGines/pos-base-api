@@ -126,9 +126,11 @@ class QuoteController extends Controller
                 ]);
 
                 foreach ($validated['items'] as $item) {
+                    $rawProductId = $item['product_id'] ?? null;
+                    $productId = (is_numeric($rawProductId) && (int) $rawProductId > 0) ? (int) $rawProductId : null;
                     QuoteItem::create([
                         'quote_id' => $quote->id,
-                        'product_id' => $item['product_id'] ?? null,
+                        'product_id' => $productId,
                         'product_name' => $item['product_name'],
                         'unit_price' => $item['unit_price'],
                         'quantity' => $item['quantity'],

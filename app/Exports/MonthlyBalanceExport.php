@@ -21,18 +21,21 @@ class MonthlyBalanceExport implements FromCollection, ShouldAutoSize, WithColumn
 
     protected $endMonth;
 
+    protected string $fiscalFilter;
+
     protected SalesAnalyticsRepository $repository;
 
-    public function __construct($startMonthOrYear = null, $endMonth = null, ?SalesAnalyticsRepository $repository = null)
+    public function __construct($startMonthOrYear = null, $endMonth = null, ?SalesAnalyticsRepository $repository = null, string $fiscalFilter = 'all')
     {
         $this->startMonthOrYear = $startMonthOrYear ?? Carbon::now()->subMonths(5)->format('Y-m');
         $this->endMonth = $endMonth;
         $this->repository = $repository ?? app(SalesAnalyticsRepository::class);
+        $this->fiscalFilter = $fiscalFilter;
     }
 
     public function collection()
     {
-        $data = $this->repository->getMonthlyBalance($this->startMonthOrYear, $this->endMonth);
+        $data = $this->repository->getMonthlyBalance($this->startMonthOrYear, $this->endMonth, $this->fiscalFilter);
 
         return collect($data['months'] ?? []);
     }

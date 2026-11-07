@@ -24,20 +24,23 @@ class ProfitByCategoryExport implements FromCollection, ShouldAutoSize, WithColu
 
     protected $rubroFilter;
 
+    protected string $fiscalFilter;
+
     protected SalesAnalyticsRepository $repository;
 
-    public function __construct($startDate, $endDate, $type = 'category', ?SalesAnalyticsRepository $repository = null, mixed $rubroFilter = null)
+    public function __construct($startDate, $endDate, $type = 'category', ?SalesAnalyticsRepository $repository = null, mixed $rubroFilter = null, string $fiscalFilter = 'all')
     {
         $this->startDate = $startDate;
         $this->endDate = $endDate;
         $this->type = $type;
         $this->repository = $repository ?? app(SalesAnalyticsRepository::class);
         $this->rubroFilter = $rubroFilter;
+        $this->fiscalFilter = $fiscalFilter;
     }
 
     public function collection()
     {
-        return $this->repository->getProfitReport($this->startDate, $this->endDate, $this->type, $this->rubroFilter);
+        return $this->repository->getProfitReport($this->startDate, $this->endDate, $this->type, $this->rubroFilter, $this->fiscalFilter);
     }
 
     public function headings(): array

@@ -14,6 +14,7 @@ use App\Models\Customer;
 use App\Models\CustomerTransaction;
 use App\Models\DeliveryNote;
 use App\Models\PaymentMethod;
+use App\Models\Product;
 use App\Models\Quote;
 use App\Models\Sale;
 use App\Models\ThirdPartyCheck;
@@ -143,8 +144,9 @@ class SaleService
                 }
             }
 
-            $productIds = array_column($dto->items, 'product_id');
-            $lockedProducts = $this->stockService->lockProducts($productIds);
+            $items = $dto->items;
+            $persistentProductIds = $this->extractExistingProductIds($items);
+            $lockedProducts = $this->stockService->lockProducts($persistentProductIds);
 
             $total = $dto->total;
             $totalSurcharge = $dto->totalSurcharge;
@@ -189,8 +191,12 @@ class SaleService
                 }
             }
 
+            // Recién después de adquirir los locks canónicos (CashShift -> Customer -> Products ID ASC -> Sale),
+            // materializar productos rápidos marcados con save_to_catalog = true y product_id = null
+            $items = $this->materializeOnTheFlyCatalogProducts($items, $lockedProducts);
+
             // Fix F1-BAJA-10 + FN-4: Procesar ítems y reconciliar total autoritativo ANTES de validar y registrar pagos
-            $this->processItems($sale, $dto->items, $lockedProducts, $context);
+            $this->processItems($sale, $items, $lockedProducts, $context);
 
             $itemsSubtotal = round((float) $sale->items()->sum('subtotal'), 2);
             $reconciledTotal = round($itemsSubtotal + (float) $dto->iibbPerceptionAmount, 2);
@@ -216,14 +222,14 @@ class SaleService
                 }
             }
 
-            $affectedProductIds = $this->stockService->processCartStock($dto->items, $lockedProducts, $sale, $context, $dto->requiresDispatch, $dto->fulfillmentStatus);
+            $affectedProductIds = $this->stockService->processCartStock($items, $lockedProducts, $sale, $context, $dto->requiresDispatch, $dto->fulfillmentStatus);
 
             if ($dto->requiresDispatch) {
-                $this->createDeliveryNote($sale, $dto->items, $dto->fulfillmentStatus);
+                $this->createDeliveryNote($sale, $items, $dto->fulfillmentStatus);
             }
 
             // Fix F1-ALTA-03 & FN-2: Enqueue asynchronous stock synchronization (including parent combos)
-            $productsToSync = array_values(array_unique(array_merge($lockedProducts->keys()->all(), $affectedProductIds)));
+            $productsToSync = array_values(array_unique(array_filter(array_merge($lockedProducts->keys()->all(), $affectedProductIds))));
             SyncProductStockToPlatformsJob::dispatchForProducts($productsToSync);
 
             $this->broadcastSaleCompletedSafely($sale);
@@ -290,15 +296,22 @@ class SaleService
                 throw new \InvalidArgumentException('Esta venta ya no está en estado pendiente.');
             }
 
-            $previousItemProductIds = $lockedSale->items->pluck('product_id')->toArray();
+            $previousItemProductIds = $lockedSale->items->pluck('product_id')->filter()->values()->toArray();
 
             // Order Recall Items Delta
             if (! empty($dto->items)) {
-                $lockedProducts = $this->stockService->reconcileStockDiff($dto->items, $lockedSale, $context);
+                $items = $dto->items;
+                $lockedProducts = $this->stockService->reconcileStockDiff($items, $lockedSale, $context);
+                $items = $this->materializeOnTheFlyCatalogProducts($items, $lockedProducts);
+
+                $onTheFlyItems = array_values(array_filter($items, fn ($i) => ! empty($i['_created_on_the_fly'])));
+                if (! empty($onTheFlyItems)) {
+                    $this->stockService->processCartStock($onTheFlyItems, $lockedProducts, $lockedSale, $context, false, 'delivered');
+                }
 
                 $lockedSale->items()->delete();
 
-                $this->processItems($lockedSale, $dto->items, $lockedProducts, $context);
+                $this->processItems($lockedSale, $items, $lockedProducts, $context);
 
                 // Recalculate Totals based on new items
                 $newTotal = round((float) $lockedSale->items()->sum('subtotal'), 2);
@@ -684,18 +697,185 @@ class SaleService
         return [$shiftIds, $customerIds];
     }
 
+    /**
+     * Extrae y ordena por ID ASC todos los product_id existentes de catálogo involucrados
+     * en los ítems del carrito (omitiendo los temporales puros y los aún no creados).
+     *
+     * @param  array<int, array<string, mixed>>  $items
+     * @return array<int, int>
+     */
+    protected function extractExistingProductIds(array $items): array
+    {
+        $ids = [];
+        foreach ($items as $itemData) {
+            $isTemporary = filter_var($itemData['is_temporary'] ?? false, FILTER_VALIDATE_BOOLEAN);
+            if (! empty($itemData['product_id']) && ! $isTemporary) {
+                $ids[] = (int) $itemData['product_id'];
+            }
+
+            if (! empty($itemData['combo_ingredients']) && is_array($itemData['combo_ingredients'])) {
+                foreach ($itemData['combo_ingredients'] as $ing) {
+                    if (! empty($ing['id'])) {
+                        $ids[] = (int) $ing['id'];
+                    }
+                }
+            }
+        }
+
+        $ids = array_values(array_unique(array_filter($ids)));
+        sort($ids);
+
+        return $ids;
+    }
+
+    /**
+     * Materializa en el catálogo los ítems rápidos que tengan save_to_catalog == true y product_id == null.
+     * Se ejecuta estrictamente DESPUÉS de haber adquirido todos los locks pesimistas sobre turnos, clientes y productos existentes.
+     *
+     * @param  array<int, array<string, mixed>>  $items
+     */
+    protected function materializeOnTheFlyCatalogProducts(array $items, Collection $lockedProducts): array
+    {
+        $barcodeService = app(BarcodeService::class);
+
+        foreach ($items as $idx => $itemData) {
+            $saveToCatalog = filter_var($itemData['save_to_catalog'] ?? false, FILTER_VALIDATE_BOOLEAN);
+            if (! $saveToCatalog || ! empty($itemData['product_id'])) {
+                continue;
+            }
+
+            $name = trim((string) ($itemData['name'] ?? $itemData['product_name'] ?? $itemData['custom_description'] ?? 'Producto Rápido'));
+            $sellingPrice = max(0.0, round((float) ($itemData['unit_price'] ?? $itemData['price'] ?? 0), 2));
+            $costPrice = max(0.0, round((float) ($itemData['cost_price'] ?? $itemData['unit_cost_price'] ?? 0), 2));
+            $ivaRate = isset($itemData['iva_rate']) && is_numeric($itemData['iva_rate'])
+                ? (float) $itemData['iva_rate']
+                : 21.00;
+            $isSoldByWeight = filter_var($itemData['is_sold_by_weight'] ?? false, FILTER_VALIDATE_BOOLEAN);
+            $isCombo = filter_var($itemData['is_combo'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
+            $internalCode = $this->generateNonLockingInternalCode();
+            $barcode = ! empty($itemData['barcode'])
+                ? trim((string) $itemData['barcode'])
+                : ($isSoldByWeight ? null : $barcodeService->generateInternalEan13($internalCode));
+
+            $newProduct = Product::create([
+                'name' => $name,
+                'internal_code' => $internalCode,
+                'barcode' => $barcode,
+                'cost_price' => $costPrice,
+                'selling_price' => $sellingPrice,
+                'iva_rate' => $ivaRate,
+                'stock' => 0,
+                'active' => true,
+                'needs_catalog_review' => true,
+                'is_sold_by_weight' => $isSoldByWeight,
+                'is_combo' => $isCombo,
+            ]);
+
+            if ($isCombo && ! empty($itemData['combo_ingredients']) && is_array($itemData['combo_ingredients'])) {
+                $syncData = [];
+                foreach ($itemData['combo_ingredients'] as $ing) {
+                    if (! empty($ing['id'])) {
+                        $syncData[(int) $ing['id']] = ['quantity' => max(0.001, (float) ($ing['quantity'] ?? 1))];
+                    }
+                }
+                if (! empty($syncData)) {
+                    $newProduct->children()->sync($syncData);
+                    $newProduct->load('children');
+                    if ($costPrice <= 0) {
+                        $newProduct->update([
+                            'cost_price' => $newProduct->calculateComboCostPrice(),
+                        ]);
+                    }
+                }
+            }
+
+            $items[$idx]['product_id'] = $newProduct->id;
+            $items[$idx]['is_temporary'] = false;
+            $items[$idx]['_created_on_the_fly'] = true;
+            $lockedProducts->put($newProduct->id, $newProduct);
+        }
+
+        return $items;
+    }
+
+    /**
+     * Genera un código interno (PLU de 5 dígitos) sin realizar un lockForUpdate de tabla completa
+     * sobre `products`, preservando el orden canónico anti-deadlock.
+     */
+    protected function generateNonLockingInternalCode(): string
+    {
+        if (DB::getDriverName() === 'sqlite') {
+            $lastCode = Product::withTrashed()
+                ->get(['internal_code'])
+                ->filter(fn ($p) => ctype_digit((string) $p->internal_code) && strlen((string) $p->internal_code) <= 5)
+                ->max(fn ($p) => (int) $p->internal_code);
+            $nextNumber = $lastCode ? $lastCode + 1 : 1;
+        } else {
+            $lastCode = Product::withTrashed()
+                ->whereRaw('internal_code REGEXP "^[0-9]{1,5}$"')
+                ->orderByRaw('CAST(internal_code AS UNSIGNED) DESC')
+                ->first(['internal_code']);
+            $nextNumber = $lastCode ? (int) $lastCode->internal_code + 1 : 1;
+        }
+
+        while (Product::withTrashed()->where('internal_code', str_pad((string) $nextNumber, 5, '0', STR_PAD_LEFT))->exists()) {
+            $nextNumber++;
+        }
+
+        return str_pad((string) $nextNumber, 5, '0', STR_PAD_LEFT);
+    }
+
     protected function processItems(Sale $sale, array $items, Collection $products, SaleContextDTO $context): void
     {
         foreach ($items as $itemData) {
-            $product = $products[$itemData['product_id']] ?? null;
+            $quantity = isset($itemData['quantity']) && is_numeric($itemData['quantity'])
+                ? (float) $itemData['quantity']
+                : 1.0;
+
+            $customDescription = isset($itemData['custom_description']) && trim((string) $itemData['custom_description']) !== ''
+                ? trim((string) $itemData['custom_description'])
+                : null;
+            $customDetails = isset($itemData['custom_details']) && trim((string) $itemData['custom_details']) !== ''
+                ? trim((string) $itemData['custom_details'])
+                : null;
+
+            $isTemporary = filter_var($itemData['is_temporary'] ?? false, FILTER_VALIDATE_BOOLEAN) && empty($itemData['product_id']);
+
+            if ($isTemporary) {
+                $rawPrice = $itemData['unit_price'] ?? $itemData['price'] ?? 0;
+                $unitPrice = max(0.0, round(is_numeric($rawPrice) ? (float) $rawPrice : 0.0, 2));
+                $subtotal = round($unitPrice * $quantity, 2);
+                $costPrice = max(0.0, round((float) ($itemData['cost_price'] ?? $itemData['unit_cost_price'] ?? 0), 2));
+                $ivaRate = isset($itemData['iva_rate']) && is_numeric($itemData['iva_rate'])
+                    ? (float) $itemData['iva_rate']
+                    : 21.00;
+                $taxCalc = AfipHelper::calculateNetAndIva($subtotal, $ivaRate);
+                $productName = trim((string) ($itemData['name'] ?? $itemData['product_name'] ?? $customDescription ?? 'Producto Temporal'));
+
+                $sale->items()->create([
+                    'product_id' => null,
+                    'is_temporary' => true,
+                    'product_name' => $productName,
+                    'custom_description' => $customDescription,
+                    'custom_details' => $customDetails,
+                    'quantity' => $quantity,
+                    'unit_cost_price' => $costPrice,
+                    'unit_price' => $unitPrice,
+                    'subtotal' => $subtotal,
+                    'iva_rate' => $ivaRate,
+                    'net_amount' => $taxCalc['net'],
+                    'iva_amount' => $taxCalc['iva'],
+                ]);
+
+                continue;
+            }
+
+            $product = ! empty($itemData['product_id']) ? ($products[$itemData['product_id']] ?? null) : null;
             if (! $product) {
                 // Fix F1-ALTA-02: No omitir silenciosamente productos dados de baja (SoftDeletes)
                 throw new \InvalidArgumentException("El producto con ID {$itemData['product_id']} ya no está disponible o fue dado de baja.");
             }
-
-            $quantity = isset($itemData['quantity']) && is_numeric($itemData['quantity'])
-                ? (float) $itemData['quantity']
-                : 1.0;
 
             $rawPrice = $itemData['unit_price'] ?? $itemData['price'] ?? null;
             if ($rawPrice !== null && is_numeric($rawPrice)) {
@@ -709,12 +889,17 @@ class SaleService
 
             $costPrice = $this->stockService->calculateCostPrice($product);
 
-            $ivaRate = (float) ($product->iva_rate ?? 21.00);
+            $ivaRate = isset($itemData['iva_rate']) && is_numeric($itemData['iva_rate'])
+                ? (float) $itemData['iva_rate']
+                : (float) ($product->iva_rate ?? 21.00);
             $taxCalc = AfipHelper::calculateNetAndIva($subtotal, $ivaRate);
 
             $sale->items()->create([
                 'product_id' => $product->id,
+                'is_temporary' => false,
                 'product_name' => $product->name,
+                'custom_description' => $customDescription,
+                'custom_details' => $customDetails,
                 'quantity' => $quantity,
                 'unit_cost_price' => $costPrice,
                 'unit_price' => $unitPrice,
@@ -728,12 +913,21 @@ class SaleService
 
     protected function createDeliveryNote(Sale $sale, array $items, string $fulfillmentStatus): void
     {
+        $deliverableItems = array_values(array_filter(
+            $items,
+            fn ($itemData) => ! empty($itemData['product_id']) && empty($itemData['is_temporary'])
+        ));
+
+        if (empty($deliverableItems)) {
+            return;
+        }
+
         $deliveryNote = DeliveryNote::create([
             'sale_id' => $sale->id,
             'status' => $fulfillmentStatus,
         ]);
 
-        foreach ($items as $itemData) {
+        foreach ($deliverableItems as $itemData) {
             $qty = (float) $itemData['quantity'];
             $deliveryNote->items()->create([
                 'product_id' => $itemData['product_id'],

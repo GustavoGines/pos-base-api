@@ -355,6 +355,92 @@ class ProductController extends Controller
     }
 
     /**
+     * Pospone (Snooze) o limpia una alerta de vencimiento de producto en cascada.
+     * POST /api/inventory/alerts/{product}/snooze
+     */
+    public function snoozeExpirationAlert(Request $request, Product $product)
+    {
+        $validated = $request->validate([
+            'action' => 'nullable|string|in:snooze_days,snooze_next_stage,snooze_stage,clear_expiration,update_expiration',
+            'days' => 'nullable|integer|min:1|max:365',
+            'expiration_date' => 'nullable|date',
+        ]);
+
+        $action = $validated['action'] ?? 'snooze_days';
+
+        if (in_array($action, ['clear_expiration', 'update_expiration'], true)) {
+            $permissionMiddleware = app(\App\Http\Middleware\EnsurePermissionOrPin::class);
+            $authCheck = $permissionMiddleware->handle(
+                $request,
+                fn () => response('', 200),
+                \App\Constants\Permissions::MANAGE_CATALOG,
+                \App\Constants\Permissions::ADJUST_STOCK
+            );
+            if ($authCheck->getStatusCode() !== 200) {
+                return $authCheck;
+            }
+        }
+
+        if ($action === 'clear_expiration') {
+            $product->update([
+                'expiration_date' => null,
+                'expiry_alert_snoozed_until' => null,
+                'expiry_alert_last_stage' => null,
+            ]);
+
+            return response()->json([
+                'message' => 'Fecha de vencimiento quitada del producto.',
+                'product' => $product->fresh(),
+            ]);
+        }
+
+        if ($action === 'update_expiration' && ! empty($validated['expiration_date'])) {
+            $product->update([
+                'expiration_date' => $validated['expiration_date'],
+                'expiry_alert_snoozed_until' => null,
+                'expiry_alert_last_stage' => null,
+            ]);
+
+            return response()->json([
+                'message' => 'Nueva fecha de vencimiento registrada.',
+                'product' => $product->fresh(),
+            ]);
+        }
+
+        // Calcular la etapa actual del producto para registrar expiry_alert_last_stage
+        $currentStage = 15;
+        if ($product->expiration_date) {
+            $daysUntil = (int) now()->startOfDay()->diffInDays($product->expiration_date->copy()->startOfDay(), false);
+            if ($daysUntil <= 0) {
+                $currentStage = 0;
+            } elseif ($daysUntil <= 3) {
+                $currentStage = 3;
+            } elseif ($daysUntil <= 7) {
+                $currentStage = 7;
+            } else {
+                $currentStage = 15;
+            }
+        }
+
+        $snoozeDays = (int) ($validated['days'] ?? 1);
+        if (in_array($action, ['snooze_next_stage', 'snooze_stage'], true)) {
+            // Silenciar por hasta 30 días en la etapa actual; se reactivará sola al cruzar al siguiente umbral (7d, 3d o 0d)
+            $snoozeDays = 30;
+        }
+
+        $product->update([
+            'expiry_alert_snoozed_until' => now()->addDays($snoozeDays),
+            'expiry_alert_last_stage' => $currentStage,
+        ]);
+
+        return response()->json([
+            'message' => 'Alerta de vencimiento pospuesta correctamente.',
+            'snoozed_until' => $product->expiry_alert_snoozed_until?->toIso8601String(),
+            'last_stage' => $currentStage,
+        ]);
+    }
+
+    /**
      * Sincroniza los tramos de precio mayorista provistos en el payload.
      * Elimina los antiguos y recrea los nuevos asegurando consistencia.
      */
