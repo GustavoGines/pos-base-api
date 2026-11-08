@@ -165,13 +165,10 @@ class AfipCertificateService
 
     protected function ensureOpenSslConfig(): void
     {
-        $envConf = getenv('OPENSSL_CONF');
-        if (empty($envConf)) {
-            $candidate = dirname(PHP_BINARY).'/extras/ssl/openssl.cnf';
-            if (file_exists($candidate)) {
-                putenv("OPENSSL_CONF={$candidate}");
-                $_ENV['OPENSSL_CONF'] = $candidate;
-            }
+        $resolved = $this->resolveOpenSslConfigPath();
+        if ($resolved !== null) {
+            putenv("OPENSSL_CONF={$resolved}");
+            $_ENV['OPENSSL_CONF'] = $resolved;
         }
     }
 
@@ -183,11 +180,70 @@ class AfipCertificateService
             'private_key_type' => OPENSSL_KEYTYPE_RSA,
         ];
 
-        $envConf = getenv('OPENSSL_CONF');
-        if (! empty($envConf) && file_exists($envConf)) {
-            $config['config'] = $envConf;
+        $resolved = $this->resolveOpenSslConfigPath();
+        if ($resolved !== null) {
+            $config['config'] = $resolved;
         }
 
         return $config;
+    }
+
+    /**
+     * Resuelve una ruta válida de openssl.cnf compatible tanto con PHP CLI como con Apache mod_php en Windows/Laragon.
+     * Si el entorno no provee ningún archivo openssl.cnf accesible, genera uno minimalista válido en storage privado.
+     */
+    protected function resolveOpenSslConfigPath(): ?string
+    {
+        $candidates = [];
+
+        $envConf = getenv('OPENSSL_CONF');
+        if (! empty($envConf)) {
+            $candidates[] = $envConf;
+        }
+
+        $loadedIni = php_ini_loaded_file();
+        if (! empty($loadedIni)) {
+            $candidates[] = dirname($loadedIni).DIRECTORY_SEPARATOR.'extras'.DIRECTORY_SEPARATOR.'ssl'.DIRECTORY_SEPARATOR.'openssl.cnf';
+        }
+
+        if (defined('PHP_BINDIR') && ! empty(PHP_BINDIR)) {
+            $candidates[] = PHP_BINDIR.DIRECTORY_SEPARATOR.'extras'.DIRECTORY_SEPARATOR.'ssl'.DIRECTORY_SEPARATOR.'openssl.cnf';
+        }
+
+        if (defined('PHP_BINARY') && ! empty(PHP_BINARY)) {
+            $candidates[] = dirname(PHP_BINARY).DIRECTORY_SEPARATOR.'extras'.DIRECTORY_SEPARATOR.'ssl'.DIRECTORY_SEPARATOR.'openssl.cnf';
+        }
+
+        foreach ($candidates as $candidate) {
+            if (is_string($candidate) && $candidate !== '' && file_exists($candidate)) {
+                return $candidate;
+            }
+        }
+
+        $fallbackDir = storage_path('app/private/afip');
+        if (! is_dir($fallbackDir)) {
+            @mkdir($fallbackDir, 0700, true);
+        }
+
+        $fallbackConf = $fallbackDir.DIRECTORY_SEPARATOR.'openssl.cnf';
+        if (! file_exists($fallbackConf)) {
+            $minimalConfig = implode("\n", [
+                '[ req ]',
+                'default_bits = 2048',
+                'default_md = sha256',
+                'distinguished_name = req_distinguished_name',
+                'prompt = no',
+                '',
+                '[ req_distinguished_name ]',
+                'C = AR',
+                'O = SistemaPOS',
+                'CN = SistemaPOS',
+                'serialNumber = CUIT 00000000000',
+                '',
+            ]);
+            @file_put_contents($fallbackConf, $minimalConfig);
+        }
+
+        return file_exists($fallbackConf) ? $fallbackConf : null;
     }
 }

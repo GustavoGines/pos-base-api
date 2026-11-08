@@ -21,16 +21,32 @@ class AfipWsaaService
     }
 
     /**
-     * Detección dinámica y configuración de OPENSSL_CONF para entornos Windows / Laragon.
+     * Detección dinámica y configuración de OPENSSL_CONF para entornos Windows / Laragon (CLI y Apache mod_php).
      */
     public function ensureOpenSslConfig(): void
     {
         $envConf = getenv('OPENSSL_CONF');
-        if (empty($envConf)) {
-            $candidate = dirname(PHP_BINARY).'/extras/ssl/openssl.cnf';
+        if (! empty($envConf) && file_exists($envConf)) {
+            return;
+        }
+
+        $candidates = [];
+        $loadedIni = php_ini_loaded_file();
+        if (! empty($loadedIni)) {
+            $candidates[] = dirname($loadedIni).'/extras/ssl/openssl.cnf';
+        }
+        if (defined('PHP_BINDIR') && ! empty(PHP_BINDIR)) {
+            $candidates[] = PHP_BINDIR.'/extras/ssl/openssl.cnf';
+        }
+        if (defined('PHP_BINARY') && ! empty(PHP_BINARY)) {
+            $candidates[] = dirname(PHP_BINARY).'/extras/ssl/openssl.cnf';
+        }
+
+        foreach ($candidates as $candidate) {
             if (file_exists($candidate)) {
                 putenv("OPENSSL_CONF={$candidate}");
                 $_ENV['OPENSSL_CONF'] = $candidate;
+                return;
             }
         }
     }

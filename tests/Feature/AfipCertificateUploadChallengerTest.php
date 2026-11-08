@@ -61,10 +61,12 @@ class AfipCertificateUploadChallengerTest extends TestCase
 
     protected function tearDown(): void
     {
-        // Cleanup storage afip directories created during tests
-        $afipDir = storage_path('app/private/afip');
-        if (File::exists($afipDir)) {
-            File::deleteDirectory($afipDir);
+        // Cleanup only test-specific afip directories created during tests (never delete real user CUIT folders)
+        foreach (['30712345678', '20000000001', '20123456789', '27000000006'] as $testCuit) {
+            $dir = storage_path('app/private/afip/'.$testCuit);
+            if (File::exists($dir)) {
+                File::deleteDirectory($dir);
+            }
         }
 
         parent::tearDown();
