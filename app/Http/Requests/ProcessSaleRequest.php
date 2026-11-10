@@ -61,6 +61,7 @@ class ProcessSaleRequest extends FormRequest
             'items.*.custom_description' => 'nullable|string|max:255',
             'items.*.custom_details' => 'nullable|string|max:1000',
             'items.*.cost_price' => 'nullable|numeric|min:0',
+            'items.*.custom_cost_price' => 'nullable|numeric|min:0',
             'items.*.iva_rate' => 'nullable|numeric|in:0,10.5,21,27',
             'items.*.is_sold_by_weight' => 'nullable|boolean',
             'items.*.is_combo' => 'nullable|boolean',

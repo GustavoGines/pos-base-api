@@ -887,7 +887,11 @@ class SaleService
 
             $subtotal = round($unitPrice * $quantity, 2);
 
-            $costPrice = $this->stockService->calculateCostPrice($product);
+            if (isset($itemData['custom_cost_price']) && is_numeric($itemData['custom_cost_price']) && (float) $itemData['custom_cost_price'] >= 0) {
+                $costPrice = round((float) $itemData['custom_cost_price'], 2);
+            } else {
+                $costPrice = $this->stockService->calculateCostPrice($product);
+            }
 
             $ivaRate = isset($itemData['iva_rate']) && is_numeric($itemData['iva_rate'])
                 ? (float) $itemData['iva_rate']

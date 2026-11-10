@@ -52,7 +52,20 @@ class UpdateProductRequest extends FormRequest
                 'string',
                 Rule::unique('products')->ignore($productId)->whereNull('deleted_at'),
             ],
-            'cost_price' => 'nullable|numeric|min:0',
+            'cost_price' => [
+                'nullable',
+                'numeric',
+                'min:0',
+                function (string $attribute, mixed $value, \Closure $fail) {
+                    if (! $this->has('selling_price') && is_numeric($value) && (float) $value > 0) {
+                        $routeProduct = $this->route('product');
+                        $currentSelling = $routeProduct instanceof Product ? (float) $routeProduct->selling_price : 0.0;
+                        if ($currentSelling > 0 && (float) $value > $currentSelling) {
+                            $fail('El precio de costo no puede ser mayor al precio de venta actual.');
+                        }
+                    }
+                },
+            ],
             'selling_price' => [
                 'numeric',
                 'min:0',

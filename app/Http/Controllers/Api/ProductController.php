@@ -10,6 +10,7 @@ use App\Models\Product;
 use App\Models\ProductPriceTier;
 use App\Services\BarcodeService;
 use App\Services\InventoryAlertService;
+use App\Services\ReportCacheService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -179,6 +180,7 @@ class ProductController extends Controller
 
             // Auditoría de Stock: Guardar valor previo bajo lock antes de actualizar
             $oldStock = (float) $product->stock;
+            $oldCost = (float) $product->cost_price;
             $willBeCombo = array_key_exists('is_combo', $validated) ? (bool) $validated['is_combo'] : (bool) $product->is_combo;
 
             // Si usamos add_stock o si es un combo (stock virtual), no pisamos el stock absoluto manualmente
@@ -187,6 +189,16 @@ class ProductController extends Controller
             }
 
             $product->update($validated);
+
+            // Si cambió el costo de un ingrediente simple, recalcular el costo de los combos padres que lo utilicen
+            if (! $willBeCombo && abs((float) $product->cost_price - $oldCost) > 0.001) {
+                $parentCombos = $product->combos()->with('children')->get();
+                foreach ($parentCombos as $parentCombo) {
+                    $parentCombo->update([
+                        'cost_price' => $parentCombo->calculateComboCostPrice(),
+                    ]);
+                }
+            }
 
             $actorUser = $request->user() ?? $request->attributes->get('authenticated_user');
 
@@ -243,6 +255,8 @@ class ProductController extends Controller
         if ($stockChanged) {
             SyncProductStockToPlatformsJob::dispatchForProducts([$product->id]);
         }
+
+        ReportCacheService::flush();
 
         return response()->json($product->load(['category.rubro', 'brand', 'supplier', 'children', 'priceTiers']));
     }
