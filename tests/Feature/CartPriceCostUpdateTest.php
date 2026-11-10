@@ -365,4 +365,101 @@ class CartPriceCostUpdateTest extends TestCase
             'unit_cost_price' => 4500.00,
         ]);
     }
+
+    public function test_indivisible_agreed_lot_subtotal_3_for_10000_reconciles_without_cent_discrepancy(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $shift = $this->crearTurnoAbierto(user: $admin);
+        $cash = $this->crearMetodoEfectivo();
+
+        $product = Product::create([
+            'name' => 'Alfajor Triple',
+            'internal_code' => 'ALF03',
+            'selling_price' => 3500.00,
+            'cost_price' => 2000.00,
+            'stock' => 20,
+            'active' => true,
+        ]);
+
+        // "Llevo 3, ¿me los dejás en $10.000 los tres?"
+        // unit_price = round(10000 / 3, 2) = 3333.33 -> 3333.33 * 3 = 9999.99, pero el subtotal pactado es 10000.00
+        $res = $this->actingAsAdmin($admin)
+            ->postJson('/api/pos/sales', [
+                'cash_shift_id' => $shift->id,
+                'user_id' => $admin->id,
+                'total' => 10000.00,
+                'total_surcharge' => 0,
+                'items' => [[
+                    'product_id' => $product->id,
+                    'quantity' => 3,
+                    'unit_price' => 3333.33,
+                    'subtotal' => 10000.00,
+                ]],
+                'payments' => [[
+                    'payment_method_id' => $cash->id,
+                    'base_amount' => 10000.00,
+                    'surcharge_amount' => 0,
+                    'total_amount' => 10000.00,
+                ]],
+            ]);
+
+        $res->assertStatus(201);
+        $this->assertEquals(10000.00, (float) $res->json('sale.total'));
+        $this->assertDatabaseHas('sale_items', [
+            'product_id' => $product->id,
+            'quantity' => 3,
+            'unit_price' => 3333.33,
+            'subtotal' => 10000.00,
+        ]);
+    }
+
+    public function test_quick_barcode_assignment_from_pos_and_duplicate_conflict_message(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $existingProduct = Product::create([
+            'name' => 'Gaseosa Coca Cola 2.25L',
+            'internal_code' => 'CC225',
+            'barcode' => '7790895000997',
+            'selling_price' => 2500.00,
+            'cost_price' => 1500.00,
+            'stock' => 10,
+            'active' => true,
+        ]);
+
+        $targetProduct = Product::create([
+            'name' => 'Galletitas Oreo 118g',
+            'internal_code' => 'OREO1',
+            'barcode' => null,
+            'selling_price' => 1200.00,
+            'cost_price' => 800.00,
+            'stock' => 15,
+            'active' => true,
+        ]);
+
+        // 1. Intentar asignar un código de barras ya usado por Coca Cola -> 422 mencionando el nombre del producto
+        $conflictRes = $this->actingAsAdmin($admin)
+            ->putJson("/api/catalog/products/{$targetProduct->id}", [
+                'barcode' => '7790895000997',
+            ]);
+
+        $conflictRes->assertStatus(422)
+            ->assertJsonValidationErrors(['barcode']);
+        $this->assertStringContainsString(
+            'Gaseosa Coca Cola 2.25L',
+            (string) ($conflictRes->json('errors.barcode.0') ?? '')
+        );
+
+        // 2. Asignar un código de barras nuevo válido -> 200 OK y conserva precio/costo intactos
+        $okRes = $this->actingAsAdmin($admin)
+            ->putJson("/api/catalog/products/{$targetProduct->id}", [
+                'barcode' => '7622210654321',
+            ]);
+
+        $okRes->assertStatus(200);
+        $fresh = $targetProduct->fresh();
+        $this->assertSame('7622210654321', $fresh->barcode);
+        $this->assertEquals(1200.00, (float) $fresh->selling_price);
+        $this->assertEquals(800.00, (float) $fresh->cost_price);
+    }
 }

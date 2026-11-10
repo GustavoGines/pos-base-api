@@ -50,7 +50,19 @@ class UpdateProductRequest extends FormRequest
             'barcode' => [
                 'nullable',
                 'string',
-                Rule::unique('products')->ignore($productId)->whereNull('deleted_at'),
+                function (string $attribute, mixed $value, \Closure $fail) use ($productId) {
+                    $trimmed = is_string($value) ? trim($value) : '';
+                    if ($trimmed === '') {
+                        return;
+                    }
+                    $conflicting = Product::where('barcode', $trimmed)
+                        ->when($productId, fn ($q) => $q->where('id', '!=', $productId))
+                        ->whereNull('deleted_at')
+                        ->first(['id', 'name']);
+                    if ($conflicting) {
+                        $fail("Este código de barras (EAN) ya está asignado a otro producto («{$conflicting->name}»).");
+                    }
+                },
             ],
             'cost_price' => [
                 'nullable',

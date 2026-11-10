@@ -845,7 +845,15 @@ class SaleService
             if ($isTemporary) {
                 $rawPrice = $itemData['unit_price'] ?? $itemData['price'] ?? 0;
                 $unitPrice = max(0.0, round(is_numeric($rawPrice) ? (float) $rawPrice : 0.0, 2));
-                $subtotal = round($unitPrice * $quantity, 2);
+                $calculatedSubtotal = round($unitPrice * $quantity, 2);
+                $subtotal = $calculatedSubtotal;
+                if (isset($itemData['subtotal']) && is_numeric($itemData['subtotal']) && (float) $itemData['subtotal'] >= 0) {
+                    $requestedSubtotal = round((float) $itemData['subtotal'], 2);
+                    $maxRoundingTolerance = max(0.05, round(0.02 * abs($quantity), 2));
+                    if (abs($requestedSubtotal - $calculatedSubtotal) <= $maxRoundingTolerance) {
+                        $subtotal = $requestedSubtotal;
+                    }
+                }
                 $costPrice = max(0.0, round((float) ($itemData['cost_price'] ?? $itemData['unit_cost_price'] ?? 0), 2));
                 $ivaRate = isset($itemData['iva_rate']) && is_numeric($itemData['iva_rate'])
                     ? (float) $itemData['iva_rate']
@@ -885,7 +893,15 @@ class SaleService
             }
             $unitPrice = max(0.0, round($unitPrice, 2));
 
-            $subtotal = round($unitPrice * $quantity, 2);
+            $calculatedSubtotal = round($unitPrice * $quantity, 2);
+            $subtotal = $calculatedSubtotal;
+            if (isset($itemData['subtotal']) && is_numeric($itemData['subtotal']) && (float) $itemData['subtotal'] >= 0) {
+                $requestedSubtotal = round((float) $itemData['subtotal'], 2);
+                $maxRoundingTolerance = max(0.05, round(0.02 * abs($quantity), 2));
+                if (abs($requestedSubtotal - $calculatedSubtotal) <= $maxRoundingTolerance) {
+                    $subtotal = $requestedSubtotal;
+                }
+            }
 
             if (isset($itemData['custom_cost_price']) && is_numeric($itemData['custom_cost_price']) && (float) $itemData['custom_cost_price'] >= 0) {
                 $costPrice = round((float) $itemData['custom_cost_price'], 2);
