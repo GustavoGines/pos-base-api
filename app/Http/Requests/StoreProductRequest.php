@@ -54,6 +54,7 @@ class StoreProductRequest extends FormRequest
             ],
             'price_wholesale' => 'nullable|numeric|min:0',
             'price_card' => 'nullable|numeric|min:0',
+            'iva_rate' => ['nullable', 'numeric', 'in:0,10.5,21,27'],
             'stock' => 'numeric',
             'min_stock' => 'nullable|numeric|min:0',
             'active' => 'boolean',

@@ -462,4 +462,43 @@ class CartPriceCostUpdateTest extends TestCase
         $this->assertEquals(1200.00, (float) $fresh->selling_price);
         $this->assertEquals(800.00, (float) $fresh->cost_price);
     }
+
+    public function test_catalog_product_store_and_update_persists_iva_rate(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        // 1. Crear producto con alícuota reducida (10.5%)
+        $storeRes = $this->actingAsAdmin($admin)
+            ->postJson('/api/catalog/products', [
+                'name' => 'Pan Francés x Kg',
+                'selling_price' => 2200.00,
+                'cost_price' => 1100.00,
+                'iva_rate' => 10.5,
+                'stock' => 10,
+                'is_sold_by_weight' => true,
+                'unit_type' => 'kg',
+            ]);
+
+        $storeRes->assertStatus(201);
+        $productId = $storeRes->json('id');
+        $this->assertEquals(10.50, (float) $storeRes->json('iva_rate'));
+
+        // 2. Actualizar alícuota desde POS / Catálogo a 21%
+        $updateRes = $this->actingAsAdmin($admin)
+            ->putJson("/api/catalog/products/{$productId}", [
+                'iva_rate' => 21,
+            ]);
+
+        $updateRes->assertStatus(200);
+        $this->assertEquals(21.00, (float) $updateRes->json('iva_rate'));
+
+        // 3. Rechazar alícuota no válida ante ARCA/AFIP
+        $invalidRes = $this->actingAsAdmin($admin)
+            ->putJson("/api/catalog/products/{$productId}", [
+                'iva_rate' => 15,
+            ]);
+
+        $invalidRes->assertStatus(422)
+            ->assertJsonValidationErrors(['iva_rate']);
+    }
 }

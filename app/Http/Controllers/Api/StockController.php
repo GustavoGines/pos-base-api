@@ -88,7 +88,7 @@ class StockController extends Controller
      */
     public function kardex(Request $request)
     {
-        $query = StockMovement::with(['product', 'user'])->latest();
+        $query = StockMovement::with(['product', 'user', 'authorizedByAdmin'])->latest();
 
         if ($request->has('product_id')) {
             $query->where('product_id', $request->product_id);

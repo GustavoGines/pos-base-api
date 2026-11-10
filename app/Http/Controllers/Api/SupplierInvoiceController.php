@@ -119,23 +119,43 @@ class SupplierInvoiceController extends Controller
     public function formatInvoice(SupplierInvoice $inv): array
     {
         $hasAuditTable = Schema::hasTable('supplier_invoice_audits');
-        $audits = ($hasAuditTable && $inv->relationLoaded('audits'))
-            ? $inv->audits->map(fn (SupplierInvoiceAudit $a) => [
-                'id' => $a->id,
-                'action' => $a->action,
-                'reason' => $a->reason,
-                'user_id' => $a->user_id,
-                'user_name' => $a->user?->name ?? 'Sistema',
-                'authorized_by_id' => $a->authorized_by_id,
-                'authorizer_name' => $a->authorizer?->name,
-                'before_snapshot' => $a->before_snapshot,
-                'after_snapshot' => $a->after_snapshot,
-                'changes_summary' => $a->changes_summary ?? [],
-                'created_at' => $a->created_at?->toIso8601String(),
-            ])->values()->all()
-            : [];
+        $auditsCollection = ($hasAuditTable && $inv->relationLoaded('audits'))
+            ? $inv->audits
+            : collect();
+
+        $audits = $auditsCollection->map(fn (SupplierInvoiceAudit $a) => [
+            'id' => $a->id,
+            'action' => $a->action,
+            'reason' => $a->reason,
+            'user_id' => $a->user_id,
+            'user_name' => $a->user?->name ?? $a->authorizer?->name ?? 'Administrador',
+            'authorized_by_id' => $a->authorized_by_id,
+            'authorizer_name' => $a->authorizer?->name,
+            'before_snapshot' => $a->before_snapshot,
+            'after_snapshot' => $a->after_snapshot,
+            'changes_summary' => $a->changes_summary ?? [],
+            'created_at' => $a->created_at?->toIso8601String(),
+        ])->values()->all();
 
         $editCount = (int) ($inv->edit_count ?? 0);
+
+        $createdAudit = $auditsCollection->firstWhere('action', 'created');
+        $resolvedUserName = $inv->user?->name
+            ?? $createdAudit?->user?->name
+            ?? $createdAudit?->authorizer?->name
+            ?? 'Administrador';
+
+        $updatedAudit = $auditsCollection->firstWhere('action', 'updated');
+        $resolvedEditorName = $inv->lastEditor?->name
+            ?? $updatedAudit?->user?->name
+            ?? $updatedAudit?->authorizer?->name
+            ?? ($editCount > 0 ? 'Administrador' : null);
+
+        $deletedAudit = $auditsCollection->firstWhere('action', 'deleted');
+        $resolvedDeletedByName = $inv->deletedBy?->name
+            ?? $deletedAudit?->user?->name
+            ?? $deletedAudit?->authorizer?->name
+            ?? ($inv->trashed() ? 'Administrador' : null);
 
         return [
             'id' => $inv->id,
@@ -143,7 +163,7 @@ class SupplierInvoiceController extends Controller
             'supplier_name' => $inv->supplier?->name ?? 'Proveedor #'.$inv->supplier_id,
             'supplier_cuit' => $inv->supplier?->cuit,
             'user_id' => $inv->user_id,
-            'user_name' => $inv->user?->name ?? 'Sistema',
+            'user_name' => $resolvedUserName,
             'type' => $inv->type ?? 'invoice',
             'status' => $inv->status ?? 'pending',
             'invoice_number' => $inv->invoice_number,
@@ -161,11 +181,11 @@ class SupplierInvoiceController extends Controller
             'is_edited' => $editCount > 0,
             'last_edited_at' => $inv->last_edited_at?->toIso8601String(),
             'last_edited_by_id' => $inv->last_edited_by_id,
-            'last_edited_by_name' => $inv->lastEditor?->name,
+            'last_edited_by_name' => $resolvedEditorName,
             'is_deleted' => $inv->trashed(),
             'deleted_at' => $inv->deleted_at?->toIso8601String(),
             'deleted_by_id' => $inv->deleted_by_id,
-            'deleted_by_name' => $inv->deletedBy?->name,
+            'deleted_by_name' => $resolvedDeletedByName,
             'deletion_reason' => $inv->deletion_reason,
             'items_count' => $inv->items->count(),
             'items' => $inv->items->map(fn ($i) => [
@@ -254,7 +274,7 @@ class SupplierInvoiceController extends Controller
             $createdInvoice = null;
 
             DB::transaction(function () use ($validated, $supplier, $request, $type, $isCreditNote, &$affectedProductIds, &$createdInvoice) {
-                $user = $request->user() ?? $request->attributes->get('authenticated_user');
+                $user = $request->user() ?? $request->attributes->get('authenticated_user') ?? $request->attributes->get('authorized_by_admin');
                 $authorizedAdminId = $request->attributes->get('authorized_by_admin_id') ?? $request->input('authorized_by_admin_id');
 
                 // CP-01: Bloqueo pesimista del proveedor al inicio de la transacción
@@ -414,7 +434,7 @@ class SupplierInvoiceController extends Controller
             $updatedInvoice = null;
 
             DB::transaction(function () use ($validated, $invoice, $request, $newType, $isNewCreditNote, &$affectedProductIds, &$updatedInvoice) {
-                $user = $request->user() ?? $request->attributes->get('authenticated_user');
+                $user = $request->user() ?? $request->attributes->get('authenticated_user') ?? $request->attributes->get('authorized_by_admin');
                 $authorizedAdminId = $request->attributes->get('authorized_by_admin_id') ?? $request->input('authorized_by_admin_id');
 
                 $lockedInvoice = SupplierInvoice::with(['items.product', 'supplier', 'user'])
@@ -576,7 +596,7 @@ class SupplierInvoiceController extends Controller
             $affectedProductIds = [];
 
             DB::transaction(function () use ($invoice, $request, $reason, &$affectedProductIds) {
-                $user = $request->user() ?? $request->attributes->get('authenticated_user');
+                $user = $request->user() ?? $request->attributes->get('authenticated_user') ?? $request->attributes->get('authorized_by_admin');
                 $authorizedAdminId = $request->attributes->get('authorized_by_admin_id') ?? $request->input('authorized_by_admin_id');
 
                 $lockedInvoice = SupplierInvoice::with(['items.product', 'supplier'])
@@ -683,7 +703,7 @@ class SupplierInvoiceController extends Controller
         $restoredInvoice = null;
 
         DB::transaction(function () use ($invoiceId, $request, &$affectedProductIds, &$restoredInvoice) {
-            $user = $request->user() ?? $request->attributes->get('authenticated_user');
+            $user = $request->user() ?? $request->attributes->get('authenticated_user') ?? $request->attributes->get('authorized_by_admin');
             $authorizedAdminId = $request->attributes->get('authorized_by_admin_id') ?? $request->input('authorized_by_admin_id');
 
             $lockedInvoice = SupplierInvoice::onlyTrashed()

@@ -118,6 +118,10 @@ class ProductController extends Controller
                 : null;
         }
 
+        if (! isset($validated['iva_rate']) || $validated['iva_rate'] === null) {
+            $validated['iva_rate'] = 21.00;
+        }
+
         $product = Product::create($validated);
 
         // Auditoría: Registrar stock inicial si es mayor a 0
@@ -125,6 +129,8 @@ class ProductController extends Controller
             $actorUser = $request->user() ?? $request->attributes->get('authenticated_user');
             $product->stockMovements()->create([
                 'user_id' => $actorUser?->id,
+                'authorized_by_admin_id' => $request->attributes->get('authorized_by_admin_id')
+                    ?? ($actorUser?->isAdmin() ? $actorUser->id : null),
                 'type' => 'in',
                 'quantity' => $product->stock,
                 'notes' => 'Stock inicial (Creación de producto)',
