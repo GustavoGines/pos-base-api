@@ -18,6 +18,7 @@ class CashMovement extends Model
         'check_id',
         'amount',
         'payment_method',
+        'funding_source',
         'type',
         'category',
         'expense_category_id',
@@ -29,6 +30,25 @@ class CashMovement extends Model
     protected $casts = [
         'amount' => 'decimal:2',
     ];
+
+    /**
+     * Retrocompatibilidad v1.8.5: si cash_shift_id es NULL en BD (movimiento fuera de turno),
+     * exponer 0 como entero en JSON para evitar FormatException en clientes legacy que hacen int.parse().
+     */
+    public function toArray(): array
+    {
+        $array = parent::toArray();
+        if (array_key_exists('cash_shift_id', $array) && $array['cash_shift_id'] === null) {
+            $array['cash_shift_id'] = 0;
+        }
+        if (! isset($array['funding_source']) || $array['funding_source'] === '') {
+            $array['funding_source'] = ($array['payment_method'] ?? '') === 'owner_funds'
+                ? 'owner_funds'
+                : 'cash_register';
+        }
+
+        return $array;
+    }
 
     public function cashShift()
     {

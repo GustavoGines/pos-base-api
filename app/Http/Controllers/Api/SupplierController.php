@@ -8,6 +8,7 @@ use App\Models\Supplier;
 use App\Models\SupplierInvoice;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 
@@ -110,7 +111,7 @@ class SupplierController extends Controller
             'lastEditor:id,name',
             'items.product:id,name,internal_code,barcode,unit_type,is_sold_by_weight,selling_price,cost_price',
         ];
-        if (\Illuminate\Support\Facades\Schema::hasTable('supplier_invoice_audits')) {
+        if (Schema::hasTable('supplier_invoice_audits')) {
             $relations[] = 'audits.user:id,name';
             $relations[] = 'audits.authorizer:id,name';
         }
@@ -131,8 +132,11 @@ class SupplierController extends Controller
             ->whereIn('type', ['expense', 'supplier_payment', 'deposit'])
             ->select(
                 'id',
+                'cash_shift_id',
                 'user_id',
                 'amount',
+                'payment_method',
+                'funding_source',
                 'type',
                 'description',
                 'receipt_file_url',

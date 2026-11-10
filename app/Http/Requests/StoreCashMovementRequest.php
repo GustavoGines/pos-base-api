@@ -27,17 +27,46 @@ class StoreCashMovementRequest extends FormRequest
             'cash' => 'cash',
             'transferencia' => 'transfer',
             'transfer' => 'transfer',
+            'tarjeta' => 'card',
+            'card' => 'card',
+            'credito' => 'card',
+            'debito' => 'card',
             'cheque' => 'check',
             'check' => 'check',
+            'fondos_propios' => 'owner_funds',
+            'bolsillo' => 'owner_funds',
+            'owner_funds' => 'owner_funds',
         ];
+
+        $sourceMap = [
+            'cash_register' => 'cash_register',
+            'caja' => 'cash_register',
+            'register' => 'cash_register',
+            'owner_funds' => 'owner_funds',
+            'fondos_propios' => 'owner_funds',
+            'bolsillo' => 'owner_funds',
+            'pocket' => 'owner_funds',
+        ];
+
+        $rawDefaultSource = strtolower(trim((string) $this->input('funding_source', 'cash_register')));
+        $defaultSource = $sourceMap[$rawDefaultSource] ?? 'cash_register';
 
         if (! $this->has('payments') && $this->has('amount')) {
             $rawMethod = strtolower(trim((string) $this->input('payment_method', 'cash')));
             $normalizedMethod = $methodMap[$rawMethod] ?? $rawMethod;
+            $fundingSource = $defaultSource;
+
+            if ($normalizedMethod === 'owner_funds') {
+                $normalizedMethod = 'cash';
+                $fundingSource = 'owner_funds';
+            } elseif ($normalizedMethod === 'check') {
+                $fundingSource = 'cash_register';
+            }
 
             $singlePayment = [
                 'amount' => $this->input('amount'),
                 'payment_method' => $normalizedMethod,
+                'funding_source' => $fundingSource,
             ];
             if ($this->filled('check_id')) {
                 $singlePayment['check_id'] = $this->input('check_id');
@@ -53,9 +82,22 @@ class StoreCashMovementRequest extends FormRequest
         if (is_array($this->input('payments'))) {
             $normalizedPayments = [];
             foreach ($this->input('payments') as $payment) {
-                if (is_array($payment) && isset($payment['payment_method'])) {
-                    $rawMethod = strtolower(trim((string) $payment['payment_method']));
-                    $payment['payment_method'] = $methodMap[$rawMethod] ?? $rawMethod;
+                if (is_array($payment)) {
+                    $rawMethod = strtolower(trim((string) ($payment['payment_method'] ?? 'cash')));
+                    $normalizedMethod = $methodMap[$rawMethod] ?? $rawMethod;
+
+                    $rawSource = strtolower(trim((string) ($payment['funding_source'] ?? $defaultSource)));
+                    $normalizedSource = $sourceMap[$rawSource] ?? $rawSource;
+
+                    if ($normalizedMethod === 'owner_funds') {
+                        $normalizedMethod = 'cash';
+                        $normalizedSource = 'owner_funds';
+                    } elseif ($normalizedMethod === 'check') {
+                        $normalizedSource = 'cash_register';
+                    }
+
+                    $payment['payment_method'] = $normalizedMethod;
+                    $payment['funding_source'] = $normalizedSource;
                 }
                 $normalizedPayments[] = $payment;
             }
@@ -113,10 +155,20 @@ class StoreCashMovementRequest extends FormRequest
             'payments.*.payment_method' => [
                 'required',
                 'string',
-                'in:cash,transfer,check',
+                'in:cash,transfer,check,card',
                 function ($attribute, $value, $fail) {
                     if ($value === 'check' && $this->input('type') !== 'supplier_payment') {
                         $fail('El método de pago con cheque solo está disponible para pagos a proveedores (supplier_payment).');
+                    }
+                },
+            ],
+            'payments.*.funding_source' => [
+                'nullable',
+                'string',
+                'in:cash_register,owner_funds',
+                function ($attribute, $value, $fail) {
+                    if ($value === 'owner_funds' && ! in_array($this->input('type'), ['supplier_payment', 'expense'], true)) {
+                        $fail('El origen Fondos Propios / Bolsillo solo está disponible para pagos a proveedores o gastos operativos.');
                     }
                 },
             ],

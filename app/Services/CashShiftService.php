@@ -236,12 +236,18 @@ class CashShiftService
             ->whereHas('payments.paymentMethod', fn ($q) => $q->whereIn('code', ['mercadopago_qr', 'mercadopago_point']))
             ->count();
 
-        // Movimientos manuales de caja
-        $cashDeposits = CashMovement::where('cash_shift_id', $shiftId)->where('payment_method', 'cash')->where('type', 'deposit')->sum('amount');
-        $cashExpenses = CashMovement::where('cash_shift_id', $shiftId)->where('payment_method', 'cash')->where('type', 'expense')->sum('amount');
-        $cashWithdrawals = CashMovement::where('cash_shift_id', $shiftId)->where('payment_method', 'cash')->where('type', 'withdrawal')->sum('amount');
-        $cashSupplierPayments = CashMovement::where('cash_shift_id', $shiftId)->where('payment_method', 'cash')->where('type', 'supplier_payment')->sum('amount');
+        // Movimientos manuales de caja (Efectivo físico salido/entrado de la Caja Registradora)
+        $fromRegisterScope = fn ($q) => $q->whereNull('funding_source')->orWhere('funding_source', 'cash_register');
+        $cashDeposits = CashMovement::where('cash_shift_id', $shiftId)->where('payment_method', 'cash')->where($fromRegisterScope)->where('type', 'deposit')->sum('amount');
+        $cashExpenses = CashMovement::where('cash_shift_id', $shiftId)->where('payment_method', 'cash')->where($fromRegisterScope)->where('type', 'expense')->sum('amount');
+        $cashWithdrawals = CashMovement::where('cash_shift_id', $shiftId)->where('payment_method', 'cash')->where($fromRegisterScope)->where('type', 'withdrawal')->sum('amount');
+        $cashSupplierPayments = CashMovement::where('cash_shift_id', $shiftId)->where('payment_method', 'cash')->where($fromRegisterScope)->where('type', 'supplier_payment')->sum('amount');
         $cashRefunds = CustomerTransaction::where('cash_shift_id', $shiftId)->where('type', 'refund')->where('payment_method', 'cash')->sum('amount');
+
+        // Movimientos informativos con Fondos Propios / Bolsillo (No afectan el efectivo físico del cajón)
+        $fromOwnerScope = fn ($q) => $q->where('funding_source', 'owner_funds')->orWhere('payment_method', 'owner_funds');
+        $ownerFundsExpenses = (float) CashMovement::where('cash_shift_id', $shiftId)->where($fromOwnerScope)->where('type', 'expense')->sum('amount');
+        $ownerFundsSupplierPayments = (float) CashMovement::where('cash_shift_id', $shiftId)->where($fromOwnerScope)->where('type', 'supplier_payment')->sum('amount');
 
         // El efectivo esperado
         $expectedBalance = $shift->opening_balance + $cashSales + $cashDeposits - $cashExpenses - $cashWithdrawals - $cashSupplierPayments - $cashRefunds;
@@ -275,6 +281,8 @@ class CashShiftService
             'total_withdrawals' => $cashWithdrawals,
             'total_deposits' => $cashDeposits,
             'total_supplier_payments' => $cashSupplierPayments,
+            'owner_funds_expenses' => $ownerFundsExpenses,
+            'owner_funds_supplier_payments' => $ownerFundsSupplierPayments,
             'total_refunds' => $cashRefunds,
             'total_sales' => $totalSales,
         ];

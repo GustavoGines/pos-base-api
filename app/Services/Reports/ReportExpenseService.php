@@ -48,8 +48,13 @@ class ReportExpenseService
                 'cash' => 'cash',
                 'transferencia' => 'transfer',
                 'transfer' => 'transfer',
+                'tarjeta' => 'card',
+                'card' => 'card',
                 'cheque' => 'check',
                 'check' => 'check',
+                'fondos_propios' => 'owner_funds',
+                'bolsillo' => 'owner_funds',
+                'owner_funds' => 'owner_funds',
             ];
             $paymentMethod = $map[$normalized] ?? null;
         } else {
@@ -115,7 +120,14 @@ class ReportExpenseService
         }
 
         if ($paymentMethod !== null) {
-            $query->where('cash_movements.payment_method', $paymentMethod);
+            if ($paymentMethod === 'owner_funds') {
+                $query->where(function ($q) {
+                    $q->where('cash_movements.funding_source', 'owner_funds')
+                        ->orWhere('cash_movements.payment_method', 'owner_funds');
+                });
+            } else {
+                $query->where('cash_movements.payment_method', $paymentMethod);
+            }
         }
 
         if ($minAmount !== null && $minAmount > 0) {
@@ -142,12 +154,20 @@ class ReportExpenseService
             ->select(
                 'cash_movements.id',
                 'cash_movements.amount',
+                'cash_movements.payment_method',
+                'cash_movements.funding_source',
                 'cash_movements.description',
                 'cash_movements.created_at',
                 'cash_movements.type',
                 'cash_movements.cash_shift_id',
                 'cash_shifts.cash_register_id',
-                DB::raw("COALESCE(cash_registers.name, 'Caja Principal') as cash_register_name"),
+                DB::raw("
+                CASE
+                    WHEN cash_movements.funding_source = 'owner_funds' OR cash_movements.payment_method = 'owner_funds' THEN 'Fondos Propios / Bolsillo'
+                    WHEN cash_movements.cash_shift_id IS NULL THEN 'Fuera de Caja / Admin'
+                    ELSE COALESCE(cash_registers.name, 'Caja Principal')
+                END as cash_register_name
+                "),
                 DB::raw("
                 CASE 
                     WHEN cash_movements.type = 'supplier_payment' THEN 'Pago a Proveedor'
@@ -181,6 +201,8 @@ class ReportExpenseService
                     return [
                         'id' => $m->id,
                         'amount' => (float) $m->amount,
+                        'payment_method' => $m->payment_method ?? 'cash',
+                        'funding_source' => $m->funding_source ?? 'cash_register',
                         'description' => $m->description,
                         'date' => $m->created_at,
                         'type' => $m->type,

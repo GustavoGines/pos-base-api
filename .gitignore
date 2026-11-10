@@ -27,6 +27,7 @@ Thumbs.db
 updater_log.txt
 ota_result.txt
 ota_pending.json
+/storage/framework/ota_cache_*
 
 # Ignorar APKs locales
 *.apk

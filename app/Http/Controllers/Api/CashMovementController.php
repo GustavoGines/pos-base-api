@@ -54,14 +54,19 @@ class CashMovementController extends Controller
         if ($request->query('all') !== '1') {
             $shift = $this->resolveActiveShift($request);
             if (! $shift) {
-                return response()->json([
-                    'data' => [],
-                    'current_page' => 1,
-                    'last_page' => 1,
-                    'total' => 0,
-                ]);
+                if ($request->filled('cash_shift_id') || $request->filled('cash_register_id')) {
+                    return response()->json([
+                        'data' => [],
+                        'current_page' => 1,
+                        'last_page' => 1,
+                        'total' => 0,
+                    ]);
+                }
+                // Si todas las cajas están cerradas y se consulta la vista actual, mostrar los movimientos fuera de turno del día
+                $query->whereNull('cash_shift_id')->whereDate('created_at', now()->toDateString());
+            } else {
+                $query->where('cash_shift_id', $shift->id);
             }
-            $query->where('cash_shift_id', $shift->id);
         } elseif ($request->filled('cash_register_id') && is_numeric($request->query('cash_register_id'))) {
             $registerId = (int) $request->query('cash_register_id');
             $query->whereHas('cashShift', fn ($q) => $q->where('cash_register_id', $registerId));
@@ -143,27 +148,41 @@ class CashMovementController extends Controller
 
     public function store(StoreCashMovementRequest $request)
     {
-        // FINDING-CASH-02: En Multi-Caja, si hay múltiples cajas abiertas, exigir especificar la caja/turno
+        $validated = $request->validated();
+
+        $requiresPhysicalCash = collect($validated['payments'] ?? [])->contains(
+            fn ($p) => ($p['payment_method'] ?? 'cash') === 'cash'
+                && ($p['funding_source'] ?? 'cash_register') === 'cash_register'
+        ) || in_array($validated['type'] ?? '', ['withdrawal', 'deposit'], true);
+
+        // FINDING-CASH-02: En Multi-Caja, si hay múltiples cajas abiertas y el movimiento toca efectivo físico, exigir especificar la caja/turno
         $openShiftsCount = CashShift::where('status', 'open')->count();
         if ($openShiftsCount > 1 && ! $request->filled('cash_shift_id') && ! $request->filled('cash_register_id')) {
-            return response()->json([
-                'message' => 'Existen múltiples cajas abiertas. Debe especificar cash_shift_id o cash_register_id.',
-                'errors' => ['cash_shift_id' => ['Existen múltiples cajas abiertas. Debe especificar cash_shift_id o cash_register_id.']],
-            ], 422);
+            if ($requiresPhysicalCash) {
+                return response()->json([
+                    'message' => 'Existen múltiples cajas abiertas. Debe especificar cash_shift_id o cash_register_id.',
+                    'errors' => ['cash_shift_id' => ['Existen múltiples cajas abiertas. Debe especificar cash_shift_id o cash_register_id.']],
+                ], 422);
+            }
         }
 
-        $shift = $this->resolveActiveShift($request);
-
-        if (! $shift) {
-            return response()->json(['message' => 'No hay turno abierto para registrar el movimiento.'], 403);
+        $shift = null;
+        if ($request->filled('cash_shift_id') || $request->filled('cash_register_id') || $openShiftsCount === 1) {
+            $shift = $this->resolveActiveShift($request);
         }
 
-        // Validación extra de integridad del turno
-        if ($shift->status !== 'open') {
-            return response()->json(['message' => 'El turno actual se encuentra cerrado.'], 403);
+        if ($requiresPhysicalCash) {
+            if (! $shift) {
+                return response()->json(['message' => 'No hay turno abierto para registrar el movimiento.'], 403);
+            }
+            if ($shift->status !== 'open') {
+                return response()->json(['message' => 'El turno actual se encuentra cerrado.'], 403);
+            }
+        } elseif ($shift && $shift->status !== 'open') {
+            // Si es un pago externo (ej. Fondos Propios) y el turno referenciado ya cerró, se asienta fuera de turno
+            $shift = null;
         }
 
-        $validated = $request->validated();
         $user = $request->user() ?? $request->attributes->get('authenticated_user');
         $authorizedBy = $request->attributes->get('authorized_by_admin_id');
 
@@ -223,10 +242,18 @@ class CashMovementController extends Controller
             $createdMovements = [];
             $batchUuid = (string) Str::uuid();
 
-            DB::transaction(function () use ($validated, $shift, $user, $authorizedBy, &$createdMovements) {
-                // F3-CAJA-03 / FN-F3-03: Bloqueo pesimista del turno dentro de la transacción
-                $lockedShift = CashShift::where('id', $shift->id)->lockForUpdate()->first();
-                if (! $lockedShift || $lockedShift->status !== 'open') {
+            DB::transaction(function () use ($validated, $shift, $requiresPhysicalCash, $user, $authorizedBy, &$createdMovements) {
+                // F3-CAJA-03 / FN-F3-03: Bloqueo pesimista del turno dentro de la transacción (si aplica turno)
+                $lockedShift = null;
+                if ($shift) {
+                    $lockedShift = CashShift::where('id', $shift->id)->lockForUpdate()->first();
+                    if (! $lockedShift || $lockedShift->status !== 'open') {
+                        if ($requiresPhysicalCash) {
+                            throw new \RuntimeException('SHIFT_ALREADY_CLOSED');
+                        }
+                        $lockedShift = null;
+                    }
+                } elseif ($requiresPhysicalCash) {
                     throw new \RuntimeException('SHIFT_ALREADY_CLOSED');
                 }
 
@@ -241,18 +268,20 @@ class CashMovementController extends Controller
                 foreach ($validated['payments'] as $payment) {
                     $amount = $payment['amount'];
                     $method = $payment['payment_method'];
+                    $fundingSource = $payment['funding_source'] ?? 'cash_register';
                     $checkId = $payment['check_id'] ?? null;
 
                     $totalAmountPaid += $amount;
 
                     $movement = CashMovement::create([
-                        'cash_shift_id' => $shift->id,
+                        'cash_shift_id' => $lockedShift?->id,
                         'user_id' => $user->id,
                         'authorized_by' => $authorizedBy,
                         'supplier_id' => $validated['supplier_id'] ?? null,
                         'check_id' => $method === 'check' ? $checkId : null,
                         'amount' => $amount,
                         'payment_method' => $method,
+                        'funding_source' => $fundingSource,
                         'type' => $validated['type'],
                         'category' => $validated['category'] ?? null,
                         'expense_category_id' => $validated['expense_category_id'] ?? null,
@@ -304,6 +333,7 @@ class CashMovementController extends Controller
                     'id' => $m->id,
                     'amount' => $m->amount,
                     'payment_method' => $m->payment_method,
+                    'funding_source' => $m->funding_source ?? 'cash_register',
                     'type' => $m->type,
                     'category' => $m->category,
                     'created_at' => $m->created_at->toIso8601String(),
@@ -326,14 +356,6 @@ class CashMovementController extends Controller
         $movement = CashMovement::findOrFail($id);
         $user = $request->user() ?? $request->attributes->get('authenticated_user');
 
-        // Candado de Seguridad 1: Debe haber un turno abierto
-        if (! CashShift::where('status', 'open')->exists()) {
-            return response()->json([
-                'message' => 'No hay un turno de caja abierto.',
-                'error' => 'Para anular un movimiento, debe tener una caja abierta.',
-            ], 403);
-        }
-
         // Candado de Seguridad 2: No permitir anular manualmente devoluciones automáticas de ventas anuladas
         if ($movement->category === 'refund') {
             return response()->json([
@@ -342,20 +364,36 @@ class CashMovementController extends Controller
             ], 403);
         }
 
-        // Candado de Seguridad 3: El turno al que pertenece el movimiento debe seguir abierto (multi-caja safe)
-        $movementShift = CashShift::find($movement->cash_shift_id);
-        if (! $movementShift || $movementShift->status !== 'open') {
-            return response()->json([
-                'message' => 'Movimiento bloqueado por seguridad.',
-                'error' => 'Solo se pueden anular movimientos pertenecientes al turno de caja actual. Los movimientos de turnos cerrados están bloqueados y son inmutables.',
-            ], 403);
+        $isExternalMovement = $movement->cash_shift_id === null
+            || $movement->funding_source === 'owner_funds'
+            || $movement->payment_method === 'owner_funds';
+
+        if (! $isExternalMovement) {
+            // Candado de Seguridad 1: Debe haber un turno abierto para movimientos de caja física
+            if (! CashShift::where('status', 'open')->exists()) {
+                return response()->json([
+                    'message' => 'No hay un turno de caja abierto.',
+                    'error' => 'Para anular un movimiento, debe tener una caja abierta.',
+                ], 403);
+            }
+
+            // Candado de Seguridad 3: El turno al que pertenece el movimiento debe seguir abierto (multi-caja safe)
+            $movementShift = CashShift::find($movement->cash_shift_id);
+            if (! $movementShift || $movementShift->status !== 'open') {
+                return response()->json([
+                    'message' => 'Movimiento bloqueado por seguridad.',
+                    'error' => 'Solo se pueden anular movimientos pertenecientes al turno de caja actual. Los movimientos de turnos cerrados están bloqueados y son inmutables.',
+                ], 403);
+            }
         }
 
         try {
-            DB::transaction(function () use ($movement, $user) {
-                $lockedShift = CashShift::where('id', $movement->cash_shift_id)->lockForUpdate()->first();
-                if (! $lockedShift || $lockedShift->status !== 'open') {
-                    throw new \RuntimeException('SHIFT_ALREADY_CLOSED');
+            DB::transaction(function () use ($movement, $user, $isExternalMovement) {
+                if (! $isExternalMovement && $movement->cash_shift_id) {
+                    $lockedShift = CashShift::where('id', $movement->cash_shift_id)->lockForUpdate()->first();
+                    if (! $lockedShift || $lockedShift->status !== 'open') {
+                        throw new \RuntimeException('SHIFT_ALREADY_CLOSED');
+                    }
                 }
                 // Revertir balance de proveedor con lockForUpdate (CP-09)
                 if ($movement->supplier_id) {

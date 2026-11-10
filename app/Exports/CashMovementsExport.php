@@ -90,18 +90,33 @@ class CashMovementsExport implements FromQuery, WithHeadings, WithMapping
 
     public function map($movement): array
     {
-        $registerName = $movement->cashShift?->cashRegister?->name
-            ?? ($movement->cashShift?->cash_register_id ? 'Caja '.$movement->cashShift->cash_register_id : 'Caja Principal');
+        $registerName = $movement->cash_shift_id === null
+            ? 'Fuera de Caja / Admin'
+            : ($movement->cashShift?->cashRegister?->name
+                ?? ($movement->cashShift?->cash_register_id ? 'Caja '.$movement->cashShift->cash_register_id : 'Caja Principal'));
+
+        $methodMap = [
+            'cash' => 'Efectivo',
+            'transfer' => 'Transferencia',
+            'card' => 'Tarjeta',
+            'check' => 'Cheque',
+            'owner_funds' => 'Fondos Propios (Bolsillo)',
+        ];
+
+        $methodLabel = $methodMap[$movement->payment_method] ?? $movement->payment_method;
+        if (($movement->funding_source ?? 'cash_register') === 'owner_funds' && $movement->payment_method !== 'owner_funds') {
+            $methodLabel .= ' (Fondos Propios / Bolsillo)';
+        }
 
         return [
             $movement->id,
             $movement->created_at->format('Y-m-d H:i:s'),
             $registerName,
-            $movement->cash_shift_id ? '#'.$movement->cash_shift_id : '',
+            $movement->cash_shift_id ? '#'.$movement->cash_shift_id : 'Fuera de Turno',
             $movement->type,
             $movement->category,
             $movement->amount,
-            $movement->payment_method,
+            $methodLabel,
             $movement->user ? $movement->user->name : '',
             $movement->supplier ? $movement->supplier->name : '',
             $movement->description,
