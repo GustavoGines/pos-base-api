@@ -483,7 +483,7 @@ class DemoMarketingDataSeeder extends Seeder
                     'customer_name' => 'CrossFit Central Formosa',
                     'customer_phone' => '3704-551122',
                     'valid_until' => Carbon::now()->addDays(15)->toDateString(),
-                    'notes' => 'Presupuesto por equipamiento para alumnos - Válido 15 días con precio congelado.',
+                    'notes' => 'Presupuesto por equipamiento para alumnos - Validez de cotización por 15 días.',
                     'price_list' => 'base',
                     'items' => [
                         ['product' => $p1, 'quantity' => 5],
