@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\StoreSupplierInvoiceRequest;
+use App\Http\Requests\UpdateSupplierInvoiceRequest;
 use App\Jobs\SyncProductStockToPlatformsJob;
 use App\Models\Product;
 use App\Models\StockMovement;
@@ -166,12 +168,28 @@ class SupplierInvoiceController extends Controller
             'user_name' => $resolvedUserName,
             'type' => $inv->type ?? 'invoice',
             'status' => $inv->status ?? 'pending',
+            'voucher_letter' => $inv->voucher_letter,
+            'point_of_sale' => $inv->point_of_sale !== null ? (int) $inv->point_of_sale : null,
+            'voucher_number' => $inv->voucher_number !== null ? (int) $inv->voucher_number : null,
+            'formatted_number' => $inv->formatted_number,
             'invoice_number' => $inv->invoice_number,
             'description' => $inv->description,
             'receipt_file_url' => $inv->receipt_file_url,
             'amount' => (float) $inv->amount,
             'total_amount' => (float) $inv->amount,
             'tax_amount' => (float) ($inv->tax_amount ?? 0),
+            'net_21' => (float) ($inv->net_21 ?? 0),
+            'iva_21' => (float) ($inv->iva_21 ?? 0),
+            'net_105' => (float) ($inv->net_105 ?? 0),
+            'iva_105' => (float) ($inv->iva_105 ?? 0),
+            'net_27' => (float) ($inv->net_27 ?? 0),
+            'iva_27' => (float) ($inv->iva_27 ?? 0),
+            'non_taxed_amount' => (float) ($inv->non_taxed_amount ?? 0),
+            'exempt_amount' => (float) ($inv->exempt_amount ?? 0),
+            'iva_perception' => (float) ($inv->iva_perception ?? 0),
+            'iibb_perception' => (float) ($inv->iibb_perception ?? 0),
+            'internal_taxes' => (float) ($inv->internal_taxes ?? 0),
+            'affects_vat_book' => (bool) ($inv->affects_vat_book ?? true),
             'freight_amount' => (float) ($inv->freight_amount ?? 0),
             'discount_amount' => (float) ($inv->discount_amount ?? 0),
             'issue_date' => $inv->issue_date?->toIso8601String(),
@@ -210,32 +228,10 @@ class SupplierInvoiceController extends Controller
         ];
     }
 
-    public function store(Request $request, Supplier $supplier)
+    public function store(StoreSupplierInvoiceRequest $request, Supplier $supplier)
     {
         // CP-06: 'type' es nullable con default 'invoice' para retrocompatibilidad con v1.8.5
-        $validated = $request->validate([
-            'type' => 'nullable|string|in:invoice,delivery_note,credit_note',
-            'status' => 'nullable|string|in:pending,partial,paid',
-            'amount' => 'nullable|numeric|min:0',
-            'invoice_number' => 'nullable|string|max:255',
-            'description' => 'nullable|string',
-            'issue_date' => 'nullable|date',
-            'due_date' => 'nullable|date',
-            'receipt_file_url' => 'nullable|string',
-            'tax_amount' => 'nullable|numeric|min:0',
-            'freight_amount' => 'nullable|numeric|min:0',
-            'discount_amount' => 'nullable|numeric|min:0',
-            // Arrays para ítems
-            'items' => 'nullable|array',
-            'items.*.product_id' => 'required_with:items|exists:products,id',
-            'items.*.quantity' => 'required_with:items|numeric|min:0.001',
-            'items.*.unit_cost' => 'nullable|numeric|min:0',
-            'items.*.subtotal' => 'nullable|numeric|min:0',
-            // Actualización opcional de precios dictada por el usuario desde el frontend
-            'items.*.new_selling_price' => 'nullable|numeric|min:0',
-            'items.*.new_sale_price' => 'nullable|numeric|min:0',
-            'items.*.expiration_date' => 'nullable|date',
-        ]);
+        $validated = $request->validated();
 
         $validated['items'] = $this->normalizeValidatedItems($validated['items'] ?? []);
 
@@ -290,18 +286,37 @@ class SupplierInvoiceController extends Controller
                     }
                 }
 
-                $tax = $validated['tax_amount'] ?? 0;
-                $freight = $validated['freight_amount'] ?? 0;
-                $discount = $validated['discount_amount'] ?? 0;
+                $tax = isset($validated['tax_amount'])
+                    ? (float) $validated['tax_amount']
+                    : ((float) ($validated['iva_21'] ?? 0) + (float) ($validated['iva_105'] ?? 0) + (float) ($validated['iva_27'] ?? 0));
+                $freight = (float) ($validated['freight_amount'] ?? 0);
+                $discount = (float) ($validated['discount_amount'] ?? 0);
 
-                $subtotal = 0;
+                $isFiscal = ! empty($validated['voucher_letter']) || (
+                    (float) ($validated['net_21'] ?? 0) > 0 || (float) ($validated['iva_21'] ?? 0) > 0 ||
+                    (float) ($validated['net_105'] ?? 0) > 0 || (float) ($validated['iva_105'] ?? 0) > 0 ||
+                    (float) ($validated['net_27'] ?? 0) > 0 || (float) ($validated['iva_27'] ?? 0) > 0 ||
+                    (float) ($validated['iva_perception'] ?? 0) > 0 || (float) ($validated['iibb_perception'] ?? 0) > 0 ||
+                    (float) ($validated['internal_taxes'] ?? 0) > 0 || (float) ($validated['non_taxed_amount'] ?? 0) > 0 ||
+                    (float) ($validated['exempt_amount'] ?? 0) > 0
+                );
+
                 if (! empty($validated['items'])) {
                     $subtotal = array_sum(array_column($validated['items'], 'subtotal'));
+                    if (isset($validated['amount']) && (float) $validated['amount'] > 0) {
+                        $totalAmount = (float) $validated['amount'];
+                    } else {
+                        $perceptions = (float) ($validated['iva_perception'] ?? 0)
+                            + (float) ($validated['iibb_perception'] ?? 0)
+                            + (float) ($validated['internal_taxes'] ?? 0);
+                        $totalAmount = $subtotal + $freight + $tax + $perceptions - $discount;
+                    }
+                } elseif (isset($validated['amount']) && $isFiscal) {
+                    $totalAmount = (float) $validated['amount'];
                 } else {
-                    $subtotal = $validated['amount'] ?? 0;
+                    $subtotal = isset($validated['amount']) ? (float) $validated['amount'] : 0.0;
+                    $totalAmount = $subtotal + $freight + $tax - $discount;
                 }
-
-                $totalAmount = $subtotal + $freight + $tax - $discount;
 
                 // 1. Crear la cabecera de la factura
                 $invoice = $lockedSupplier->invoices()->create([
@@ -317,6 +332,23 @@ class SupplierInvoiceController extends Controller
                     'issue_date' => $validated['issue_date'] ?? now(),
                     'due_date' => $validated['due_date'] ?? null,
                     'user_id' => $user->id ?? null,
+                    'voucher_letter' => $validated['voucher_letter'] ?? null,
+                    'point_of_sale' => isset($validated['point_of_sale']) ? (int) $validated['point_of_sale'] : null,
+                    'voucher_number' => isset($validated['voucher_number']) ? (int) $validated['voucher_number'] : null,
+                    'net_21' => (float) ($validated['net_21'] ?? 0),
+                    'iva_21' => (float) ($validated['iva_21'] ?? 0),
+                    'net_105' => (float) ($validated['net_105'] ?? 0),
+                    'iva_105' => (float) ($validated['iva_105'] ?? 0),
+                    'net_27' => (float) ($validated['net_27'] ?? 0),
+                    'iva_27' => (float) ($validated['iva_27'] ?? 0),
+                    'non_taxed_amount' => (float) ($validated['non_taxed_amount'] ?? 0),
+                    'exempt_amount' => (float) ($validated['exempt_amount'] ?? 0),
+                    'iva_perception' => (float) ($validated['iva_perception'] ?? 0),
+                    'iibb_perception' => (float) ($validated['iibb_perception'] ?? 0),
+                    'internal_taxes' => (float) ($validated['internal_taxes'] ?? 0),
+                    'affects_vat_book' => $type === 'delivery_note'
+                        ? false
+                        : (isset($validated['affects_vat_book']) ? (bool) $validated['affects_vat_book'] : true),
                 ]);
 
                 // 2. Procesar ítems si existen con bloqueo pesimista ordenado (CP-01 / CP-08)
@@ -377,30 +409,9 @@ class SupplierInvoiceController extends Controller
      * Edición integral de un comprobante de proveedor (cabecera, montos e ítems)
      * revirtiendo atómicamente el impacto contable/stock previo y aplicando el nuevo con trazabilidad de auditoría.
      */
-    public function update(Request $request, int $invoice)
+    public function update(UpdateSupplierInvoiceRequest $request, int $invoice)
     {
-        $validated = $request->validate([
-            'type' => 'nullable|string|in:invoice,delivery_note,credit_note',
-            'status' => 'nullable|string|in:pending,partial,paid',
-            'amount' => 'nullable|numeric|min:0',
-            'invoice_number' => 'nullable|string|max:255',
-            'description' => 'nullable|string',
-            'issue_date' => 'nullable|date',
-            'due_date' => 'nullable|date',
-            'receipt_file_url' => 'nullable|string',
-            'tax_amount' => 'nullable|numeric|min:0',
-            'freight_amount' => 'nullable|numeric|min:0',
-            'discount_amount' => 'nullable|numeric|min:0',
-            'edit_reason' => 'nullable|string|max:255',
-            'items' => 'nullable|array',
-            'items.*.product_id' => 'required_with:items|exists:products,id',
-            'items.*.quantity' => 'required_with:items|numeric|min:0.001',
-            'items.*.unit_cost' => 'nullable|numeric|min:0',
-            'items.*.subtotal' => 'nullable|numeric|min:0',
-            'items.*.new_selling_price' => 'nullable|numeric|min:0',
-            'items.*.new_sale_price' => 'nullable|numeric|min:0',
-            'items.*.expiration_date' => 'nullable|date',
-        ]);
+        $validated = $request->validated();
 
         $validated['items'] = $this->normalizeValidatedItems($validated['items'] ?? []);
 
@@ -480,18 +491,44 @@ class SupplierInvoiceController extends Controller
                 $lockedInvoice->items()->delete();
 
                 // 2. Calcular nuevos totales y actualizar cabecera
-                $tax = isset($validated['tax_amount']) ? (float) $validated['tax_amount'] : (float) ($lockedInvoice->tax_amount ?? 0);
+                $tax = isset($validated['tax_amount'])
+                    ? (float) $validated['tax_amount']
+                    : ((float) ($validated['iva_21'] ?? $lockedInvoice->iva_21 ?? 0)
+                        + (float) ($validated['iva_105'] ?? $lockedInvoice->iva_105 ?? 0)
+                        + (float) ($validated['iva_27'] ?? $lockedInvoice->iva_27 ?? 0));
                 $freight = isset($validated['freight_amount']) ? (float) $validated['freight_amount'] : (float) ($lockedInvoice->freight_amount ?? 0);
                 $discount = isset($validated['discount_amount']) ? (float) $validated['discount_amount'] : (float) ($lockedInvoice->discount_amount ?? 0);
 
-                $subtotal = 0;
+                $isFiscal = ! empty($validated['voucher_letter'] ?? $lockedInvoice->voucher_letter) || (
+                    (float) ($validated['net_21'] ?? $lockedInvoice->net_21 ?? 0) > 0 ||
+                    (float) ($validated['iva_21'] ?? $lockedInvoice->iva_21 ?? 0) > 0 ||
+                    (float) ($validated['net_105'] ?? $lockedInvoice->net_105 ?? 0) > 0 ||
+                    (float) ($validated['iva_105'] ?? $lockedInvoice->iva_105 ?? 0) > 0 ||
+                    (float) ($validated['net_27'] ?? $lockedInvoice->net_27 ?? 0) > 0 ||
+                    (float) ($validated['iva_27'] ?? $lockedInvoice->iva_27 ?? 0) > 0 ||
+                    (float) ($validated['iva_perception'] ?? $lockedInvoice->iva_perception ?? 0) > 0 ||
+                    (float) ($validated['iibb_perception'] ?? $lockedInvoice->iibb_perception ?? 0) > 0 ||
+                    (float) ($validated['internal_taxes'] ?? $lockedInvoice->internal_taxes ?? 0) > 0 ||
+                    (float) ($validated['non_taxed_amount'] ?? $lockedInvoice->non_taxed_amount ?? 0) > 0 ||
+                    (float) ($validated['exempt_amount'] ?? $lockedInvoice->exempt_amount ?? 0) > 0
+                );
+
                 if (! empty($validated['items'])) {
                     $subtotal = array_sum(array_column($validated['items'], 'subtotal'));
+                    if (isset($validated['amount']) && (float) $validated['amount'] > 0) {
+                        $newTotalAmount = (float) $validated['amount'];
+                    } else {
+                        $perceptions = (float) ($validated['iva_perception'] ?? $lockedInvoice->iva_perception ?? 0)
+                            + (float) ($validated['iibb_perception'] ?? $lockedInvoice->iibb_perception ?? 0)
+                            + (float) ($validated['internal_taxes'] ?? $lockedInvoice->internal_taxes ?? 0);
+                        $newTotalAmount = $subtotal + $freight + $tax + $perceptions - $discount;
+                    }
+                } elseif (isset($validated['amount'])) {
+                    $subtotal = (float) $validated['amount'];
+                    $newTotalAmount = $isFiscal ? $subtotal : ($subtotal + $freight + $tax - $discount);
                 } else {
-                    $subtotal = isset($validated['amount']) ? (float) $validated['amount'] : 0.0;
+                    $newTotalAmount = (float) ($lockedInvoice->amount ?? 0);
                 }
-
-                $newTotalAmount = $subtotal + $freight + $tax - $discount;
 
                 $updatePayload = [
                     'type' => $newType,
@@ -505,6 +542,23 @@ class SupplierInvoiceController extends Controller
                     'receipt_file_url' => array_key_exists('receipt_file_url', $validated) ? $validated['receipt_file_url'] : $lockedInvoice->receipt_file_url,
                     'issue_date' => $validated['issue_date'] ?? $lockedInvoice->issue_date ?? now(),
                     'due_date' => array_key_exists('due_date', $validated) ? $validated['due_date'] : $lockedInvoice->due_date,
+                    'voucher_letter' => array_key_exists('voucher_letter', $validated) ? $validated['voucher_letter'] : $lockedInvoice->voucher_letter,
+                    'point_of_sale' => array_key_exists('point_of_sale', $validated) ? ($validated['point_of_sale'] !== null ? (int) $validated['point_of_sale'] : null) : $lockedInvoice->point_of_sale,
+                    'voucher_number' => array_key_exists('voucher_number', $validated) ? ($validated['voucher_number'] !== null ? (int) $validated['voucher_number'] : null) : $lockedInvoice->voucher_number,
+                    'net_21' => array_key_exists('net_21', $validated) ? (float) $validated['net_21'] : $lockedInvoice->net_21,
+                    'iva_21' => array_key_exists('iva_21', $validated) ? (float) $validated['iva_21'] : $lockedInvoice->iva_21,
+                    'net_105' => array_key_exists('net_105', $validated) ? (float) $validated['net_105'] : $lockedInvoice->net_105,
+                    'iva_105' => array_key_exists('iva_105', $validated) ? (float) $validated['iva_105'] : $lockedInvoice->iva_105,
+                    'net_27' => array_key_exists('net_27', $validated) ? (float) $validated['net_27'] : $lockedInvoice->net_27,
+                    'iva_27' => array_key_exists('iva_27', $validated) ? (float) $validated['iva_27'] : $lockedInvoice->iva_27,
+                    'non_taxed_amount' => array_key_exists('non_taxed_amount', $validated) ? (float) $validated['non_taxed_amount'] : $lockedInvoice->non_taxed_amount,
+                    'exempt_amount' => array_key_exists('exempt_amount', $validated) ? (float) $validated['exempt_amount'] : $lockedInvoice->exempt_amount,
+                    'iva_perception' => array_key_exists('iva_perception', $validated) ? (float) $validated['iva_perception'] : $lockedInvoice->iva_perception,
+                    'iibb_perception' => array_key_exists('iibb_perception', $validated) ? (float) $validated['iibb_perception'] : $lockedInvoice->iibb_perception,
+                    'internal_taxes' => array_key_exists('internal_taxes', $validated) ? (float) $validated['internal_taxes'] : $lockedInvoice->internal_taxes,
+                    'affects_vat_book' => $newType === 'delivery_note'
+                        ? false
+                        : (array_key_exists('affects_vat_book', $validated) ? (bool) $validated['affects_vat_book'] : (bool) ($lockedInvoice->affects_vat_book ?? true)),
                 ];
 
                 if (Schema::hasColumn('supplier_invoices', 'edit_count')) {
@@ -1056,12 +1110,27 @@ class SupplierInvoiceController extends Controller
     {
         return [
             'type' => $inv->type ?? 'invoice',
+            'voucher_letter' => $inv->voucher_letter,
+            'point_of_sale' => $inv->point_of_sale,
+            'voucher_number' => $inv->voucher_number,
             'invoice_number' => $inv->invoice_number,
             'description' => $inv->description,
             'issue_date' => $inv->issue_date?->format('Y-m-d'),
             'due_date' => $inv->due_date?->format('Y-m-d'),
             'amount' => round((float) $inv->amount, 2),
             'tax_amount' => round((float) ($inv->tax_amount ?? 0), 2),
+            'net_21' => round((float) ($inv->net_21 ?? 0), 2),
+            'iva_21' => round((float) ($inv->iva_21 ?? 0), 2),
+            'net_105' => round((float) ($inv->net_105 ?? 0), 2),
+            'iva_105' => round((float) ($inv->iva_105 ?? 0), 2),
+            'net_27' => round((float) ($inv->net_27 ?? 0), 2),
+            'iva_27' => round((float) ($inv->iva_27 ?? 0), 2),
+            'non_taxed_amount' => round((float) ($inv->non_taxed_amount ?? 0), 2),
+            'exempt_amount' => round((float) ($inv->exempt_amount ?? 0), 2),
+            'iva_perception' => round((float) ($inv->iva_perception ?? 0), 2),
+            'iibb_perception' => round((float) ($inv->iibb_perception ?? 0), 2),
+            'internal_taxes' => round((float) ($inv->internal_taxes ?? 0), 2),
+            'affects_vat_book' => (bool) ($inv->affects_vat_book ?? true),
             'freight_amount' => round((float) ($inv->freight_amount ?? 0), 2),
             'discount_amount' => round((float) ($inv->discount_amount ?? 0), 2),
             'items' => $inv->items->map(fn ($i) => [
@@ -1089,6 +1158,30 @@ class SupplierInvoiceController extends Controller
                 'field' => 'Tipo Comprobante',
                 'old' => $typeLabels[$before['type'] ?? 'invoice'] ?? $before['type'],
                 'new' => $typeLabels[$after['type'] ?? 'invoice'] ?? $after['type'],
+            ];
+        }
+
+        if (($before['voucher_letter'] ?? '') !== ($after['voucher_letter'] ?? '')) {
+            $changes[] = [
+                'field' => 'Letra Fiscal',
+                'old' => $before['voucher_letter'] ?: '-',
+                'new' => $after['voucher_letter'] ?: '-',
+            ];
+        }
+
+        if (($before['point_of_sale'] ?? '') !== ($after['point_of_sale'] ?? '')) {
+            $changes[] = [
+                'field' => 'Pto. Venta Fiscal',
+                'old' => (string) ($before['point_of_sale'] ?? '-'),
+                'new' => (string) ($after['point_of_sale'] ?? '-'),
+            ];
+        }
+
+        if (($before['voucher_number'] ?? '') !== ($after['voucher_number'] ?? '')) {
+            $changes[] = [
+                'field' => 'Nº Fiscal',
+                'old' => (string) ($before['voucher_number'] ?? '-'),
+                'new' => (string) ($after['voucher_number'] ?? '-'),
             ];
         }
 

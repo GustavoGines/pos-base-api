@@ -365,6 +365,10 @@ Route::middleware(['session.validate', 'license.active'])->group(function () {
         Route::get('/vat-sales/export', [ReportController::class, 'exportVatSalesExcel']);
         Route::get('/vat-sales/pdf', [ReportController::class, 'exportVatSalesPdf']);
         Route::get('/vat-sales', [ReportController::class, 'vatSales']);
+        Route::get('/vat-purchases/export', [ReportController::class, 'exportVatPurchasesExcel']);
+        Route::get('/vat-purchases/pdf', [ReportController::class, 'exportVatPurchasesPdf']);
+        Route::get('/vat-purchases', [ReportController::class, 'vatPurchases']);
+        Route::get('/vat-position', [ReportController::class, 'vatPosition']);
 
         Route::middleware(['feature:expenses'])->group(function () {
             Route::get('/expenses-analysis/export', [ReportController::class, 'exportExpensesAnalysisExcel']);

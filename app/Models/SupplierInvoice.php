@@ -29,6 +29,21 @@ class SupplierInvoice extends Model
         'last_edited_by_id',
         'deleted_by_id',
         'deletion_reason',
+        'voucher_letter',
+        'point_of_sale',
+        'voucher_number',
+        'net_21',
+        'iva_21',
+        'net_105',
+        'iva_105',
+        'net_27',
+        'iva_27',
+        'non_taxed_amount',
+        'exempt_amount',
+        'iva_perception',
+        'iibb_perception',
+        'internal_taxes',
+        'affects_vat_book',
     ];
 
     protected $casts = [
@@ -40,6 +55,20 @@ class SupplierInvoice extends Model
         'freight_amount' => 'float',
         'discount_amount' => 'float',
         'edit_count' => 'integer',
+        'point_of_sale' => 'integer',
+        'voucher_number' => 'integer',
+        'net_21' => 'float',
+        'iva_21' => 'float',
+        'net_105' => 'float',
+        'iva_105' => 'float',
+        'net_27' => 'float',
+        'iva_27' => 'float',
+        'non_taxed_amount' => 'float',
+        'exempt_amount' => 'float',
+        'iva_perception' => 'float',
+        'iibb_perception' => 'float',
+        'internal_taxes' => 'float',
+        'affects_vat_book' => 'boolean',
     ];
 
     public function supplier()
@@ -70,5 +99,21 @@ class SupplierInvoice extends Model
     public function audits()
     {
         return $this->hasMany(SupplierInvoiceAudit::class, 'supplier_invoice_id')->orderBy('id', 'desc');
+    }
+
+    public function getFormattedNumberAttribute(): string
+    {
+        if ($this->point_of_sale !== null && $this->voucher_number !== null) {
+            $letter = $this->voucher_letter ? strtoupper($this->voucher_letter).' ' : '';
+
+            return sprintf('%s%05d-%08d', $letter, (int) $this->point_of_sale, (int) $this->voucher_number);
+        }
+
+        return (string) ($this->invoice_number ?? 'S/N');
+    }
+
+    public function scopeForVatBook($query)
+    {
+        return $query->where('affects_vat_book', true);
     }
 }

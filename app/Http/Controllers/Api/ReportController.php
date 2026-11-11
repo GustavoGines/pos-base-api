@@ -4,7 +4,9 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\BusinessSetting;
+use App\Models\ElectronicInvoice;
 use App\Models\SaleItem;
+use App\Models\SupplierInvoice;
 use App\Repositories\SalesAnalyticsRepository;
 use App\Services\ReportCacheService;
 use App\Services\Reports\ReportExpenseService;
@@ -592,7 +594,7 @@ class ReportController extends Controller
         $startBound = Carbon::parse($startDate)->startOfDay();
         $endBound = Carbon::parse($endDate)->endOfDay();
 
-        $invoices = \App\Models\ElectronicInvoice::where('status', 'authorized')
+        $invoices = ElectronicInvoice::where('status', 'authorized')
             ->whereNotNull('cae')
             ->where(function ($q) use ($startBound, $endBound) {
                 $q->whereBetween('issued_at', [$startBound, $endBound])
@@ -607,7 +609,7 @@ class ReportController extends Controller
             ->orderBy('voucher_number', 'asc')
             ->get();
 
-        $extractAliquots = function (\App\Models\ElectronicInvoice $inv): array {
+        $extractAliquots = function (ElectronicInvoice $inv): array {
             $n21 = 0.0;
             $i21 = 0.0;
             $n105 = 0.0;
@@ -875,5 +877,356 @@ class ReportController extends Controller
         $data = $this->buildVatSalesData($startDate, $endDate);
 
         return $this->exportService->exportVatSalesPdf($data, $data['start_date'], $data['end_date']);
+    }
+
+    /**
+     * Motor de consolidación para Libro IVA Compras.
+     */
+    public function buildVatPurchasesData(string $startDate, string $endDate, ?int $supplierId = null, ?string $voucherType = null): array
+    {
+        [$startDate, $endDate] = $this->normalizeDateRange($startDate, $endDate);
+
+        $startBound = Carbon::parse($startDate)->startOfDay();
+        $endBound = Carbon::parse($endDate)->endOfDay();
+
+        $query = SupplierInvoice::with('supplier:id,name,cuit,tax_category')
+            ->whereNull('deleted_at')
+            ->where('affects_vat_book', true)
+            ->whereIn('type', ['invoice', 'credit_note'])
+            ->where(function ($q) use ($startBound, $endBound) {
+                $q->whereBetween('issue_date', [$startBound, $endBound])
+                    ->orWhere(function ($sq) use ($startBound, $endBound) {
+                        $sq->whereNull('issue_date')
+                            ->whereBetween('created_at', [$startBound, $endBound]);
+                    });
+            });
+
+        if ($supplierId !== null && $supplierId > 0) {
+            $query->where('supplier_id', $supplierId);
+        }
+
+        if ($voucherType !== null && $voucherType !== '' && $voucherType !== 'all') {
+            if (in_array(strtoupper($voucherType), ['A', 'B', 'C', 'M', 'X'])) {
+                $query->where('voucher_letter', strtoupper($voucherType));
+            } elseif (in_array(strtolower($voucherType), ['invoice', 'credit_note'])) {
+                $query->where('type', strtolower($voucherType));
+            }
+        }
+
+        $invoices = $query->orderBy('issue_date', 'asc')->orderBy('id', 'asc')->get();
+
+        $vouchers = [];
+        $totalNet = 0.0;
+        $totalIva = 0.0;
+        $totalNet21 = 0.0;
+        $totalIva21 = 0.0;
+        $totalNet105 = 0.0;
+        $totalIva105 = 0.0;
+        $totalNet27 = 0.0;
+        $totalIva27 = 0.0;
+        $totalNonTaxed = 0.0;
+        $totalExempt = 0.0;
+        $totalIvaPerception = 0.0;
+        $totalIibbPerception = 0.0;
+        $totalInternalTaxes = 0.0;
+        $totalCreditFiscal = 0.0;
+        $totalAmount = 0.0;
+        $invoicesCount = 0;
+        $creditNotesCount = 0;
+
+        foreach ($invoices as $inv) {
+            $isCreditNote = ($inv->type === 'credit_note');
+            $sign = $isCreditNote ? -1.0 : 1.0;
+
+            $hasFiscalBreakdown = ! empty($inv->voucher_letter)
+                || ((float) $inv->net_21 != 0.0 || (float) $inv->iva_21 != 0.0
+                    || (float) $inv->net_105 != 0.0 || (float) $inv->iva_105 != 0.0
+                    || (float) $inv->net_27 != 0.0 || (float) $inv->iva_27 != 0.0
+                    || (float) $inv->non_taxed_amount != 0.0 || (float) $inv->exempt_amount != 0.0
+                    || (float) $inv->iva_perception != 0.0 || (float) $inv->iibb_perception != 0.0
+                    || (float) $inv->internal_taxes != 0.0);
+
+            if (! $hasFiscalBreakdown) {
+                $isHistorical = true;
+                $tax = (float) ($inv->tax_amount ?? 0);
+                $amount = (float) $inv->amount;
+                if ($tax > 0.0) {
+                    $net21 = max(0.0, $amount - $tax);
+                    $iva21 = $tax;
+                    $creditFiscal = $iva21;
+                    $nonTaxed = 0.0;
+                    $letter = 'A';
+                } else {
+                    $net21 = 0.0;
+                    $iva21 = 0.0;
+                    $creditFiscal = 0.0;
+                    $nonTaxed = $amount;
+                    $letter = 'S/D';
+                }
+                $exempt = 0.0;
+                $net105 = 0.0;
+                $iva105 = 0.0;
+                $net27 = 0.0;
+                $iva27 = 0.0;
+                $ivaPerception = 0.0;
+                $iibbPerception = 0.0;
+                $internalTaxes = 0.0;
+            } else {
+                $isHistorical = false;
+                $letter = strtoupper((string) ($inv->voucher_letter ?: 'A'));
+
+                if (in_array($letter, ['B', 'C', 'X'])) {
+                    $creditFiscal = 0.0;
+                    $net21 = 0.0;
+                    $iva21 = 0.0;
+                    $net105 = 0.0;
+                    $iva105 = 0.0;
+                    $net27 = 0.0;
+                    $iva27 = 0.0;
+                    $ivaPerception = (float) ($inv->iva_perception ?? 0);
+                    $iibbPerception = (float) ($inv->iibb_perception ?? 0);
+                    $internalTaxes = (float) ($inv->internal_taxes ?? 0);
+                    $exempt = (float) ($inv->exempt_amount ?? 0);
+                    $nonTaxed = (float) ($inv->non_taxed_amount ?? 0);
+                    if ($exempt == 0.0 && $nonTaxed == 0.0) {
+                        $nonTaxed = max(0.0, (float) $inv->amount - $ivaPerception - $iibbPerception - $internalTaxes);
+                    }
+                } else {
+                    $net21 = (float) ($inv->net_21 ?? 0);
+                    $iva21 = (float) ($inv->iva_21 ?? 0);
+                    $net105 = (float) ($inv->net_105 ?? 0);
+                    $iva105 = (float) ($inv->iva_105 ?? 0);
+                    $net27 = (float) ($inv->net_27 ?? 0);
+                    $iva27 = (float) ($inv->iva_27 ?? 0);
+                    $creditFiscal = $iva21 + $iva105 + $iva27;
+                    $nonTaxed = (float) ($inv->non_taxed_amount ?? 0);
+                    $exempt = (float) ($inv->exempt_amount ?? 0);
+                    $ivaPerception = (float) ($inv->iva_perception ?? 0);
+                    $iibbPerception = (float) ($inv->iibb_perception ?? 0);
+                    $internalTaxes = (float) ($inv->internal_taxes ?? 0);
+                }
+            }
+
+            $invAmount = (float) $inv->amount;
+
+            $totalNet += $sign * ($net21 + $net105 + $net27);
+            $totalIva += $sign * $creditFiscal;
+            $totalNet21 += $sign * $net21;
+            $totalIva21 += $sign * $iva21;
+            $totalNet105 += $sign * $net105;
+            $totalIva105 += $sign * $iva105;
+            $totalNet27 += $sign * $net27;
+            $totalIva27 += $sign * $iva27;
+            $totalNonTaxed += $sign * $nonTaxed;
+            $totalExempt += $sign * $exempt;
+            $totalIvaPerception += $sign * $ivaPerception;
+            $totalIibbPerception += $sign * $iibbPerception;
+            $totalInternalTaxes += $sign * $internalTaxes;
+            $totalCreditFiscal += $sign * $creditFiscal;
+            $totalAmount += $sign * $invAmount;
+
+            if ($isCreditNote) {
+                $creditNotesCount++;
+            } else {
+                $invoicesCount++;
+            }
+
+            if ($letter === 'S/D') {
+                $voucherLabel = $isCreditNote ? 'Nota de Crédito S/D' : 'Comprobante S/D';
+            } else {
+                $voucherLabel = ($isCreditNote ? 'Nota de Crédito ' : 'Factura ').$letter;
+            }
+
+            $vouchers[] = [
+                'id' => $inv->id,
+                'kind' => $inv->type ?? 'invoice',
+                'type' => $inv->type ?? 'invoice',
+                'supplier_id' => $inv->supplier_id,
+                'supplier_name' => $inv->supplier?->name ?? 'Proveedor #'.$inv->supplier_id,
+                'supplier_cuit' => $inv->supplier?->cuit ?? '',
+                'supplier_tax_condition' => $inv->supplier?->tax_category ?? 'Responsable Inscripto',
+                'voucher_letter' => $letter,
+                'voucher_label' => $voucherLabel,
+                'point_of_sale' => $inv->point_of_sale !== null ? (int) $inv->point_of_sale : null,
+                'voucher_number' => $inv->voucher_number !== null ? (int) $inv->voucher_number : null,
+                'formatted_number' => $inv->formatted_number,
+                'invoice_number' => $inv->invoice_number,
+                'issue_date' => ($inv->issue_date ?? $inv->created_at)?->toIso8601String(),
+                'net_21' => round($sign * $net21, 2),
+                'iva_21' => round($sign * $iva21, 2),
+                'net_105' => round($sign * $net105, 2),
+                'iva_105' => round($sign * $iva105, 2),
+                'net_27' => round($sign * $net27, 2),
+                'iva_27' => round($sign * $iva27, 2),
+                'non_taxed_amount' => round($sign * $nonTaxed, 2),
+                'exempt_amount' => round($sign * $exempt, 2),
+                'iva_perception' => round($sign * $ivaPerception, 2),
+                'iibb_perception' => round($sign * $iibbPerception, 2),
+                'internal_taxes' => round($sign * $internalTaxes, 2),
+                'credit_fiscal' => round($sign * $creditFiscal, 2),
+                'total_amount' => round($sign * $invAmount, 2),
+                'is_historical' => $isHistorical,
+            ];
+        }
+
+        return [
+            'start_date' => $startDate,
+            'end_date' => $endDate,
+            'summary' => [
+                'total_net' => round($totalNet, 2),
+                'total_iva' => round($totalIva, 2),
+                'total_net_21' => round($totalNet21, 2),
+                'total_iva_21' => round($totalIva21, 2),
+                'total_net_105' => round($totalNet105, 2),
+                'total_iva_105' => round($totalIva105, 2),
+                'total_net_27' => round($totalNet27, 2),
+                'total_iva_27' => round($totalIva27, 2),
+                'total_non_taxed' => round($totalNonTaxed, 2),
+                'total_exempt' => round($totalExempt, 2),
+                'total_iva_perception' => round($totalIvaPerception, 2),
+                'total_iibb_perception' => round($totalIibbPerception, 2),
+                'total_internal_taxes' => round($totalInternalTaxes, 2),
+                'total_credit_fiscal' => round($totalCreditFiscal, 2),
+                'total_amount' => round($totalAmount, 2),
+                'invoices_count' => $invoicesCount,
+                'credit_notes_count' => $creditNotesCount,
+                'vouchers_count' => count($vouchers),
+            ],
+            'vouchers' => $vouchers,
+        ];
+    }
+
+    /**
+     * REP-12: Libro IVA Compras consolidado para contabilidad fiscal AFIP/ARCA.
+     * GET /api/reports/vat-purchases?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
+     */
+    public function vatPurchases(Request $request): JsonResponse
+    {
+        $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
+        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        $supplierId = $request->query('supplier_id') ? (int) $request->query('supplier_id') : null;
+        $voucherType = $request->query('voucher_type');
+
+        return response()->json($this->buildVatPurchasesData($startDate, $endDate, $supplierId, $voucherType));
+    }
+
+    /**
+     * Exporta el Libro IVA Compras a Excel (.xlsx).
+     * GET /api/reports/vat-purchases/export?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
+     */
+    public function exportVatPurchasesExcel(Request $request)
+    {
+        $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
+        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        $supplierId = $request->query('supplier_id') ? (int) $request->query('supplier_id') : null;
+        $voucherType = $request->query('voucher_type');
+
+        $data = $this->buildVatPurchasesData($startDate, $endDate, $supplierId, $voucherType);
+
+        return $this->exportService->exportVatPurchasesExcel($data, $data['start_date'], $data['end_date']);
+    }
+
+    /**
+     * Exporta el Libro IVA Compras a PDF.
+     * GET /api/reports/vat-purchases/pdf?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
+     */
+    public function exportVatPurchasesPdf(Request $request)
+    {
+        $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
+        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        $supplierId = $request->query('supplier_id') ? (int) $request->query('supplier_id') : null;
+        $voucherType = $request->query('voucher_type');
+
+        $data = $this->buildVatPurchasesData($startDate, $endDate, $supplierId, $voucherType);
+
+        return $this->exportService->exportVatPurchasesPdf($data, $data['start_date'], $data['end_date']);
+    }
+
+    /**
+     * REP-13: Posición Mensual de IVA (Cruce Débito Fiscal vs. Crédito Fiscal).
+     * GET /api/reports/vat-position?month=MM&year=YYYY
+     */
+    public function vatPosition(Request $request): JsonResponse
+    {
+        if ($request->filled('month') && $request->filled('year')) {
+            $month = (int) $request->input('month');
+            $year = (int) $request->input('year');
+            $startDate = Carbon::createFromDate($year, $month, 1)->startOfMonth()->toDateString();
+            $endDate = Carbon::createFromDate($year, $month, 1)->endOfMonth()->toDateString();
+        } else {
+            $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
+            $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        }
+
+        $salesData = $this->buildVatSalesData($startDate, $endDate);
+        $purchasesData = $this->buildVatPurchasesData($startDate, $endDate);
+
+        $fiscalDebit = (float) ($salesData['summary']['total_iva'] ?? 0);
+        $fiscalCredit = (float) ($purchasesData['summary']['total_credit_fiscal'] ?? 0);
+        $ivaPerceptions = (float) ($purchasesData['summary']['total_iva_perception'] ?? 0);
+        $iibbPerceptions = (float) ($purchasesData['summary']['total_iibb_perception'] ?? 0);
+
+        $netBalance = round($fiscalDebit - $fiscalCredit - $ivaPerceptions, 2);
+
+        if ($netBalance > 0.009) {
+            $result = 'to_pay';
+            $resultLabel = 'Saldo Estimado a Pagar a AFIP/ARCA';
+        } elseif ($netBalance < -0.009) {
+            $result = 'favorable';
+            $resultLabel = 'Saldo a Favor Técnico del Contribuyente';
+        } else {
+            $result = 'zero';
+            $resultLabel = 'Saldo Equilibrado';
+        }
+
+        $dt = Carbon::parse($startDate);
+        $monthNames = [
+            1 => 'Enero', 2 => 'Febrero', 3 => 'Marzo', 4 => 'Abril',
+            5 => 'Mayo', 6 => 'Junio', 7 => 'Julio', 8 => 'Agosto',
+            9 => 'Septiembre', 10 => 'Octubre', 11 => 'Noviembre', 12 => 'Diciembre',
+        ];
+        $periodLabel = ($monthNames[$dt->month] ?? $dt->format('F')).' '.$dt->year;
+
+        return response()->json([
+            'period' => [
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'month' => $dt->month,
+                'year' => $dt->year,
+                'label' => $periodLabel,
+            ],
+            'sales' => [
+                'fiscal_debit' => $fiscalDebit,
+                'debit_21' => (float) ($salesData['summary']['iva_21'] ?? 0),
+                'debit_105' => (float) ($salesData['summary']['iva_105'] ?? 0),
+                'debit_27' => (float) ($salesData['summary']['iva_27'] ?? 0),
+                'total_invoiced_net' => (float) ($salesData['summary']['total_net'] ?? 0),
+                'total_sales_amount' => (float) ($salesData['summary']['net_fiscal_total'] ?? 0),
+                'invoices_count' => (int) ($salesData['summary']['invoices_count'] ?? 0),
+                'credit_notes_count' => (int) ($salesData['summary']['credit_notes_count'] ?? 0),
+            ],
+            'purchases' => [
+                'fiscal_credit' => $fiscalCredit,
+                'credit_21' => (float) ($purchasesData['summary']['total_iva_21'] ?? 0),
+                'credit_105' => (float) ($purchasesData['summary']['total_iva_105'] ?? 0),
+                'credit_27' => (float) ($purchasesData['summary']['total_iva_27'] ?? 0),
+                'iva_perceptions' => $ivaPerceptions,
+                'iibb_perceptions' => $iibbPerceptions,
+                'total_purchases_net' => (float) ($purchasesData['summary']['total_net'] ?? 0),
+                'total_purchases_amount' => (float) ($purchasesData['summary']['total_amount'] ?? 0),
+                'invoices_count' => (int) ($purchasesData['summary']['invoices_count'] ?? 0),
+                'credit_notes_count' => (int) ($purchasesData['summary']['credit_notes_count'] ?? 0),
+            ],
+            'balance' => [
+                'fiscal_debit' => $fiscalDebit,
+                'fiscal_credit' => $fiscalCredit,
+                'iva_perceptions' => $ivaPerceptions,
+                'net_balance' => $netBalance,
+                'result' => $result,
+                'result_label' => $resultLabel,
+                'absolute_balance' => abs($netBalance),
+            ],
+            'disclaimer' => 'Estimación de gestión interna para control gerencial. No reemplaza la Declaración Jurada F. 2002 de AFIP/ARCA ni contempla saldos a favor de períodos anteriores, retenciones bancarias ni pagos a cuenta.',
+        ]);
     }
 }
