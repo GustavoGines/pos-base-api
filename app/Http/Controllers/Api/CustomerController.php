@@ -58,10 +58,142 @@ class CustomerController extends Controller
     public function show(Customer $customer)
     {
         $customer->load(['transactions' => function ($query) {
-            $query->latest()->take(10);
+            $query->with([
+                'sale:id,status,invoice_status',
+                'sale.items:id,sale_id,product_name,custom_description,quantity,subtotal',
+                'sale.electronicInvoice:id,sale_id,voucher_letter,point_of_sale,voucher_number,cae,status',
+            ])->latest()->take(150);
         }]);
 
-        return response()->json($customer);
+        $resolveFiscalMeta = function (?Sale $sale): array {
+            if (! $sale) {
+                return ['is_fiscal' => false, 'fiscal_voucher_label' => null];
+            }
+            $ei = $sale->electronicInvoice;
+            $hasAuthorizedInvoice = ($ei && (! empty($ei->cae) || $ei->status === 'authorized'))
+                || $sale->invoice_status === 'invoiced';
+            if (! $hasAuthorizedInvoice) {
+                return ['is_fiscal' => false, 'fiscal_voucher_label' => null];
+            }
+            if ($ei && ! empty($ei->voucher_letter)) {
+                $num = $ei->formatted_number ?? sprintf('%05d-%08d', (int) $ei->point_of_sale, (int) $ei->voucher_number);
+
+                return [
+                    'is_fiscal' => true,
+                    'fiscal_voucher_label' => "Factura {$ei->voucher_letter} {$num}",
+                ];
+            }
+
+            return ['is_fiscal' => true, 'fiscal_voucher_label' => 'Factura Fiscal'];
+        };
+
+        $mapSaleItems = function (?Sale $sale): array {
+            if (! $sale || $sale->status !== 'completed' || ! $sale->relationLoaded('items')) {
+                return [];
+            }
+
+            return $sale->items->map(function ($item) {
+                $customDesc = trim((string) ($item->custom_description ?? ''));
+                $name = $customDesc !== '' ? $customDesc : (string) ($item->product_name ?: 'Producto');
+
+                return [
+                    'name' => $name,
+                    'total_quantity' => (float) ($item->quantity ?? 0),
+                    'total_amount' => (float) ($item->subtotal ?? 0),
+                    'orders_count' => 1,
+                ];
+            })->values()->all();
+        };
+
+        // Ventas al contado / cobradas en el acto asociadas al cliente (excluyendo las que ya generaron cargo en Cta. Cte.)
+        $directSales = Sale::where('customer_id', $customer->id)
+            ->where('status', 'completed')
+            ->where('payment_status', 'paid')
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('customer_transactions')
+                    ->whereColumn('customer_transactions.sale_id', 'sales.id')
+                    ->where('customer_transactions.type', 'charge');
+            })
+            ->with([
+                'payments.paymentMethod:id,name,code',
+                'items:id,sale_id,product_name,custom_description,quantity,subtotal',
+                'electronicInvoice:id,sale_id,voucher_letter,point_of_sale,voucher_number,cae,status',
+            ])
+            ->orderByDesc('created_at')
+            ->limit(150)
+            ->get()
+            ->map(function (Sale $sale) use ($customer, $resolveFiscalMeta, $mapSaleItems) {
+                $methodNames = $sale->payments
+                    ->map(fn ($p) => $p->paymentMethod?->name)
+                    ->filter()
+                    ->unique()
+                    ->values()
+                    ->all();
+                $methodsLabel = ! empty($methodNames) ? implode(' + ', $methodNames) : 'Contado';
+
+                $firstItem = $sale->items->first();
+                $firstDesc = $firstItem ? ($firstItem->custom_description ?: $firstItem->product_name) : null;
+                $extraCount = max(0, $sale->items->count() - 1);
+                $itemsSummary = $firstDesc
+                    ? ($extraCount > 0 ? "{$firstDesc} (+{$extraCount} más)" : $firstDesc)
+                    : null;
+
+                $fiscalMeta = $resolveFiscalMeta($sale);
+
+                return [
+                    'id' => -$sale->id, // ID negativo sintético para distinguir de CustomerTransaction sin colisión
+                    'customer_id' => $sale->customer_id,
+                    'user_id' => $sale->cashier_id ?? 1,
+                    'sale_id' => $sale->id,
+                    'type' => 'direct_sale',
+                    'payment_method' => $methodsLabel,
+                    'amount' => (float) $sale->total + (float) $sale->total_surcharge + (float) $sale->shipping_cost,
+                    'balance_after' => (float) $customer->balance,
+                    'description' => "Cobro en Caja ({$methodsLabel}) - Ticket #{$sale->id}".($itemsSummary ? " · {$itemsSummary}" : ''),
+                    'is_fiscal' => $fiscalMeta['is_fiscal'],
+                    'fiscal_voucher_label' => $fiscalMeta['fiscal_voucher_label'],
+                    'items_breakdown' => $mapSaleItems($sale),
+                    'created_at' => $sale->created_at?->toIso8601String(),
+                ];
+            })
+            ->values();
+
+        $topProducts = DB::table('sale_items')
+            ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
+            ->where('sales.customer_id', $customer->id)
+            ->where('sales.status', 'completed')
+            ->selectRaw("COALESCE(NULLIF(TRIM(sale_items.custom_description), ''), sale_items.product_name) as item_name")
+            ->selectRaw('SUM(sale_items.quantity) as total_quantity')
+            ->selectRaw('SUM(sale_items.subtotal) as total_amount')
+            ->selectRaw('COUNT(DISTINCT sales.id) as orders_count')
+            ->groupBy('item_name')
+            ->orderByDesc('total_quantity')
+            ->orderByDesc('total_amount')
+            ->limit(5)
+            ->get()
+            ->map(fn ($row) => [
+                'name' => (string) ($row->item_name ?? 'Producto'),
+                'total_quantity' => (float) ($row->total_quantity ?? 0),
+                'total_amount' => (float) ($row->total_amount ?? 0),
+                'orders_count' => (int) ($row->orders_count ?? 0),
+            ])
+            ->values();
+
+        $payload = $customer->toArray();
+        $payload['transactions'] = $customer->transactions->map(function (CustomerTransaction $trx) use ($resolveFiscalMeta, $mapSaleItems) {
+            $arr = $trx->toArray();
+            $fiscalMeta = $resolveFiscalMeta($trx->sale);
+            $arr['is_fiscal'] = $fiscalMeta['is_fiscal'];
+            $arr['fiscal_voucher_label'] = $fiscalMeta['fiscal_voucher_label'];
+            $arr['items_breakdown'] = $trx->type === 'charge' ? $mapSaleItems($trx->sale) : [];
+
+            return $arr;
+        })->values();
+        $payload['direct_sales'] = $directSales;
+        $payload['top_products'] = $topProducts;
+
+        return response()->json($payload);
     }
 
     /**

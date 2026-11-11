@@ -752,6 +752,7 @@ class SaleService
                 : 21.00;
             $isSoldByWeight = filter_var($itemData['is_sold_by_weight'] ?? false, FILTER_VALIDATE_BOOLEAN);
             $isCombo = filter_var($itemData['is_combo'] ?? false, FILTER_VALIDATE_BOOLEAN);
+            $isService = filter_var($itemData['is_service'] ?? false, FILTER_VALIDATE_BOOLEAN);
 
             $internalCode = $this->generateNonLockingInternalCode();
             $barcode = ! empty($itemData['barcode'])
@@ -770,6 +771,7 @@ class SaleService
                 'needs_catalog_review' => true,
                 'is_sold_by_weight' => $isSoldByWeight,
                 'is_combo' => $isCombo,
+                'is_service' => $isService,
             ]);
 
             if ($isCombo && ! empty($itemData['combo_ingredients']) && is_array($itemData['combo_ingredients'])) {

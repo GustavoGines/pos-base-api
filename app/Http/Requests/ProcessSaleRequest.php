@@ -65,6 +65,7 @@ class ProcessSaleRequest extends FormRequest
             'items.*.iva_rate' => 'nullable|numeric|in:0,10.5,21,27',
             'items.*.is_sold_by_weight' => 'nullable|boolean',
             'items.*.is_combo' => 'nullable|boolean',
+            'items.*.is_service' => 'nullable|boolean',
             'items.*.combo_ingredients' => 'nullable|array',
             'items.*.combo_ingredients.*.id' => [
                 'required_with:items.*.combo_ingredients',

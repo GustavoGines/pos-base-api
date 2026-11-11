@@ -25,6 +25,14 @@ class StoreProductRequest extends FormRequest
         if ($this->boolean('is_combo') || ! $this->filled('cost_price')) {
             $this->merge(['cost_price' => 0]);
         }
+
+        if ($this->boolean('is_service')) {
+            $this->merge([
+                'is_combo' => false,
+                'is_sold_by_weight' => false,
+                'stock' => $this->filled('stock') ? $this->input('stock') : 0,
+            ]);
+        }
     }
 
     public function rules(): array
@@ -68,6 +76,7 @@ class StoreProductRequest extends FormRequest
             'brand_id' => 'nullable|exists:brands,id',
             'supplier_id' => ['nullable', Rule::exists('suppliers', 'id')->whereNull('deleted_at')],
             'is_combo' => 'boolean',
+            'is_service' => 'boolean',
             'combo_ingredients' => 'nullable|array|required_if:is_combo,true',
             'combo_ingredients.*.id' => 'required_with:combo_ingredients|exists:products,id',
             'combo_ingredients.*.quantity' => 'required_with:combo_ingredients|numeric|min:0.001',

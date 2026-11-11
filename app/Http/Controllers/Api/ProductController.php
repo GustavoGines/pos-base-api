@@ -45,6 +45,10 @@ class ProductController extends Controller
             $query->where('products.is_sold_by_weight', filter_var($request->query('is_sold_by_weight'), FILTER_VALIDATE_BOOLEAN));
         }
 
+        if ($request->filled('needs_catalog_review')) {
+            $query->where('products.needs_catalog_review', filter_var($request->query('needs_catalog_review'), FILTER_VALIDATE_BOOLEAN));
+        }
+
         // OF-01: Carga puntual por IDs (ej. productos en oferta activa que quedaron fuera del bloque
         // inicial de 500 del Acceso Rápido POS). Acepta "ids=1,2,3" o "ids[]=1&ids[]=2". Parámetro
         // opcional y aditivo: clientes v1.8.5 no lo envían y su comportamiento no cambia.
@@ -62,7 +66,7 @@ class ProductController extends Controller
 
         $allowedSorts = [
             'id', 'name', 'selling_price', 'cost_price', 'stock',
-            'barcode', 'internal_code', 'category_id', 'brand_id', 'supplier_id', 'is_sold_by_weight', 'active', 'sales_count', 'vencimiento_dias',
+            'barcode', 'internal_code', 'category_id', 'brand_id', 'supplier_id', 'is_sold_by_weight', 'active', 'sales_count', 'vencimiento_dias', 'needs_catalog_review',
         ];
         $sortBy = $request->query('sort_by');
         $sortDir = $request->query('sort_direction') === 'desc' ? 'desc' : 'asc';
@@ -81,6 +85,9 @@ class ProductController extends Controller
                 $query->leftJoin('suppliers', 'suppliers.id', '=', 'products.supplier_id')
                     ->orderBy('suppliers.name', $sortDir)
                     ->select('products.*');
+            } elseif ($sortBy === 'needs_catalog_review') {
+                $query->where('products.needs_catalog_review', true)
+                    ->orderBy('products.id', $sortDir);
             } else {
                 $column = $sortBy === 'name' ? 'products.name' : $sortBy;
                 $query->orderBy($column, $sortDir);
@@ -281,6 +288,7 @@ class ProductController extends Controller
     {
         $simpleProducts = Product::where('active', true)
             ->where('is_combo', false)
+            ->where('is_service', false)
             ->whereNotNull('min_stock')
             ->whereColumn('stock', '<=', 'min_stock')
             ->orderBy('stock', 'asc')

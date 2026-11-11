@@ -17,7 +17,7 @@ class Product extends Model
     protected $fillable = [
         'name', 'barcode', 'internal_code', 'cost_price', 'selling_price', 'iva_rate',
         'price_wholesale', 'price_card',  // [hardware_store] Listas de Precio
-        'stock', 'min_stock', 'active', 'needs_catalog_review', 'is_combo', 'is_sold_by_weight', 'sales_count', 'vencimiento_dias',
+        'stock', 'min_stock', 'active', 'needs_catalog_review', 'is_combo', 'is_service', 'is_sold_by_weight', 'sales_count', 'vencimiento_dias',
         'expiration_date', 'expiry_alert_days', 'expiry_alert_snoozed_until', 'expiry_alert_last_stage',
         'unit_type', 'category_id', 'brand_id', 'supplier_id', 'image_path',
     ];
@@ -28,6 +28,7 @@ class Product extends Model
         'active' => 'boolean',
         'needs_catalog_review' => 'boolean',
         'is_combo' => 'boolean',
+        'is_service' => 'boolean',
         'is_sold_by_weight' => 'boolean',
         'cost_price' => 'decimal:2',
         'selling_price' => 'decimal:2',

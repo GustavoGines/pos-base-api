@@ -22,6 +22,13 @@ class UpdateProductRequest extends FormRequest
             ]);
         }
 
+        if ($this->boolean('is_service')) {
+            $this->merge([
+                'is_combo' => false,
+                'is_sold_by_weight' => false,
+            ]);
+        }
+
         if ($this->boolean('is_combo')) {
             $this->merge(['cost_price' => 0]);
         } elseif ($this->exists('cost_price') && ! $this->filled('cost_price')) {
@@ -104,6 +111,7 @@ class UpdateProductRequest extends FormRequest
             'brand_id' => 'nullable|exists:brands,id',
             'supplier_id' => ['nullable', Rule::exists('suppliers', 'id')->whereNull('deleted_at')],
             'is_combo' => 'boolean',
+            'is_service' => 'boolean',
             'combo_ingredients' => 'nullable|array|required_if:is_combo,true',
             'combo_ingredients.*.id' => 'required_with:combo_ingredients|exists:products,id',
             'combo_ingredients.*.quantity' => 'required_with:combo_ingredients|numeric|min:0.001',

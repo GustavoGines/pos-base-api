@@ -435,6 +435,53 @@ class AfipWsfeService
         $cbteFch = date('Ymd');
         $endpoint = $this->getWsfeEndpoint();
 
+        // ── Determinar Concepto AFIP (1: Productos, 2: Servicios, 3: Productos y Servicios) ──
+        if (isset($options['concepto']) && in_array((int) $options['concepto'], [1, 2, 3], true)) {
+            $concepto = (int) $options['concepto'];
+        } else {
+            $saleItems = $sale->relationLoaded('items')
+                ? $sale->items
+                : $sale->items()->with('product:id,is_service')->get();
+
+            $hasServices = false;
+            $hasGoods = false;
+            foreach ($saleItems as $saleItem) {
+                $prod = $saleItem->relationLoaded('product') ? $saleItem->product : $saleItem->product()->first(['id', 'is_service']);
+                if ($prod && (bool) $prod->is_service) {
+                    $hasServices = true;
+                } else {
+                    $hasGoods = true;
+                }
+            }
+
+            if ($hasServices && ! $hasGoods) {
+                $concepto = 2;
+            } elseif ($hasServices && $hasGoods) {
+                $concepto = 3;
+            } else {
+                $concepto = 1;
+            }
+        }
+
+        $serviceDatesXml = '';
+        if ($concepto === 2 || $concepto === 3) {
+            $fchServDesde = preg_replace('/\D/', '', (string) ($options['fch_serv_desde'] ?? $cbteFch));
+            $fchServHasta = preg_replace('/\D/', '', (string) ($options['fch_serv_hasta'] ?? $cbteFch));
+            $fchVtoPago = preg_replace('/\D/', '', (string) ($options['fch_vto_pago'] ?? $cbteFch));
+            if (strlen($fchServDesde) !== 8) {
+                $fchServDesde = $cbteFch;
+            }
+            if (strlen($fchServHasta) !== 8) {
+                $fchServHasta = $cbteFch;
+            }
+            if (strlen($fchVtoPago) !== 8) {
+                $fchVtoPago = $cbteFch;
+            }
+            $serviceDatesXml = '<FchServDesde>'.$fchServDesde.'</FchServDesde>'.
+                '<FchServHasta>'.$fchServHasta.'</FchServHasta>'.
+                '<FchVtoPago>'.$fchVtoPago.'</FchVtoPago>';
+        }
+
         // ── Nodo CbtesAsoc (Para Notas de Crédito / Débito) ──
         // <Cuit> = CUIT del EMISOR del comprobante asociado. En este sistema el comprobante
         // asociado siempre es propio, por lo que se usa el CUIT emisor (Auth), nunca el del receptor.
@@ -513,6 +560,7 @@ class AfipWsfeService
                                 ivaBreakdown: $ivaBreakdown,
                                 issuerCuit: $issuerCuit,
                                 resultado: (string) $recovered['resultado'],
+                                concepto: $concepto,
                             );
                         }
 
@@ -557,7 +605,7 @@ class AfipWsfeService
                 '</FeCabReq>'.
                 '<FeDetReq>'.
                 '<FECAEDetRequest>'.
-                '<Concepto>1</Concepto>'.
+                '<Concepto>'.$concepto.'</Concepto>'.
                 '<DocTipo>'.$docType.'</DocTipo>'.
                 '<DocNro>'.$numericDocNro.'</DocNro>'.
                 '<CbteDesde>'.$cbteNro.'</CbteDesde>'.
@@ -569,6 +617,7 @@ class AfipWsfeService
                 '<ImpOpEx>0.00</ImpOpEx>'.
                 '<ImpTrib>'.number_format($perceptionAmount, 2, '.', '').'</ImpTrib>'.
                 '<ImpIVA>'.number_format($ivaAmount, 2, '.', '').'</ImpIVA>'.
+                $serviceDatesXml.
                 '<MonId>PES</MonId>'.
                 '<MonCotiz>1</MonCotiz>'.
                 '<CondicionIVAReceptorId>'.AfipHelper::getCondicionIvaReceptorId((string) $receiverTaxCondition, $voucherLetter).'</CondicionIVAReceptorId>'.
@@ -723,6 +772,7 @@ class AfipWsfeService
             ivaBreakdown: $ivaBreakdown,
             issuerCuit: $issuerCuit,
             resultado: $resultado,
+            concepto: $concepto,
         );
     }
 
@@ -750,6 +800,7 @@ class AfipWsfeService
         array $ivaBreakdown,
         int $issuerCuit,
         string $resultado = 'A',
+        int $concepto = 1,
     ): array {
         $qrUrl = $this->buildQrUrl([
             'fecha' => date('Y-m-d'),
@@ -769,6 +820,7 @@ class AfipWsfeService
             'point_of_sale' => $ptoVta,
             'voucher_number' => $cbteNro,
             'formatted_number' => sprintf('%05d-%08d', $ptoVta, $cbteNro),
+            'concepto' => $concepto,
             'cae' => $cae,
             'cae_expiration' => $caeExpiration,
             'doc_type' => $docType,
@@ -792,6 +844,7 @@ class AfipWsfeService
                 'cbteNro' => $cbteNro,
                 'docTipo' => $docType,
                 'docNro' => $numericDocNro,
+                'concepto' => $concepto,
             ],
             'afip_response' => [
                 'Resultado' => $resultado,

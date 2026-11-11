@@ -110,7 +110,10 @@ class StockService
     protected function deductProductStock(Product $product, float $qty, Sale $sale, SaleContextDTO $context, bool $isAdjustment, Collection $products, bool $trackPopularity = true): array
     {
         $deductedIds = [];
-        if ($product->is_combo) {
+        if ($product->is_service) {
+            // Los servicios / honorarios no descuentan stock físico ni registran movimientos de stock,
+            // pero sí incrementan su popularidad para el Acceso Rápido POS.
+        } elseif ($product->is_combo) {
             foreach ($product->children as $child) {
                 $qtyDeducted = $qty * $child->pivot->quantity;
 
@@ -412,6 +415,9 @@ class StockService
     protected function addStockBack(Product $product, float $qtyToRestore, Sale $sale, SaleContextDTO $context, Collection $products): array
     {
         $restoredIds = [];
+        if ($product->is_service) {
+            return $restoredIds;
+        }
         if ($product->is_combo) {
             foreach ($product->children as $child) {
                 $qtyRestored = $qtyToRestore * $child->pivot->quantity;

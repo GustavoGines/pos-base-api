@@ -37,11 +37,13 @@ class InventoryAlertService
                 ->leftJoin('categories', 'categories.id', '=', 'products.category_id')
                 ->where('products.active', true)
                 ->where('products.is_combo', false)
+                ->where('products.is_service', false)
                 ->whereNull('products.deleted_at')
                 ->select([
                     'products.id as product_id',
                     'products.name as product_name',
                     'products.internal_code as internal_code',
+                    'products.barcode as barcode',
                     'products.is_sold_by_weight as is_sold_by_weight',
                     DB::raw("COALESCE(categories.name, 'Sin Categoría') as category"),
                     'products.stock as current_stock',
@@ -81,11 +83,13 @@ class InventoryAlertService
                 ->leftJoin('categories', 'categories.id', '=', 'products.category_id')
                 ->where('products.active', true)
                 ->where('products.is_combo', false)
+                ->where('products.is_service', false)
                 ->whereNull('products.deleted_at')
                 ->selectRaw(sprintf("
                     products.id                     as product_id,
                     products.name                   as product_name,
                     products.internal_code          as internal_code,
+                    products.barcode                as barcode,
                     products.is_sold_by_weight      as is_sold_by_weight,
                     COALESCE(categories.name, 'Sin Categoría') as category,
                     products.stock                  as current_stock,
@@ -159,6 +163,7 @@ class InventoryAlertService
             ->leftJoin('categories', 'categories.id', '=', 'products.category_id')
             ->where('products.active', true)
             ->where('products.is_combo', false)
+            ->where('products.is_service', false)
             ->where('products.stock', '>', 0)
             ->whereNull('products.deleted_at')
             ->whereNotNull('products.expiration_date')
@@ -166,6 +171,7 @@ class InventoryAlertService
                 'products.id as product_id',
                 'products.name as product_name',
                 'products.internal_code',
+                'products.barcode',
                 'products.is_sold_by_weight',
                 'products.stock as current_stock',
                 'products.expiration_date',
@@ -221,12 +227,15 @@ class InventoryAlertService
             $results[] = [
                 'product_id' => (int) $row->product_id,
                 'product_name' => $row->product_name,
+                'name' => $row->product_name,
                 'internal_code' => $row->internal_code,
+                'barcode' => $row->barcode,
                 'is_sold_by_weight' => (bool) $row->is_sold_by_weight,
                 'category' => $row->category,
                 'current_stock' => (float) $row->current_stock,
                 'expiration_date' => $expDate->format('Y-m-d'),
                 'days_until_expiry' => $daysUntil,
+                'days_until_expiration' => $daysUntil,
                 'stage' => $stage,
                 'stage_code' => $stageCode,
                 'alert_level' => $alertLevel,
