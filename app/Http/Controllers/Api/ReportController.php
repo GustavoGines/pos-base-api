@@ -583,13 +583,10 @@ class ReportController extends Controller
     }
 
     /**
-     * REP-11: Libro IVA Ventas consolidado para contabilidad fiscal AFIP/ARCA.
-     * GET /api/reports/vat-sales?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
+     * Construye el dataset consolidado del Libro IVA Ventas (ARCA/AFIP) con desglose por alícuotas (21%, 10.5%, 27%).
      */
-    public function vatSales(Request $request): JsonResponse
+    private function buildVatSalesData(string $startDate, string $endDate): array
     {
-        $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
-        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
         [$startDate, $endDate] = $this->normalizeDateRange($startDate, $endDate);
 
         $startBound = Carbon::parse($startDate)->startOfDay();
@@ -610,6 +607,80 @@ class ReportController extends Controller
             ->orderBy('voucher_number', 'asc')
             ->get();
 
+        $extractAliquots = function (\App\Models\ElectronicInvoice $inv): array {
+            $n21 = 0.0;
+            $i21 = 0.0;
+            $n105 = 0.0;
+            $i105 = 0.0;
+            $n27 = 0.0;
+            $i27 = 0.0;
+            $nOther = 0.0;
+            $iOther = 0.0;
+            $exFromBreakdown = 0.0;
+
+            $breakdown = is_array($inv->iva_breakdown) ? $inv->iva_breakdown : [];
+            if (! empty($breakdown)) {
+                foreach ($breakdown as $row) {
+                    if (! is_array($row)) {
+                        continue;
+                    }
+                    $id = (int) ($row['Id'] ?? $row['id'] ?? 0);
+                    $rate = (float) ($row['rate'] ?? $row['Alic'] ?? 0.0);
+                    $base = (float) ($row['BaseImp'] ?? $row['base_imp'] ?? 0.0);
+                    $imp = (float) ($row['Importe'] ?? $row['importe'] ?? 0.0);
+
+                    if ($id === 5 || abs($rate - 21.0) < 0.1) {
+                        $n21 += $base;
+                        $i21 += $imp;
+                    } elseif ($id === 4 || abs($rate - 10.5) < 0.1) {
+                        $n105 += $base;
+                        $i105 += $imp;
+                    } elseif ($id === 6 || abs($rate - 27.0) < 0.1) {
+                        $n27 += $base;
+                        $i27 += $imp;
+                    } elseif ($id === 3 || ($id === 0 && abs($rate) < 0.01 && abs($imp) < 0.01)) {
+                        $exFromBreakdown += $base;
+                    } else {
+                        $nOther += $base;
+                        $iOther += $imp;
+                    }
+                }
+            } else {
+                $net = (float) $inv->net_amount;
+                $iva = (float) $inv->iva_amount;
+                if ($iva > 0.0 && $net > 0.0) {
+                    $ratio = ($iva / $net) * 100.0;
+                    if (abs($ratio - 10.5) < 1.2) {
+                        $n105 = $net;
+                        $i105 = $iva;
+                    } elseif (abs($ratio - 27.0) < 1.5) {
+                        $n27 = $net;
+                        $i27 = $iva;
+                    } else {
+                        $n21 = $net;
+                        $i21 = $iva;
+                    }
+                } elseif (strtoupper((string) $inv->voucher_letter) === 'C') {
+                    // Factura C (Monotributo / Exento): sin IVA discriminado
+                } else {
+                    $n21 = $net;
+                    $i21 = $iva;
+                }
+            }
+
+            return [
+                'net_21' => $n21,
+                'iva_21' => $i21,
+                'net_105' => $n105,
+                'iva_105' => $i105,
+                'net_27' => $n27,
+                'iva_27' => $i27,
+                'net_other' => $nOther,
+                'iva_other' => $iOther,
+                'ex_breakdown' => $exFromBreakdown,
+            ];
+        };
+
         $vouchers = [];
         $totalNet = 0.0;
         $totalIva = 0.0;
@@ -619,7 +690,19 @@ class ReportController extends Controller
         $totalInvoiced = 0.0;
         $totalCreditNotes = 0.0;
 
+        $totalNet21 = 0.0;
+        $totalIva21 = 0.0;
+        $totalNet105 = 0.0;
+        $totalIva105 = 0.0;
+        $totalNet27 = 0.0;
+        $totalIva27 = 0.0;
+        $invoicesCount = 0;
+        $creditNotesCount = 0;
+
         foreach ($invoices as $inv) {
+            $aliquots = $extractAliquots($inv);
+            $letter = strtoupper((string) ($inv->voucher_letter ?: 'B'));
+
             $issuedAt = $inv->issued_at ?? $inv->created_at;
             if ($issuedAt && $issuedAt->between($startBound, $endBound)) {
                 $net = (float) $inv->net_amount;
@@ -636,12 +719,21 @@ class ReportController extends Controller
                 $totalUntaxed += $untax;
                 $totalInvoiced += $tot;
 
+                $totalNet21 += $aliquots['net_21'];
+                $totalIva21 += $aliquots['iva_21'];
+                $totalNet105 += $aliquots['net_105'];
+                $totalIva105 += $aliquots['iva_105'];
+                $totalNet27 += $aliquots['net_27'];
+                $totalIva27 += $aliquots['iva_27'];
+                $invoicesCount++;
+
                 $vouchers[] = [
                     'id' => $inv->id,
                     'sale_id' => $inv->sale_id,
                     'kind' => 'invoice',
                     'voucher_type' => $inv->voucher_type,
-                    'voucher_letter' => $inv->voucher_letter,
+                    'voucher_letter' => $letter,
+                    'voucher_label' => "Factura {$letter}",
                     'point_of_sale' => $inv->point_of_sale,
                     'voucher_number' => $inv->voucher_number,
                     'formatted_number' => $inv->formatted_number,
@@ -651,6 +743,12 @@ class ReportController extends Controller
                     'doc_number' => $inv->doc_number,
                     'receiver_name' => $inv->receiver_name,
                     'receiver_tax_condition' => $inv->receiver_tax_condition,
+                    'net_21' => round($aliquots['net_21'], 2),
+                    'iva_21' => round($aliquots['iva_21'], 2),
+                    'net_105' => round($aliquots['net_105'], 2),
+                    'iva_105' => round($aliquots['iva_105'], 2),
+                    'net_27' => round($aliquots['net_27'], 2),
+                    'iva_27' => round($aliquots['iva_27'], 2),
                     'net_amount' => round($net, 2),
                     'iva_amount' => round($iva, 2),
                     'tribute_amount' => round($trib, 2),
@@ -675,12 +773,21 @@ class ReportController extends Controller
                 $totalUntaxed -= $untax;
                 $totalCreditNotes += $tot;
 
+                $totalNet21 -= $aliquots['net_21'];
+                $totalIva21 -= $aliquots['iva_21'];
+                $totalNet105 -= $aliquots['net_105'];
+                $totalIva105 -= $aliquots['iva_105'];
+                $totalNet27 -= $aliquots['net_27'];
+                $totalIva27 -= $aliquots['iva_27'];
+                $creditNotesCount++;
+
                 $vouchers[] = [
                     'id' => $inv->id,
                     'sale_id' => $inv->sale_id,
                     'kind' => 'credit_note',
                     'voucher_type' => $inv->credit_note_voucher_type,
-                    'voucher_letter' => $inv->voucher_letter,
+                    'voucher_letter' => $letter,
+                    'voucher_label' => "Nota de Crédito {$letter}",
                     'point_of_sale' => $inv->point_of_sale,
                     'voucher_number' => $inv->credit_note_number,
                     'formatted_number' => sprintf('%05d-%08d', (int) $inv->point_of_sale, (int) $inv->credit_note_number),
@@ -690,6 +797,12 @@ class ReportController extends Controller
                     'doc_number' => $inv->doc_number,
                     'receiver_name' => $inv->receiver_name,
                     'receiver_tax_condition' => $inv->receiver_tax_condition,
+                    'net_21' => round(-$aliquots['net_21'], 2),
+                    'iva_21' => round(-$aliquots['iva_21'], 2),
+                    'net_105' => round(-$aliquots['net_105'], 2),
+                    'iva_105' => round(-$aliquots['iva_105'], 2),
+                    'net_27' => round(-$aliquots['net_27'], 2),
+                    'iva_27' => round(-$aliquots['iva_27'], 2),
                     'net_amount' => round(-$net, 2),
                     'iva_amount' => round(-$iva, 2),
                     'tribute_amount' => round(-$trib, 2),
@@ -700,7 +813,7 @@ class ReportController extends Controller
             }
         }
 
-        return response()->json([
+        return [
             'start_date' => $startDate,
             'end_date' => $endDate,
             'summary' => [
@@ -712,8 +825,55 @@ class ReportController extends Controller
                 'total_invoiced' => round($totalInvoiced, 2),
                 'total_credit_notes' => round($totalCreditNotes, 2),
                 'net_fiscal_total' => round($totalInvoiced - $totalCreditNotes, 2),
+                'net_21' => round($totalNet21, 2),
+                'iva_21' => round($totalIva21, 2),
+                'net_105' => round($totalNet105, 2),
+                'iva_105' => round($totalIva105, 2),
+                'net_27' => round($totalNet27, 2),
+                'iva_27' => round($totalIva27, 2),
+                'invoices_count' => $invoicesCount,
+                'credit_notes_count' => $creditNotesCount,
+                'vouchers_count' => count($vouchers),
             ],
             'vouchers' => $vouchers,
-        ]);
+        ];
+    }
+
+    /**
+     * REP-11: Libro IVA Ventas consolidado para contabilidad fiscal AFIP/ARCA.
+     * GET /api/reports/vat-sales?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
+     */
+    public function vatSales(Request $request): JsonResponse
+    {
+        $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
+        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+
+        return response()->json($this->buildVatSalesData($startDate, $endDate));
+    }
+
+    /**
+     * Exporta el Libro IVA Ventas a Excel (.xlsx).
+     * GET /api/reports/vat-sales/export?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
+     */
+    public function exportVatSalesExcel(Request $request)
+    {
+        $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
+        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        $data = $this->buildVatSalesData($startDate, $endDate);
+
+        return $this->exportService->exportVatSalesExcel($data, $data['start_date'], $data['end_date']);
+    }
+
+    /**
+     * Exporta el Libro IVA Ventas a PDF.
+     * GET /api/reports/vat-sales/pdf?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
+     */
+    public function exportVatSalesPdf(Request $request)
+    {
+        $startDate = $request->query('start_date', Carbon::now()->startOfMonth()->toDateString());
+        $endDate = $request->query('end_date', Carbon::now()->endOfMonth()->toDateString());
+        $data = $this->buildVatSalesData($startDate, $endDate);
+
+        return $this->exportService->exportVatSalesPdf($data, $data['start_date'], $data['end_date']);
     }
 }

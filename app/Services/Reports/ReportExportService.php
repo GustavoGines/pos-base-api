@@ -6,6 +6,8 @@ use App\Exports\ExpensesAnalysisExport;
 use App\Exports\MonthlyBalanceExport;
 use App\Exports\ProfitByCategoryExport;
 use App\Exports\ProfitByRubroExport;
+use App\Exports\VatSalesExport;
+use App\Models\BusinessSetting;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Illuminate\Http\Response;
@@ -201,5 +203,35 @@ class ReportExportService
         $pdf = Pdf::loadView('reports.pdf_expenses_analysis', compact('expenses', 'startDate', 'endDate', 'totalExpenses'));
 
         return $pdf->download('analisis_gastos_'.str_replace('-', '', $startDate).'_al_'.str_replace('-', '', $endDate).'.pdf');
+    }
+
+    /**
+     * Export Libro IVA Ventas (ARCA/AFIP) to Excel.
+     */
+    public function exportVatSalesExcel(array $data, string $startDate, string $endDate): BinaryFileResponse
+    {
+        return Excel::download(
+            new VatSalesExport($data),
+            'libro_iva_ventas_'.str_replace('-', '', $startDate).'_al_'.str_replace('-', '', $endDate).'.xlsx'
+        );
+    }
+
+    /**
+     * Export Libro IVA Ventas (ARCA/AFIP) to PDF.
+     */
+    public function exportVatSalesPdf(array $data, string $startDate, string $endDate): Response
+    {
+        $settings = BusinessSetting::whereIn('key', ['company_name', 'tax_id'])->pluck('value', 'key');
+
+        $pdf = Pdf::loadView('reports.pdf_vat_sales', [
+            'data' => $data,
+            'startDate' => $startDate,
+            'endDate' => $endDate,
+            'companyName' => $settings['company_name'] ?? 'Comercio Responsable Inscripto',
+            'companyCuit' => $settings['tax_id'] ?? '',
+            'generatedAt' => Carbon::now()->format('d/m/Y H:i'),
+        ])->setPaper('a4', 'landscape');
+
+        return $pdf->download('libro_iva_ventas_'.str_replace('-', '', $startDate).'_al_'.str_replace('-', '', $endDate).'.pdf');
     }
 }

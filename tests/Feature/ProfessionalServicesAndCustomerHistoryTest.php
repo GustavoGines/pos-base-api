@@ -364,4 +364,66 @@ class ProfessionalServicesAndCustomerHistoryTest extends TestCase
         $this->assertEquals(25000.00, (float) $response->json('direct_sales.0.amount'));
         $this->assertStringContainsString('Transferencia', (string) $response->json('direct_sales.0.description'));
     }
+
+    public function test_vat_sales_report_breaks_down_iva_21_and_105_and_exports_excel_and_pdf(): void
+    {
+        $saleA = Sale::create([
+            'total' => 23150.00,
+            'total_surcharge' => 0.00,
+            'payment_status' => 'paid',
+            'amount_due' => 0.00,
+            'status' => 'completed',
+            'invoice_status' => 'invoiced',
+            'cash_shift_id' => $this->shift->id,
+            'user_id' => $this->adminUser->id,
+            'cashier_id' => $this->adminUser->id,
+        ]);
+
+        \App\Models\ElectronicInvoice::create([
+            'sale_id' => $saleA->id,
+            'voucher_type' => 1,
+            'voucher_letter' => 'A',
+            'point_of_sale' => 1,
+            'voucher_number' => 24,
+            'cae' => '86451065111090',
+            'cae_expiration' => now()->addDays(10)->toDateString(),
+            'doc_type' => 80,
+            'doc_number' => '27388231497',
+            'receiver_name' => 'Supermercado Los Primos SRL',
+            'receiver_tax_condition' => 'IVA Responsable Inscripto',
+            'net_amount' => 20000.00,
+            'iva_amount' => 3150.00,
+            'tribute_amount' => 0.00,
+            'exempt_amount' => 0.00,
+            'untaxed_amount' => 0.00,
+            'total_amount' => 23150.00,
+            'iva_breakdown' => [
+                ['Id' => 5, 'BaseImp' => 10000.00, 'Importe' => 2100.00], // 21%
+                ['Id' => 4, 'BaseImp' => 10000.00, 'Importe' => 1050.00], // 10.5%
+            ],
+            'status' => 'authorized',
+            'issued_at' => now(),
+        ]);
+
+        $today = now()->toDateString();
+        $resp = $this->actingAsAdmin($this->adminUser)
+            ->getJson("/api/reports/vat-sales?start_date={$today}&end_date={$today}");
+
+        $resp->assertOk()
+            ->assertJsonPath('summary.total_net', 20000)
+            ->assertJsonPath('summary.total_iva', 3150)
+            ->assertJsonPath('summary.net_21', 10000)
+            ->assertJsonPath('summary.iva_21', 2100)
+            ->assertJsonPath('summary.net_105', 10000)
+            ->assertJsonPath('summary.iva_105', 1050)
+            ->assertJsonPath('summary.net_fiscal_total', 23150);
+
+        $excelResp = $this->actingAsAdmin($this->adminUser)
+            ->get("/api/reports/vat-sales/export?start_date={$today}&end_date={$today}");
+        $excelResp->assertOk();
+
+        $pdfResp = $this->actingAsAdmin($this->adminUser)
+            ->get("/api/reports/vat-sales/pdf?start_date={$today}&end_date={$today}");
+        $pdfResp->assertOk();
+    }
 }
