@@ -477,6 +477,9 @@ class SaleService
                     ],
                 ];
 
+                $originalTributeAmount = round((float) ($electronicInvoice->tribute_amount ?? 0.0), 2);
+                $originalTributeRate = (float) ($electronicInvoice->tributes_breakdown[0]['Alic'] ?? $saleForAfip->iibb_perception_rate ?? 0.0);
+
                 $options = [
                     'voucher_type' => $ncVoucherType,
                     'point_of_sale' => $electronicInvoice->point_of_sale,
@@ -485,6 +488,8 @@ class SaleService
                     'receiver_name' => $electronicInvoice->receiver_name,
                     'receiver_address' => $electronicInvoice->receiver_address,
                     'receiver_tax_condition' => $electronicInvoice->receiver_tax_condition,
+                    'iibb_perception_amount' => $originalTributeAmount,
+                    'iibb_perception_rate' => $originalTributeAmount > 0 ? $originalTributeRate : 0.0,
                     'cbtes_asoc' => $cbtesAsoc,
                 ];
 

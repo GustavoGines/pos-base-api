@@ -13,7 +13,7 @@ class PaySaleDTO
         public readonly array $items,
         public readonly ?array $checkDetails,
         public readonly float $iibbPerceptionAmount = 0.0,
-        public readonly float $iibbPerceptionRate = 0.0
+        public readonly ?float $iibbPerceptionRate = null
     ) {}
 
     public static function fromArray(array $validated): self
@@ -27,7 +27,9 @@ class PaySaleDTO
             items: $validated['items'] ?? [],
             checkDetails: $validated['check_details'] ?? null,
             iibbPerceptionAmount: (float) ($validated['iibb_perception_amount'] ?? 0),
-            iibbPerceptionRate: (float) ($validated['iibb_perception_rate'] ?? 0)
+            iibbPerceptionRate: isset($validated['iibb_perception_rate']) && $validated['iibb_perception_rate'] !== null
+                ? (float) $validated['iibb_perception_rate']
+                : null
         );
     }
 }

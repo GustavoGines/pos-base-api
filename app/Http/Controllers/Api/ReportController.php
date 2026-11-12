@@ -815,6 +815,25 @@ class ReportController extends Controller
             }
         }
 
+        // Ordenar estrictamente por fecha y hora real de emisión (incluyendo Notas de Crédito en su propia fecha/hora)
+        usort($vouchers, function (array $a, array $b): int {
+            $tsA = ! empty($a['issued_at']) ? Carbon::parse($a['issued_at'])->getTimestamp() : 0;
+            $tsB = ! empty($b['issued_at']) ? Carbon::parse($b['issued_at'])->getTimestamp() : 0;
+            if ($tsA !== $tsB) {
+                return $tsA <=> $tsB;
+            }
+            $ptoCmp = ((int) ($a['point_of_sale'] ?? 0)) <=> ((int) ($b['point_of_sale'] ?? 0));
+            if ($ptoCmp !== 0) {
+                return $ptoCmp;
+            }
+            $typeCmp = ((int) ($a['voucher_type'] ?? 0)) <=> ((int) ($b['voucher_type'] ?? 0));
+            if ($typeCmp !== 0) {
+                return $typeCmp;
+            }
+
+            return ((int) ($a['voucher_number'] ?? 0)) <=> ((int) ($b['voucher_number'] ?? 0));
+        });
+
         return [
             'start_date' => $startDate,
             'end_date' => $endDate,
@@ -1069,6 +1088,16 @@ class ReportController extends Controller
             ];
         }
 
+        usort($vouchers, function (array $a, array $b): int {
+            $tsA = ! empty($a['issue_date']) ? Carbon::parse($a['issue_date'])->getTimestamp() : 0;
+            $tsB = ! empty($b['issue_date']) ? Carbon::parse($b['issue_date'])->getTimestamp() : 0;
+            if ($tsA !== $tsB) {
+                return $tsA <=> $tsB;
+            }
+
+            return ((int) ($a['id'] ?? 0)) <=> ((int) ($b['id'] ?? 0));
+        });
+
         return [
             'start_date' => $startDate,
             'end_date' => $endDate,
@@ -1166,6 +1195,13 @@ class ReportController extends Controller
         $ivaPerceptions = (float) ($purchasesData['summary']['total_iva_perception'] ?? 0);
         $iibbPerceptions = (float) ($purchasesData['summary']['total_iibb_perception'] ?? 0);
 
+        $salesIibbPerceptions = round((float) ($salesData['summary']['total_tributes'] ?? 0), 2);
+
+        // Balance de Percepciones IIBB (Rentas / ATP):
+        // > 0: Recaudación neta practicada a clientes (a depositar como Agente de Percepción)
+        // < 0: Crédito neto provincial a favor para descontar del IIBB propio del mes
+        $iibbNetBalance = round($salesIibbPerceptions - $iibbPerceptions, 2);
+
         $netBalance = round($fiscalDebit - $fiscalCredit - $ivaPerceptions, 2);
 
         if ($netBalance > 0.009) {
@@ -1202,6 +1238,7 @@ class ReportController extends Controller
                 'debit_27' => (float) ($salesData['summary']['iva_27'] ?? 0),
                 'total_invoiced_net' => (float) ($salesData['summary']['total_net'] ?? 0),
                 'total_sales_amount' => (float) ($salesData['summary']['net_fiscal_total'] ?? 0),
+                'iibb_perceptions' => $salesIibbPerceptions,
                 'invoices_count' => (int) ($salesData['summary']['invoices_count'] ?? 0),
                 'credit_notes_count' => (int) ($salesData['summary']['credit_notes_count'] ?? 0),
             ],
@@ -1225,6 +1262,12 @@ class ReportController extends Controller
                 'result' => $result,
                 'result_label' => $resultLabel,
                 'absolute_balance' => abs($netBalance),
+            ],
+            'provincial_iibb' => [
+                'collected_in_sales' => $salesIibbPerceptions,
+                'suffered_in_purchases' => $iibbPerceptions,
+                'net_balance' => $iibbNetBalance,
+                'abs_balance' => abs($iibbNetBalance),
             ],
             'disclaimer' => 'Estimación de gestión interna para control gerencial. No reemplaza la Declaración Jurada F. 2002 de AFIP/ARCA ni contempla saldos a favor de períodos anteriores, retenciones bancarias ni pagos a cuenta.',
         ]);

@@ -754,4 +754,98 @@ class IibbPerceptionBackendTest extends TestCase
 
         $this->assertEquals(0.00, (float) $customer->fresh()->balance, 'El saldo del cliente debe volver exactamente a 0.00 sin deuda huérfana de IIBB.');
     }
+
+    /**
+     * 9. Explicit 0% override in POS (iibb_perception_rate = 0.00) must NOT be recalculated
+     * during contingency/deferred invoicing nor when emitting a Credit Note on void.
+     */
+    public function test_explicit_zero_perception_override_is_respected_in_deferred_invoice_and_credit_note_void(): void
+    {
+        BusinessSetting::updateOrCreate(['key' => 'is_iibb_perception_agent'], ['value' => '1']);
+        BusinessSetting::updateOrCreate(['key' => 'default_iibb_perception_rate'], ['value' => '3.00']);
+
+        $interceptedXmls = [];
+        $this->mockAfipSuccess(cbteNro: 95, cae: '74382910492899', requestInspector: function (HttpClientRequest $req) use (&$interceptedXmls) {
+            $body = $req->body();
+            if (str_contains($body, 'FECAESolicitar')) {
+                $interceptedXmls[] = $body;
+            }
+        });
+
+        $shift = $this->createOpenShift();
+
+        $product = Product::create([
+            'name' => 'Motor Trifásico',
+            'internal_code' => 'MOT-3F',
+            'cost_price' => 400.00,
+            'selling_price' => 1210.00,
+            'iva_rate' => 21.00,
+            'stock' => 10,
+            'active' => true,
+        ]);
+
+        $customer = Customer::create([
+            'name' => 'Metalúrgica Formosa S.R.L.',
+            'document_type' => AfipHelper::DOC_CUIT,
+            'document_number' => '30500010912',
+            'tax_condition' => 'responsable_inscripto',
+            'applies_iibb_perception' => true,
+            'iibb_perception_rate' => 4.00,
+        ]);
+
+        // Cashier explicitly chose "Sin perc. (0%)", storing iibb_perception_rate = 0.00 (not null)
+        $sale = Sale::create([
+            'total' => 1210.00,
+            'total_surcharge' => 0.00,
+            'payment_status' => 'paid',
+            'amount_due' => 0.00,
+            'status' => 'completed',
+            'invoice_status' => 'none',
+            'cash_shift_id' => $shift->id,
+            'user_id' => $this->adminUser->id,
+            'cashier_id' => $this->adminUser->id,
+            'customer_id' => $customer->id,
+            'iibb_perception_amount' => 0.00,
+            'iibb_perception_rate' => 0.00,
+        ]);
+
+        $sale->items()->create([
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
+            'unit_cost_price' => 400.00,
+            'unit_price' => 1210.00,
+            'subtotal' => 1210.00,
+            'iva_rate' => 21.00,
+            'net_amount' => 1000.00,
+            'iva_amount' => 210.00,
+        ]);
+
+        // 1. Emitir factura sin enviar opciones de percepción en el request (simula contingencia o facturación desde historial)
+        $invoiceResp = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/invoice", [
+            'voucher_type' => AfipHelper::VOUCHER_FACTURA_A,
+        ]);
+
+        $invoiceResp->assertStatus(200)
+            ->assertJsonPath('invoice.tribute_amount', '0.00')
+            ->assertJsonPath('invoice.total_amount', '1210.00');
+
+        $this->assertEquals(1210.00, (float) $sale->fresh()->total);
+        $this->assertNotEmpty($interceptedXmls);
+        $this->assertStringContainsString('<ImpTrib>0.00</ImpTrib>', $interceptedXmls[0]);
+        $this->assertStringContainsString('<ImpTotal>1210.00</ImpTotal>', $interceptedXmls[0]);
+
+        // 2. Anular la venta: la Nota de Crédito A debe emitirse también con 0.00 de percepción y total 1210.00
+        $voidResp = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/void", [
+            'cash_shift_id' => $shift->id,
+            'reason' => 'Anulación de factura con override 0% IIBB',
+        ]);
+        $voidResp->assertStatus(200);
+
+        $this->assertCount(2, $interceptedXmls);
+        $ncXml = $interceptedXmls[1];
+        $this->assertStringContainsString('<ImpTrib>0.00</ImpTrib>', $ncXml);
+        $this->assertStringContainsString('<ImpTotal>1210.00</ImpTotal>', $ncXml);
+        $this->assertStringNotContainsString('<Tributos>', $ncXml);
+    }
 }

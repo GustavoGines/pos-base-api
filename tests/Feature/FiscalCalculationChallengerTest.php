@@ -454,6 +454,7 @@ class FiscalCalculationChallengerTest extends TestCase
 
         // Check Debit, Credit, IVA Perceptions
         $this->assertEquals(21000.00, (float) $resA->json('sales.fiscal_debit'));
+        $this->assertEquals(0.00, (float) $resA->json('sales.iibb_perceptions'));
         $this->assertEquals(10000.00, (float) $resA->json('purchases.fiscal_credit'));
         $this->assertEquals(2000.00, (float) $resA->json('purchases.iva_perceptions'));
         $this->assertEquals(1500.00, (float) $resA->json('purchases.iibb_perceptions'));
@@ -462,6 +463,12 @@ class FiscalCalculationChallengerTest extends TestCase
         $this->assertEquals(9000.00, (float) $resA->json('balance.net_balance'));
         $this->assertEquals('to_pay', $resA->json('balance.result'));
         $this->assertEquals(9000.00, (float) $resA->json('balance.absolute_balance'));
+
+        // Provincial IIBB (Rentas / ATP):
+        $this->assertEquals(0.00, (float) $resA->json('provincial_iibb.collected_in_sales'));
+        $this->assertEquals(1500.00, (float) $resA->json('provincial_iibb.suffered_in_purchases'));
+        $this->assertEquals(-1500.00, (float) $resA->json('provincial_iibb.net_balance'));
+        $this->assertEquals(1500.00, (float) $resA->json('provincial_iibb.abs_balance'));
 
         // 3. Case B: Debit < Credit + Perceptions -> "favorable"
         // Add another purchase invoice with high fiscal credit (Credit: $20,000)
@@ -517,6 +524,43 @@ class FiscalCalculationChallengerTest extends TestCase
         $this->assertEquals(0.00, (float) $resC->json('balance.net_balance'));
         $this->assertEquals('zero', $resC->json('balance.result'));
         $this->assertEquals(0.00, (float) $resC->json('balance.absolute_balance'));
+
+        // 5. Case D: Sales with IIBB perception collected (as perception agent)
+        $salePerc = Sale::create([
+            'user_id' => $this->admin->id,
+            'total' => 124000.00,
+            'status' => 'completed',
+        ]);
+        ElectronicInvoice::create([
+            'sale_id' => $salePerc->id,
+            'voucher_type' => 1,
+            'voucher_letter' => 'A',
+            'point_of_sale' => 1,
+            'voucher_number' => 501,
+            'cae' => '72345678901235',
+            'cae_expiration' => now()->addDays(10)->toDateString(),
+            'status' => 'authorized',
+            'doc_type' => 80,
+            'doc_number' => '30-71234567-9',
+            'receiver_name' => 'Cliente Posicion SA',
+            'receiver_tax_condition' => 'Responsable Inscripto',
+            'net_amount' => 100000.00,
+            'iva_amount' => 21000.00,
+            'tribute_amount' => 3000.00,
+            'total_amount' => 124000.00,
+            'issued_at' => '2026-11-20 10:00:00',
+        ]);
+
+        $resD = $this->actingAsAdmin($this->admin)
+            ->getJson('/api/reports/vat-position?month=11&year=2026');
+        $resD->assertOk();
+
+        $this->assertEquals(3000.00, (float) $resD->json('sales.iibb_perceptions'));
+        $this->assertEquals(3000.00, (float) $resD->json('provincial_iibb.collected_in_sales'));
+        $this->assertEquals(1500.00, (float) $resD->json('provincial_iibb.suffered_in_purchases'));
+        // 3000 - 1500 = 1500 (balance a ingresar como agente de percepción)
+        $this->assertEquals(1500.00, (float) $resD->json('provincial_iibb.net_balance'));
+        $this->assertEquals(1500.00, (float) $resD->json('provincial_iibb.abs_balance'));
     }
 
     /**
