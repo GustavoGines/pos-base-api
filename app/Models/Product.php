@@ -194,7 +194,8 @@ class Product extends Model
     }
 
     /**
-     * Calcula cuántos combos enteros se pueden armar según el stock actual de sus ingredientes.
+     * Calcula cuántos combos enteros se pueden armar según el stock actual de sus ingredientes,
+     * contemplando divisores fraccionarios periódicos (ej. 1/6 = 0.167, 1/12 = 0.083).
      */
     public function calculateComboAvailableStock(): float
     {
@@ -209,7 +210,29 @@ class Product extends Model
             if ($pivotQty <= 0) {
                 continue;
             }
-            $availableForChild = floor(max(0.0, (float) $child->stock) / $pivotQty);
+
+            $childStock = max(0.0, (float) $child->stock);
+            if ($childStock <= 0.001) {
+                $availableForChild = 0.0;
+            } else {
+                $denom = (int) round(1.0 / $pivotQty);
+                $isRepeatingUnitFraction = $pivotQty < 1.0
+                    && $denom >= 2
+                    && $denom <= 100
+                    && abs($pivotQty - round(1.0 / $denom, 3)) < 0.0005
+                    && abs($pivotQty - (1.0 / $denom)) > 0.00001;
+
+                if ($isRepeatingUnitFraction) {
+                    $wholeUnits = (int) floor($childStock + 0.001);
+                    $remStock = max(0.0, $childStock - $wholeUnits);
+                    $remPortions = $remStock > 0.006 ? floor(($remStock + 0.005) * $denom) : 0.0;
+                    $availableForChild = ($wholeUnits * $denom) + $remPortions;
+                } else {
+                    $epsilon = $pivotQty < 1.0 ? min(0.003, $pivotQty * 0.02) : 0.0001;
+                    $availableForChild = floor(($childStock + $epsilon) / $pivotQty);
+                }
+            }
+
             if ($limiting === null || $availableForChild < $limiting) {
                 $limiting = $availableForChild;
             }

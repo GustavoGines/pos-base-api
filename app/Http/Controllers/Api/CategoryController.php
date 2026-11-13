@@ -16,6 +16,7 @@ class CategoryController extends Controller
         return response()->json(
             Category::with('rubro')
                 ->withCount(['products' => fn ($q) => $q->where('active', true)])
+                ->orderBy('name', 'asc')
                 ->get()
         );
     }

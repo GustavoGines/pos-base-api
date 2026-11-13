@@ -63,6 +63,34 @@ class StockService
         foreach ($items as $itemData) {
             $isTemporary = filter_var($itemData['is_temporary'] ?? false, FILTER_VALIDATE_BOOLEAN);
             if (empty($itemData['product_id']) || $isTemporary) {
+                // Si es un Combo Rápido temporal armado en POS con ingredientes reales del catálogo,
+                // descontamos el stock de sus productos hijos bloqueados en $products.
+                if (! empty($itemData['combo_ingredients']) && is_array($itemData['combo_ingredients'])) {
+                    $comboQty = max(0.0, (float) ($itemData['quantity'] ?? 1));
+                    $comboLabel = trim((string) ($itemData['custom_description'] ?? $itemData['product_name'] ?? $itemData['name'] ?? 'Combo Rápido'));
+                    foreach ($itemData['combo_ingredients'] as $ing) {
+                        $childId = (int) ($ing['id'] ?? 0);
+                        $ingQty = (float) ($ing['quantity'] ?? 0);
+                        if ($childId > 0 && $ingQty > 0 && $comboQty > 0 && isset($products[$childId])) {
+                            $childProduct = $products[$childId];
+                            if (! $childProduct->is_service) {
+                                $totalChildDeduct = $comboQty * $ingQty;
+                                $effectiveDelta = $this->applyStockDeltaWithFractionSnap($childProduct, -$totalChildDeduct);
+                                $childProduct->save();
+                                $this->logMovement(
+                                    $childProduct->id,
+                                    $effectiveDelta,
+                                    'sale',
+                                    'Venta '.StockMovement::CHECKOUT_NOTE_TOKEN."{$sale->id} (Hijo de Combo Rápido: {$comboLabel})",
+                                    $context,
+                                    $sale
+                                );
+                                $allDeductedIds[] = $childProduct->id;
+                            }
+                        }
+                    }
+                }
+
                 continue;
             }
 
@@ -105,6 +133,40 @@ class StockService
     }
 
     /**
+     * Aplica un delta con signo al stock del producto. Si la operación involucra
+     * fracciones (ej. 1/6 = 0.167 o 1/12 = 0.083) y el resultado queda a <= 0.010
+     * de un número entero (ej. -0.002 o 0.004 respecto a 0.000 / 1.000),
+     * ajusta (snap) el stock exactamente al entero y devuelve el delta real aplicado
+     * para que el Kardex (stock_movements) cierre al milésimo con products.stock.
+     */
+    protected function applyStockDeltaWithFractionSnap(Product $target, float $signedDelta): float
+    {
+        $stockBefore = round((float) $target->stock, 3);
+        $rawAfter = round($stockBefore + $signedDelta, 3);
+        $isFractionalOp = abs($signedDelta - round($signedDelta)) > 0.0001
+            || abs($stockBefore - round($stockBefore)) > 0.0001;
+
+        $stockAfter = $rawAfter;
+        if ($isFractionalOp && abs($signedDelta) >= 0.030) {
+            $nearestInt = round($rawAfter, 0);
+            if (abs($rawAfter - $nearestInt) <= 0.010) {
+                $candidateDelta = round($nearestInt - $stockBefore, 3);
+                if (($signedDelta < 0 && $candidateDelta < 0) || ($signedDelta > 0 && $candidateDelta > 0)) {
+                    $stockAfter = (float) $nearestInt;
+                }
+            }
+        }
+
+        if (abs($stockAfter) < 0.0001) {
+            $stockAfter = 0.0;
+        }
+
+        $target->stock = $stockAfter;
+
+        return round($stockAfter - $stockBefore, 3);
+    }
+
+    /**
      * Deduct stock mathematically for a specific product (Combo-aware)
      */
     protected function deductProductStock(Product $product, float $qty, Sale $sale, SaleContextDTO $context, bool $isAdjustment, Collection $products, bool $trackPopularity = true): array
@@ -115,25 +177,35 @@ class StockService
             // pero sí incrementan su popularidad para el Acceso Rápido POS.
         } elseif ($product->is_combo) {
             foreach ($product->children as $child) {
-                $qtyDeducted = $qty * $child->pivot->quantity;
+                $qtyDeducted = $qty * (float) $child->pivot->quantity;
 
                 // CRITICAL FIX: Use canonical instance from the root $products collection
                 // to prevent in-memory race conditions if the same product is processed twice.
                 $canonicalChild = $products[$child->id] ?? $child;
-                $canonicalChild->stock -= $qtyDeducted;
+                $effectiveDelta = $this->applyStockDeltaWithFractionSnap($canonicalChild, -$qtyDeducted);
                 $canonicalChild->save(); // Dispara Observers
 
-                $this->logMovement($canonicalChild->id, -$qtyDeducted, 'sale',
+                $this->logMovement(
+                    $canonicalChild->id,
+                    $effectiveDelta,
+                    'sale',
                     ($isAdjustment ? 'Ajuste Recall ' : 'Venta ').StockMovement::CHECKOUT_NOTE_TOKEN."{$sale->id} (Hijo de: {$product->name})",
-                    $context, $sale);
+                    $context,
+                    $sale
+                );
                 $deductedIds[] = $canonicalChild->id;
             }
         } else {
             // Update the canonical product (which $product already is, as it comes from $products)
-            $product->stock -= $qty;
-            $this->logMovement($product->id, -$qty, 'sale',
+            $effectiveDelta = $this->applyStockDeltaWithFractionSnap($product, -$qty);
+            $this->logMovement(
+                $product->id,
+                $effectiveDelta,
+                'sale',
                 ($isAdjustment ? 'Ajuste Recall ' : 'Venta ').StockMovement::CHECKOUT_NOTE_TOKEN."{$sale->id}",
-                $context, $sale);
+                $context,
+                $sale
+            );
             $deductedIds[] = $product->id;
         }
 
@@ -242,8 +314,14 @@ class StockService
     public function restoreStockForVoid(Sale $sale, SaleContextDTO $context, ?DeliveryNote $deliveryNote): array
     {
         $productIds = $sale->items->pluck('product_id')->filter()->unique()->values()->toArray();
+        $quickComboMovements = StockMovement::where('sale_id', $sale->id)
+            ->where('type', 'sale')
+            ->where('notes', 'like', '%Hijo de Combo Rápido:%')
+            ->get();
+        $quickChildIds = $quickComboMovements->pluck('product_id')->filter()->unique()->values()->toArray();
+        $allIdsToLock = array_values(array_unique(array_merge($productIds, $quickChildIds)));
 
-        $products = $this->lockProducts($productIds);
+        $products = $this->lockProducts($allIdsToLock);
 
         // Con remito diferido el mostrador nunca sumó popularidad (ni stock), por lo que no hay nada que revertir.
         $deferredDelivery = $deliveryNote && ! $sale->hasDeductedStock();
@@ -279,6 +357,20 @@ class StockService
 
                 $product->sales_count = max(0, $product->sales_count - $this->popularityPoints((float) $item->quantity, $metric));
                 $product->save();
+            }
+        }
+
+        if (! $deferredDelivery && $quickComboMovements->isNotEmpty()) {
+            foreach ($quickComboMovements as $mv) {
+                $childProduct = $products[$mv->product_id] ?? null;
+                $qtyToRestore = abs((float) $mv->quantity);
+                if (! $childProduct || $qtyToRestore <= 0 || $childProduct->is_service) {
+                    continue;
+                }
+                $effectiveDelta = $this->applyStockDeltaWithFractionSnap($childProduct, +$qtyToRestore);
+                $childProduct->save();
+                $this->logMovement($childProduct->id, abs($effectiveDelta), 'in', "Reversión (Combo Rápido) Venta #{$sale->id}", $context, $sale);
+                $physicallyRestoredIds[] = $childProduct->id;
             }
         }
 
@@ -420,19 +512,19 @@ class StockService
         }
         if ($product->is_combo) {
             foreach ($product->children as $child) {
-                $qtyRestored = $qtyToRestore * $child->pivot->quantity;
+                $qtyRestored = $qtyToRestore * (float) $child->pivot->quantity;
                 $canonicalChild = $products[$child->id] ?? $child;
-                $canonicalChild->stock += $qtyRestored;
+                $effectiveDelta = $this->applyStockDeltaWithFractionSnap($canonicalChild, +$qtyRestored);
                 $canonicalChild->save();
 
-                $this->logMovement($canonicalChild->id, $qtyRestored, 'in', "Reversión (Combo Hijo) Venta #{$sale->id}", $context, $sale);
+                $this->logMovement($canonicalChild->id, abs($effectiveDelta), 'in', "Reversión (Combo Hijo) Venta #{$sale->id}", $context, $sale);
                 $restoredIds[] = $canonicalChild->id;
             }
         } else {
-            $product->stock += $qtyToRestore;
+            $effectiveDelta = $this->applyStockDeltaWithFractionSnap($product, +$qtyToRestore);
             $product->save();
 
-            $this->logMovement($product->id, $qtyToRestore, 'in', "Reversión por anulación de Venta #{$sale->id}", $context, $sale);
+            $this->logMovement($product->id, abs($effectiveDelta), 'in', "Reversión por anulación de Venta #{$sale->id}", $context, $sale);
             $restoredIds[] = $product->id;
         }
 

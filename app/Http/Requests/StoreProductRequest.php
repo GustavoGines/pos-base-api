@@ -2,10 +2,8 @@
 
 namespace App\Http\Requests;
 
-use App\Models\Product;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
-use Illuminate\Validation\Validator;
 
 class StoreProductRequest extends FormRequest
 {
@@ -103,40 +101,5 @@ class StoreProductRequest extends FormRequest
             'combo_ingredients.*.id.exists' => 'Uno de los productos seleccionados para el combo no existe.',
             'combo_ingredients.*.quantity.min' => 'La cantidad de cada producto del combo debe ser mayor a 0.',
         ];
-    }
-
-    public function withValidator(Validator $validator): void
-    {
-        $validator->after(function (Validator $validator) {
-            if (! $this->boolean('is_combo') || ! is_array($this->input('combo_ingredients'))) {
-                return;
-            }
-
-            $ingredients = $this->input('combo_ingredients');
-            $ids = array_values(array_filter(array_column($ingredients, 'id')));
-            if (empty($ids)) {
-                return;
-            }
-
-            $products = Product::whereIn('id', $ids)->get()->keyBy('id');
-            foreach ($ingredients as $ing) {
-                $childId = $ing['id'] ?? null;
-                $reqQty = (float) ($ing['quantity'] ?? 0);
-                if (! $childId || $reqQty <= 0 || ! isset($products[$childId])) {
-                    continue;
-                }
-
-                $child = $products[$childId];
-                $availStock = (float) $child->stock;
-                if ($reqQty > $availStock) {
-                    $reqFmt = rtrim(rtrim(number_format($reqQty, 3, '.', ''), '0'), '.');
-                    $availFmt = rtrim(rtrim(number_format($availStock, 3, '.', ''), '0'), '.');
-                    $validator->errors()->add(
-                        'combo_ingredients',
-                        "La cantidad requerida de «{$child->name}» ({$reqFmt}) supera su stock disponible actual ({$availFmt})."
-                    );
-                }
-            }
-        });
     }
 }

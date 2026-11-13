@@ -148,29 +148,19 @@ class UpdateProductRequest extends FormRequest
                 return;
             }
 
-            $ingredients = $this->input('combo_ingredients');
-            $ids = array_values(array_filter(array_column($ingredients, 'id')));
-            if (empty($ids)) {
-                return;
-            }
+            $routeProduct = $this->route('product');
+            $productId = $routeProduct instanceof Product
+                ? $routeProduct->id
+                : ($routeProduct ?? $this->route('id'));
 
-            $products = Product::whereIn('id', $ids)->get()->keyBy('id');
-            foreach ($ingredients as $ing) {
+            foreach ($this->input('combo_ingredients') as $ing) {
                 $childId = $ing['id'] ?? null;
-                $reqQty = (float) ($ing['quantity'] ?? 0);
-                if (! $childId || $reqQty <= 0 || ! isset($products[$childId])) {
-                    continue;
-                }
-
-                $child = $products[$childId];
-                $availStock = (float) $child->stock;
-                if ($reqQty > $availStock) {
-                    $reqFmt = rtrim(rtrim(number_format($reqQty, 3, '.', ''), '0'), '.');
-                    $availFmt = rtrim(rtrim(number_format($availStock, 3, '.', ''), '0'), '.');
+                if ($productId && $childId && (int) $childId === (int) $productId) {
                     $validator->errors()->add(
                         'combo_ingredients',
-                        "La cantidad requerida de «{$child->name}» ({$reqFmt}) supera su stock disponible actual ({$availFmt})."
+                        'Un producto no puede ser ingrediente de sí mismo.'
                     );
+                    break;
                 }
             }
         });

@@ -66,30 +66,52 @@ class ProductController extends Controller
 
         $allowedSorts = [
             'id', 'name', 'selling_price', 'cost_price', 'stock',
-            'barcode', 'internal_code', 'category_id', 'brand_id', 'supplier_id', 'is_sold_by_weight', 'active', 'sales_count', 'vencimiento_dias', 'needs_catalog_review',
+            'barcode', 'internal_code', 'category_id', 'brand_id', 'supplier_id',
+            'is_sold_by_weight', 'active', 'sales_count', 'vencimiento_dias',
+            'expiration_date', 'needs_catalog_review',
         ];
         $sortBy = $request->query('sort_by');
         $sortDir = $request->query('sort_direction') === 'desc' ? 'desc' : 'asc';
 
         if ($sortBy && in_array($sortBy, $allowedSorts)) {
-            // Ordenar por nombre de la relación (no por ID numérico) para que sea intuitivo
+            $orderNullsLast = static function ($builder, string $expression, string $direction): void {
+                $builder->orderByRaw("CASE WHEN {$expression} IS NULL THEN 1 ELSE 0 END ASC")
+                    ->orderByRaw("{$expression} {$direction}");
+            };
+
+            // Ordenar por nombre de la relación (no por ID numérico) dejando los valores vacíos al final
             if ($sortBy === 'brand_id') {
                 $query->leftJoin('brands', 'brands.id', '=', 'products.brand_id')
-                    ->orderBy('brands.name', $sortDir)
                     ->select('products.*');
+                $orderNullsLast($query, 'brands.name', $sortDir);
+                $query->orderBy('products.name', 'asc');
             } elseif ($sortBy === 'category_id') {
                 $query->leftJoin('categories', 'categories.id', '=', 'products.category_id')
-                    ->orderBy('categories.name', $sortDir)
                     ->select('products.*');
+                $orderNullsLast($query, 'categories.name', $sortDir);
+                $query->orderBy('products.name', 'asc');
             } elseif ($sortBy === 'supplier_id') {
                 $query->leftJoin('suppliers', 'suppliers.id', '=', 'products.supplier_id')
-                    ->orderBy('suppliers.name', $sortDir)
                     ->select('products.*');
+                $orderNullsLast($query, 'suppliers.name', $sortDir);
+                $query->orderBy('products.name', 'asc');
+            } elseif ($sortBy === 'expiration_date') {
+                // Primero fechas concretas (NULLS LAST), luego vida útil en días (NULLS LAST), al final sin vencimiento
+                $orderNullsLast($query, 'products.expiration_date', $sortDir);
+                $orderNullsLast($query, 'products.vencimiento_dias', $sortDir);
+                $query->orderBy('products.name', 'asc');
+            } elseif ($sortBy === 'vencimiento_dias') {
+                $orderNullsLast($query, 'products.vencimiento_dias', $sortDir);
+                $query->orderBy('products.name', 'asc');
+            } elseif ($sortBy === 'barcode') {
+                $query->orderByRaw("CASE WHEN products.barcode IS NULL OR products.barcode = '' THEN 1 ELSE 0 END ASC")
+                    ->orderBy('products.barcode', $sortDir)
+                    ->orderBy('products.name', 'asc');
             } elseif ($sortBy === 'needs_catalog_review') {
                 $query->where('products.needs_catalog_review', true)
                     ->orderBy('products.id', $sortDir);
             } else {
-                $column = $sortBy === 'name' ? 'products.name' : $sortBy;
+                $column = $sortBy === 'name' ? 'products.name' : 'products.' . $sortBy;
                 $query->orderBy($column, $sortDir);
             }
         } else {

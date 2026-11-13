@@ -11,7 +11,7 @@ class BrandController extends Controller
 {
     public function index()
     {
-        return response()->json(Brand::all());
+        return response()->json(Brand::orderBy('name', 'asc')->get());
     }
 
     public function store(Request $request)

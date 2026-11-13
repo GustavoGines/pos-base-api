@@ -862,6 +862,17 @@ class SaleService
                     }
                 }
                 $costPrice = max(0.0, round((float) ($itemData['cost_price'] ?? $itemData['unit_cost_price'] ?? 0), 2));
+                if ($costPrice <= 0 && ! empty($itemData['combo_ingredients']) && is_array($itemData['combo_ingredients'])) {
+                    $computedCost = 0.0;
+                    foreach ($itemData['combo_ingredients'] as $ing) {
+                        $childId = (int) ($ing['id'] ?? 0);
+                        $ingQty = (float) ($ing['quantity'] ?? 0);
+                        if ($childId > 0 && $ingQty > 0 && isset($products[$childId])) {
+                            $computedCost += ((float) $products[$childId]->cost_price) * $ingQty;
+                        }
+                    }
+                    $costPrice = max(0.0, round($computedCost, 2));
+                }
                 $ivaRate = isset($itemData['iva_rate']) && is_numeric($itemData['iva_rate'])
                     ? (float) $itemData['iva_rate']
                     : 21.00;
