@@ -16,11 +16,30 @@ class StockMovement extends Model
      */
     public const CHECKOUT_NOTE_TOKEN = 'Ticket #';
 
-    protected $fillable = ['product_id', 'user_id', 'authorized_by_admin_id', 'type', 'quantity', 'notes', 'supplier_invoice_id', 'cash_shift_id', 'sale_id'];
+    protected $fillable = [
+        'product_id', 'user_id', 'authorized_by_admin_id', 'type', 'quantity',
+        'unit_cost', 'notes', 'supplier_invoice_id', 'batch_id', 'cash_shift_id', 'sale_id',
+    ];
 
     protected $casts = [
         'quantity' => 'decimal:3',
+        'unit_cost' => 'decimal:2',
     ];
+
+    protected static function booted(): void
+    {
+        static::saving(function (StockMovement $movement) {
+            if (! \App\Services\BatchStockService::hasLotTrackingSchema()) {
+                unset(
+                    $movement->attributes['batch_id'],
+                    $movement->attributes['unit_cost']
+                );
+                if (($movement->attributes['type'] ?? null) === 'waste') {
+                    $movement->attributes['type'] = 'out';
+                }
+            }
+        });
+    }
 
     public function product(): BelongsTo
     {
@@ -40,5 +59,10 @@ class StockMovement extends Model
     public function supplierInvoice(): BelongsTo
     {
         return $this->belongsTo(SupplierInvoice::class);
+    }
+
+    public function batch(): BelongsTo
+    {
+        return $this->belongsTo(ProductBatch::class, 'batch_id');
     }
 }

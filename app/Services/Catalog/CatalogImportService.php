@@ -5,9 +5,12 @@ namespace App\Services\Catalog;
 use App\Models\Brand;
 use App\Models\Category;
 use App\Models\Product;
+use App\Models\ProductBatch;
 use App\Models\Rubro;
 use App\Models\Supplier;
 use App\Services\BarcodeService;
+use App\Services\BatchStockService;
+use Illuminate\Support\Facades\DB;
 use Rap2hpoutre\FastExcel\FastExcel;
 
 class CatalogImportService
@@ -198,9 +201,18 @@ class CatalogImportService
                 if ($precioMayorista !== null) {
                     $product->price_wholesale = $parseNumber($precioMayorista);
                 }
-                if ($stock !== null && ! $product->is_combo) {
-                    $product->stock = $parseNumber($stock) ?? 0.0;
-                } elseif ($isNew && $stock === null) {
+                $parsedStockFromSheet = ($stock !== null && ! $product->is_combo)
+                    ? ($parseNumber($stock) ?? 0.0)
+                    : null;
+
+                $hasLotSchema = BatchStockService::hasLotTrackingSchema();
+                $isBatchTracked = $hasLotSchema && (bool) $product->track_batches;
+
+                if ($parsedStockFromSheet !== null && ! $isBatchTracked) {
+                    $product->stock = $parsedStockFromSheet;
+                } elseif ($isNew && $parsedStockFromSheet === null) {
+                    $product->stock = 0.0;
+                } elseif ($isNew && $isBatchTracked) {
                     $product->stock = 0.0;
                 }
 
@@ -232,19 +244,47 @@ class CatalogImportService
 
                 $product->save();
 
-                if ($stock !== null && ! $product->is_combo) {
-                    $newStock = (float) $product->stock;
-                    $diff = round($newStock - $oldStock, 4);
+                if ($parsedStockFromSheet !== null && ! $product->is_combo) {
+                    $diff = round($parsedStockFromSheet - $oldStock, 4);
                     if ($diff != 0.0) {
                         $actorUser = request()?->user() ?? request()?->attributes?->get('authenticated_user');
-                        $product->stockMovements()->create([
-                            'user_id' => $actorUser?->id ?? auth()->id(),
-                            'type' => $diff > 0 ? 'in' : 'out',
-                            'quantity' => abs($diff),
-                            'notes' => $isNew
-                                ? 'Stock inicial (Importación de catálogo)'
-                                : "Actualización por importación de catálogo (de {$oldStock} a {$newStock})",
-                        ]);
+                        $noteText = $isNew
+                            ? 'Stock inicial (Importación de catálogo)'
+                            : "Actualización por importación de catálogo (de {$oldStock} a {$parsedStockFromSheet})";
+
+                        if ($hasLotSchema && $product->track_batches && ! $product->is_service) {
+                            DB::transaction(function () use ($product, $diff, $actorUser, $noteText) {
+                                $locked = Product::where('id', $product->id)->lockForUpdate()->firstOrFail();
+                                $batchService = app(BatchStockService::class);
+                                $batchService->ensureInitialBatchOnEnable($locked, $actorUser?->id ?? auth()->id());
+
+                                if ($diff > 0) {
+                                    $batchService->receiveStockBatch($locked, $diff, [
+                                        'source_type' => ProductBatch::SOURCE_ADJUSTMENT,
+                                        'unit_cost' => (float) $locked->cost_price,
+                                        'user_id' => $actorUser?->id ?? auth()->id(),
+                                        'movement_type' => 'in',
+                                        'movement_notes' => $noteText,
+                                    ]);
+                                } else {
+                                    $batchService->deductStockFEFO($locked, abs($diff), [
+                                        'user_id' => $actorUser?->id ?? auth()->id(),
+                                        'allow_deficit' => true,
+                                        'ignore_expired_guard' => true,
+                                        'movement_type' => 'out',
+                                        'movement_notes' => $noteText,
+                                    ]);
+                                }
+                            });
+                        } else {
+                            $product->stockMovements()->create([
+                                'user_id' => $actorUser?->id ?? auth()->id(),
+                                'type' => $diff > 0 ? 'in' : 'out',
+                                'quantity' => abs($diff),
+                                'unit_cost' => $product->cost_price,
+                                'notes' => $noteText,
+                            ]);
+                        }
                     }
                 }
 

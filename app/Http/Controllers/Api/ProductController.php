@@ -7,9 +7,12 @@ use App\Http\Requests\StoreProductRequest;
 use App\Http\Requests\UpdateProductRequest;
 use App\Jobs\SyncProductStockToPlatformsJob;
 use App\Models\Product;
+use App\Models\ProductBatch;
 use App\Models\ProductPriceTier;
 use App\Services\BarcodeService;
+use App\Services\BatchStockService;
 use App\Services\InventoryAlertService;
+use App\Services\ProductionOrderService;
 use App\Services\ReportCacheService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -17,9 +20,34 @@ use Illuminate\Support\Facades\Storage;
 
 class ProductController extends Controller
 {
+    /**
+     * Relaciones estándar de producto para respuestas de catálogo,
+     * protegiendo consultas si las migraciones de recetas/lotes aún no se ejecutaron.
+     */
+    protected function productRelations(): array
+    {
+        $relations = [
+            'category.rubro',
+            'brand',
+            'supplier',
+            'children',
+            'priceTiers',
+        ];
+
+        if (BatchStockService::hasProductionRecipeSchema()) {
+            $ingCols = 'id,name,internal_code,cost_price,stock,unit_type,is_sold_by_weight';
+            if (BatchStockService::hasLotTrackingSchema()) {
+                $ingCols .= ',track_batches';
+            }
+            $relations[] = "recipeItems.ingredient:{$ingCols}";
+        }
+
+        return $relations;
+    }
+
     public function index(Request $request)
     {
-        $query = Product::with(['category.rubro', 'brand', 'supplier', 'children', 'priceTiers']);
+        $query = Product::with($this->productRelations());
 
         if ($search = $request->query('search')) {
             $query->matchingSearch($search);
@@ -151,45 +179,85 @@ class ProductController extends Controller
             $validated['iva_rate'] = 21.00;
         }
 
-        $product = Product::create($validated);
+        $product = DB::transaction(function () use ($request, $validated) {
+            $hasLotSchema = BatchStockService::hasLotTrackingSchema();
+            $hasRecipeSchema = BatchStockService::hasProductionRecipeSchema();
+            $initialStock = (float) ($validated['stock'] ?? 0);
+            $createBatchForOpening = $hasLotSchema
+                && ! empty($validated['track_batches'])
+                && empty($validated['is_combo'])
+                && empty($validated['is_service'])
+                && $initialStock > 0;
 
-        // Auditoría: Registrar stock inicial si es mayor a 0
-        if ($product->stock > 0) {
-            $actorUser = $request->user() ?? $request->attributes->get('authenticated_user');
-            $product->stockMovements()->create([
-                'user_id' => $actorUser?->id,
-                'authorized_by_admin_id' => $request->attributes->get('authorized_by_admin_id')
-                    ?? ($actorUser?->isAdmin() ? $actorUser->id : null),
-                'type' => 'in',
-                'quantity' => $product->stock,
-                'notes' => 'Stock inicial (Creación de producto)',
-            ]);
-        }
-
-        if (! empty($validated['is_combo']) && $request->has('combo_ingredients')) {
-            $syncData = [];
-            foreach ($request->combo_ingredients as $ingredient) {
-                $syncData[$ingredient['id']] = ['quantity' => $ingredient['quantity']];
+            if ($createBatchForOpening) {
+                $validated['stock'] = 0.0;
             }
-            $product->children()->sync($syncData);
-            $product->load('children');
-            $product->update([
-                'cost_price' => $product->calculateComboCostPrice(),
-                'stock' => $product->calculateComboAvailableStock(),
-            ]);
-        }
 
-        // Sincronizar tramos de precio si vienen en el payload
-        if ($request->has('price_tiers')) {
-            $this->syncPriceTiers($product, $request->price_tiers ?? []);
-        }
+            $product = Product::create($validated);
 
-        return response()->json($product->load(['category.rubro', 'brand', 'supplier', 'children', 'priceTiers']), 201);
+            // Auditoría: Registrar stock inicial si es mayor a 0
+            if ($createBatchForOpening) {
+                $actorUser = $request->user() ?? $request->attributes->get('authenticated_user');
+                app(BatchStockService::class)->receiveStockBatch($product, $initialStock, [
+                    'source_type' => ProductBatch::SOURCE_OPENING,
+                    'batch_code' => $request->input('initial_batch_code'),
+                    'expiration_date' => $product->expiration_date,
+                    'unit_cost' => (float) $product->cost_price,
+                    'user_id' => $actorUser?->id,
+                    'authorized_by_admin_id' => $request->attributes->get('authorized_by_admin_id')
+                        ?? ($actorUser?->isAdmin() ? $actorUser->id : null),
+                    'movement_type' => 'in',
+                    'movement_notes' => 'Stock inicial (Creación de producto)',
+                ]);
+            } elseif ($product->stock > 0) {
+                $actorUser = $request->user() ?? $request->attributes->get('authenticated_user');
+                $product->stockMovements()->create([
+                    'user_id' => $actorUser?->id,
+                    'authorized_by_admin_id' => $request->attributes->get('authorized_by_admin_id')
+                        ?? ($actorUser?->isAdmin() ? $actorUser->id : null),
+                    'type' => 'in',
+                    'quantity' => $product->stock,
+                    'unit_cost' => $product->cost_price,
+                    'notes' => 'Stock inicial (Creación de producto)',
+                ]);
+            }
+
+            if (! empty($validated['is_combo']) && $request->has('combo_ingredients')) {
+                $syncData = [];
+                foreach ($request->combo_ingredients as $ingredient) {
+                    $syncData[$ingredient['id']] = ['quantity' => $ingredient['quantity']];
+                }
+                $product->children()->sync($syncData);
+                $product->load('children');
+                $product->update([
+                    'cost_price' => $product->calculateComboCostPrice(),
+                    'stock' => $product->calculateComboAvailableStock(),
+                ]);
+            }
+
+            // Sincronizar ingredientes de elaboración propia si vienen en el payload
+            if ($hasRecipeSchema && $request->has('recipe_ingredients')) {
+                $recipeList = $request->input('recipe_ingredients') ?? [];
+                ProductionOrderService::syncProductRecipe($product, $recipeList);
+                $product->update([
+                    'has_production_recipe' => ! empty($recipeList),
+                ]);
+            }
+
+            // Sincronizar tramos de precio si vienen en el payload
+            if ($request->has('price_tiers')) {
+                $this->syncPriceTiers($product, $request->price_tiers ?? []);
+            }
+
+            return $product;
+        });
+
+        return response()->json($product->load($this->productRelations()), 201);
     }
 
     public function show(Product $product)
     {
-        return response()->json($product->load(['category.rubro', 'brand', 'supplier', 'children', 'priceTiers']));
+        return response()->json($product->load($this->productRelations()));
     }
 
     public function update(UpdateProductRequest $request, Product $product, BarcodeService $barcodeService)
@@ -214,13 +282,21 @@ class ProductController extends Controller
             }
 
             // Auditoría de Stock: Guardar valor previo bajo lock antes de actualizar
+            $hasLotSchema = BatchStockService::hasLotTrackingSchema();
+            $hasRecipeSchema = BatchStockService::hasProductionRecipeSchema();
             $oldStock = (float) $product->stock;
             $oldCost = (float) $product->cost_price;
             $willBeCombo = array_key_exists('is_combo', $validated) ? (bool) $validated['is_combo'] : (bool) $product->is_combo;
+            $wasTrackingBatches = $hasLotSchema && (bool) $product->track_batches;
+            $willTrackBatches = $hasLotSchema && (array_key_exists('track_batches', $validated) ? (bool) $validated['track_batches'] : $wasTrackingBatches);
 
-            // Si usamos add_stock o si es un combo (stock virtual), no pisamos el stock absoluto manualmente
-            if (! empty($validated['add_stock']) || $willBeCombo) {
+            // Si usamos add_stock, si es combo (stock virtual) o si controla stock por lotes, no pisamos stock absoluto directo
+            if (! empty($validated['add_stock']) || $willBeCombo || ($wasTrackingBatches && $willTrackBatches)) {
                 unset($validated['stock']);
+            }
+            if ($wasTrackingBatches && $willTrackBatches && ! $willBeCombo) {
+                // La fecha más próxima a vencer del producto se materializa desde sus lotes activos
+                unset($validated['expiration_date']);
             }
 
             $product->update($validated);
@@ -236,22 +312,43 @@ class ProductController extends Controller
             }
 
             $actorUser = $request->user() ?? $request->attributes->get('authenticated_user');
+            $batchService = app(BatchStockService::class);
+
+            if ($hasLotSchema && ! $wasTrackingBatches && $willTrackBatches && ! $willBeCombo && ! $product->is_service) {
+                $batchService->ensureInitialBatchOnEnable($product, $actorUser?->id);
+                $product->refresh();
+            }
 
             // Modificación aditiva (Sin race condition, excluido para combos)
             if (! $willBeCombo && ! empty($request->add_stock)) {
-                $product->increment('stock', $request->add_stock);
-                $product->refresh();
-                $stockChanged = true;
+                if ($hasLotSchema && $willTrackBatches && ! $product->is_service) {
+                    $batchService->receiveStockBatch($product, (float) $request->add_stock, [
+                        'source_type' => ProductBatch::SOURCE_ADJUSTMENT,
+                        'batch_code' => $request->input('batch_code'),
+                        'expiration_date' => $request->input('expiration_date'),
+                        'unit_cost' => (float) $product->cost_price,
+                        'user_id' => $actorUser?->id,
+                        'movement_type' => 'in',
+                        'movement_notes' => 'Ingreso rápido de mercadería (Mobile)',
+                    ]);
+                    $product->refresh();
+                    $stockChanged = true;
+                } else {
+                    $product->increment('stock', $request->add_stock);
+                    $product->refresh();
+                    $stockChanged = true;
 
-                $product->stockMovements()->create([
-                    'user_id' => $actorUser?->id,
-                    'type' => 'in',
-                    'quantity' => $request->add_stock,
-                    'notes' => 'Ingreso rápido de mercadería (Mobile)',
-                ]);
+                    $product->stockMovements()->create([
+                        'user_id' => $actorUser?->id,
+                        'type' => 'in',
+                        'quantity' => $request->add_stock,
+                        'unit_cost' => $product->cost_price,
+                        'notes' => 'Ingreso rápido de mercadería (Mobile)',
+                    ]);
+                }
             }
-            // Modificación absoluta protegida bajo lockForUpdate
-            elseif (! $willBeCombo && array_key_exists('stock', $validated) && (float) $validated['stock'] !== $oldStock) {
+            // Modificación absoluta protegida bajo lockForUpdate (solo productos sin control de lotes)
+            elseif (! $willBeCombo && ! $willTrackBatches && array_key_exists('stock', $validated) && (float) $validated['stock'] !== $oldStock) {
                 $newStock = (float) $validated['stock'];
                 $diff = $newStock - $oldStock;
                 $stockChanged = true;
@@ -260,6 +357,7 @@ class ProductController extends Controller
                     'user_id' => $actorUser?->id,
                     'type' => $diff > 0 ? 'in' : 'out',
                     'quantity' => abs($diff),
+                    'unit_cost' => $product->cost_price,
                     'notes' => "Modificación manual de ficha de producto (de $oldStock a $newStock)",
                 ]);
             }
@@ -281,6 +379,19 @@ class ProductController extends Controller
                 }
             }
 
+            // Sincronizar ingredientes de elaboración propia si vienen en el payload
+            if ($hasRecipeSchema) {
+                if ($request->has('recipe_ingredients')) {
+                    $recipeList = $request->input('recipe_ingredients') ?? [];
+                    ProductionOrderService::syncProductRecipe($product, $recipeList);
+                    $product->update([
+                        'has_production_recipe' => ! empty($recipeList),
+                    ]);
+                } elseif (array_key_exists('has_production_recipe', $validated) && empty($validated['has_production_recipe'])) {
+                    $product->recipeItems()->delete();
+                }
+            }
+
             // Sincronizar tramos de precio si vienen en el payload
             if ($request->has('price_tiers')) {
                 $this->syncPriceTiers($product, $request->price_tiers ?? []);
@@ -293,7 +404,7 @@ class ProductController extends Controller
 
         ReportCacheService::flush();
 
-        return response()->json($product->load(['category.rubro', 'brand', 'supplier', 'children', 'priceTiers']));
+        return response()->json($product->load($this->productRelations()));
     }
 
     public function destroy(Product $product)
@@ -368,9 +479,14 @@ class ProductController extends Controller
 
         $expandedIds = array_values(array_unique(array_merge($allAffectedChildIds, $parentComboIds)));
 
+        $selectCols = ['id', 'stock', 'is_combo', 'expiration_date'];
+        if (BatchStockService::hasLotTrackingSchema()) {
+            $selectCols[] = 'track_batches';
+        }
+
         $stocks = Product::with('children')
             ->whereIn('id', $expandedIds)
-            ->select('id', 'stock', 'is_combo')
+            ->select($selectCols)
             ->get()
             ->map(function (Product $p) {
                 if ($p->is_combo) {
@@ -379,12 +495,14 @@ class ProductController extends Controller
                     return [
                         'id' => $p->id,
                         'stock' => number_format($avail, 3, '.', ''),
+                        'expiration_date' => null,
                     ];
                 }
 
                 return [
                     'id' => $p->id,
                     'stock' => $p->stock,
+                    'expiration_date' => $p->expiration_date?->format('Y-m-d'),
                 ];
             });
 
@@ -410,10 +528,12 @@ class ProductController extends Controller
      */
     public function snoozeExpirationAlert(Request $request, Product $product)
     {
+        $hasLotSchema = BatchStockService::hasLotTrackingSchema();
         $validated = $request->validate([
             'action' => 'nullable|string|in:snooze_days,snooze_next_stage,snooze_stage,clear_expiration,update_expiration',
             'days' => 'nullable|integer|min:1|max:365',
             'expiration_date' => 'nullable|date',
+            'batch_id' => $hasLotSchema ? 'nullable|integer|exists:product_batches,id' : 'nullable|integer',
         ]);
 
         $action = $validated['action'] ?? 'snooze_days';
@@ -431,63 +551,116 @@ class ProductController extends Controller
             }
         }
 
-        if ($action === 'clear_expiration') {
-            $product->update([
-                'expiration_date' => null,
-                'expiry_alert_snoozed_until' => null,
-                'expiry_alert_last_stage' => null,
-            ]);
+        return DB::transaction(function () use ($validated, $product, $action, $hasLotSchema) {
+            $lockedProduct = Product::where('id', $product->id)->lockForUpdate()->firstOrFail();
 
-            return response()->json([
-                'message' => 'Fecha de vencimiento quitada del producto.',
-                'product' => $product->fresh(),
-            ]);
-        }
-
-        if ($action === 'update_expiration' && ! empty($validated['expiration_date'])) {
-            $product->update([
-                'expiration_date' => $validated['expiration_date'],
-                'expiry_alert_snoozed_until' => null,
-                'expiry_alert_last_stage' => null,
-            ]);
-
-            return response()->json([
-                'message' => 'Nueva fecha de vencimiento registrada.',
-                'product' => $product->fresh(),
-            ]);
-        }
-
-        // Calcular la etapa actual del producto para registrar expiry_alert_last_stage
-        $currentStage = 15;
-        if ($product->expiration_date) {
-            $daysUntil = (int) now()->startOfDay()->diffInDays($product->expiration_date->copy()->startOfDay(), false);
-            if ($daysUntil <= 0) {
-                $currentStage = 0;
-            } elseif ($daysUntil <= 3) {
-                $currentStage = 3;
-            } elseif ($daysUntil <= 7) {
-                $currentStage = 7;
-            } else {
-                $currentStage = 15;
+            $targetBatch = null;
+            if ($hasLotSchema && ! empty($validated['batch_id'])) {
+                $targetBatch = ProductBatch::where('id', (int) $validated['batch_id'])
+                    ->where('product_id', $lockedProduct->id)
+                    ->lockForUpdate()
+                    ->firstOrFail();
+            } elseif ($hasLotSchema && $lockedProduct->track_batches) {
+                $targetBatch = ProductBatch::where('product_id', $lockedProduct->id)
+                    ->where('status', ProductBatch::STATUS_ACTIVE)
+                    ->where('remaining_quantity', '>', 0)
+                    ->whereNotNull('expiration_date')
+                    ->orderBy('expiration_date', 'asc')
+                    ->orderBy('id', 'asc')
+                    ->lockForUpdate()
+                    ->first();
             }
-        }
 
-        $snoozeDays = (int) ($validated['days'] ?? 1);
-        if (in_array($action, ['snooze_next_stage', 'snooze_stage'], true)) {
-            // Silenciar por hasta 30 días en la etapa actual; se reactivará sola al cruzar al siguiente umbral (7d, 3d o 0d)
-            $snoozeDays = 30;
-        }
+            $batchService = app(BatchStockService::class);
 
-        $product->update([
-            'expiry_alert_snoozed_until' => now()->addDays($snoozeDays),
-            'expiry_alert_last_stage' => $currentStage,
-        ]);
+            if ($action === 'clear_expiration') {
+                if ($targetBatch) {
+                    $targetBatch->update([
+                        'expiration_date' => null,
+                        'alert_snoozed_until' => null,
+                        'alert_last_stage' => null,
+                    ]);
+                    $batchService->syncProductMaterializedFields($lockedProduct);
+                } else {
+                    $lockedProduct->update([
+                        'expiration_date' => null,
+                        'expiry_alert_snoozed_until' => null,
+                        'expiry_alert_last_stage' => null,
+                    ]);
+                }
 
-        return response()->json([
-            'message' => 'Alerta de vencimiento pospuesta correctamente.',
-            'snoozed_until' => $product->expiry_alert_snoozed_until?->toIso8601String(),
-            'last_stage' => $currentStage,
-        ]);
+                return response()->json([
+                    'message' => 'Fecha de vencimiento quitada del producto.',
+                    'product' => $lockedProduct->fresh(),
+                    'batch' => $targetBatch?->fresh(),
+                ]);
+            }
+
+            if ($action === 'update_expiration' && ! empty($validated['expiration_date'])) {
+                if ($targetBatch) {
+                    $targetBatch->update([
+                        'expiration_date' => $validated['expiration_date'],
+                        'alert_snoozed_until' => null,
+                        'alert_last_stage' => null,
+                    ]);
+                    $batchService->syncProductMaterializedFields($lockedProduct);
+                } else {
+                    $lockedProduct->update([
+                        'expiration_date' => $validated['expiration_date'],
+                        'expiry_alert_snoozed_until' => null,
+                        'expiry_alert_last_stage' => null,
+                    ]);
+                }
+
+                return response()->json([
+                    'message' => 'Nueva fecha de vencimiento registrada.',
+                    'product' => $lockedProduct->fresh(),
+                    'batch' => $targetBatch?->fresh(),
+                ]);
+            }
+
+            $refExp = $targetBatch ? $targetBatch->expiration_date : $lockedProduct->expiration_date;
+            $shelfLife = $lockedProduct->vencimiento_dias !== null ? (int) $lockedProduct->vencimiento_dias : null;
+            if ($targetBatch && $shelfLife === null && $targetBatch->manufactured_at && $refExp) {
+                $span = (int) $targetBatch->manufactured_at->copy()->startOfDay()->diffInDays($refExp->copy()->startOfDay(), false);
+                if ($span > 0) {
+                    $shelfLife = $span;
+                }
+            }
+
+            $classified = InventoryAlertService::classifyExpirationStage(
+                $refExp,
+                (int) ($lockedProduct->expiry_alert_days ?? 15),
+                $shelfLife
+            );
+            $currentStage = $classified['stage'] ?? 15;
+
+            $snoozeDays = (int) ($validated['days'] ?? 1);
+            if (in_array($action, ['snooze_next_stage', 'snooze_stage'], true)) {
+                $snoozeDays = 30;
+            }
+            $snoozedUntil = now()->addDays($snoozeDays);
+
+            if ($targetBatch) {
+                $targetBatch->update([
+                    'alert_snoozed_until' => $snoozedUntil,
+                    'alert_last_stage' => $currentStage,
+                ]);
+                $batchService->syncProductMaterializedFields($lockedProduct);
+            } else {
+                $lockedProduct->update([
+                    'expiry_alert_snoozed_until' => $snoozedUntil,
+                    'expiry_alert_last_stage' => $currentStage,
+                ]);
+            }
+
+            return response()->json([
+                'message' => 'Alerta de vencimiento pospuesta correctamente.',
+                'snoozed_until' => $snoozedUntil->toIso8601String(),
+                'last_stage' => $currentStage,
+                'batch_id' => $targetBatch?->id,
+            ]);
+        });
     }
 
     /**

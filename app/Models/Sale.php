@@ -47,6 +47,11 @@ class Sale extends Model
         return $this->hasMany(SaleItem::class);
     }
 
+    public function batchAllocations(): HasMany
+    {
+        return $this->hasMany(SaleItemBatchAllocation::class);
+    }
+
     public function electronicInvoice(): HasOne
     {
         return $this->hasOne(ElectronicInvoice::class);

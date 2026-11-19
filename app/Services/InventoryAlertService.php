@@ -136,34 +136,131 @@ class InventoryAlertService
             'generated_at' => now()->toIso8601String(),
             'alerts' => $alerts,
             'expiration_alerts' => $this->getExpirationAlerts(),
+            'deficit_alerts' => $this->getDeficitBatchAlerts(),
         ];
     }
 
     /**
-     * Motor de Alertas de Vencimiento en Cascada con soporte de Snooze inteligente.
+     * Evalúa etapa y criticidad de vencimiento, adaptando los umbrales de cascada cuando
+     * la vida útil total del producto o lote es corta (<= 5 días en gastronomía/pastelería).
      *
-     * Etapas de cascada (stages):
-     *   - stage 0  ('expired'):     days_until_expiry <= 0
-     *   - stage 3  ('critical_3d'): days_until_expiry <= 3
-     *   - stage 7  ('warning_7d'):  days_until_expiry <= 7
-     *   - stage 15 ('pre_alert'):   days_until_expiry <= COALESCE(expiry_alert_days, 15)
-     *
-     * Regla de Snooze en cascada:
-     *   Si `expiry_alert_snoozed_until > NOW()` y la etapa actual (`stage`) es mayor o igual
-     *   a `expiry_alert_last_stage`, la alerta permanece silenciada.
-     *   Si el producto entra en un umbral más urgente (`stage < expiry_alert_last_stage`),
-     *   la alerta se reactiva automáticamente para no pasar por alto un vencimiento inminente.
+     * @return array{stage: int, stage_code: string, alert_level: string, label: string, days_until: int}|null
+     */
+    public static function classifyExpirationStage(
+        ?\Carbon\Carbon $expirationDate,
+        int $configuredPreAlertDays = 15,
+        ?int $shelfLifeDays = null,
+        ?\Carbon\Carbon $referenceToday = null
+    ): ?array {
+        if (! $expirationDate) {
+            return null;
+        }
+
+        $today = ($referenceToday ?? now())->copy()->startOfDay();
+        $daysUntil = (int) $today->diffInDays($expirationDate->copy()->startOfDay(), false);
+
+        $preAlertThreshold = max(1, $configuredPreAlertDays);
+        $isShortShelfLife = $shelfLifeDays !== null && $shelfLifeDays > 0 && $shelfLifeDays <= 5;
+
+        if ($isShortShelfLife) {
+            $criticalDays = min(3, max(1, (int) floor($shelfLifeDays * 0.35)));
+            $warningDays = min(7, max($criticalDays + 1, (int) floor($shelfLifeDays * 0.65)));
+            $preAlertThreshold = min($preAlertThreshold, max($warningDays + 1, $shelfLifeDays));
+        } else {
+            $criticalDays = 3;
+            $warningDays = 7;
+        }
+
+        if ($daysUntil > $preAlertThreshold) {
+            return null;
+        }
+
+        if ($daysUntil <= 0) {
+            return ['stage' => 0, 'stage_code' => 'expired', 'alert_level' => 'critical', 'label' => 'Vencido', 'days_until' => $daysUntil];
+        }
+        if ($daysUntil <= $criticalDays) {
+            return ['stage' => 3, 'stage_code' => 'critical_3d', 'alert_level' => 'critical', 'label' => 'Crítico', 'days_until' => $daysUntil];
+        }
+        if ($daysUntil <= $warningDays) {
+            return ['stage' => 7, 'stage_code' => 'warning_7d', 'alert_level' => 'warning', 'label' => 'Próximo', 'days_until' => $daysUntil];
+        }
+
+        return ['stage' => 15, 'stage_code' => 'pre_alert', 'alert_level' => 'info', 'label' => 'Pre-alerta', 'days_until' => $daysUntil];
+    }
+
+    /**
+     * Lotes automáticos de contingencia (deficit_auto) pendientes de conciliar con producción o compra.
+     */
+    public function getDeficitBatchAlerts(): array
+    {
+        if (! BatchStockService::hasLotTrackingSchema()) {
+            return [];
+        }
+
+        return DB::table('product_batches')
+            ->join('products', 'products.id', '=', 'product_batches.product_id')
+            ->leftJoin('categories', 'categories.id', '=', 'products.category_id')
+            ->where('product_batches.status', 'deficit')
+            ->where('product_batches.remaining_quantity', '<', 0)
+            ->whereNull('product_batches.deleted_at')
+            ->where('products.active', true)
+            ->whereNull('products.deleted_at')
+            ->orderBy('product_batches.remaining_quantity', 'asc')
+            ->limit(100)
+            ->select([
+                'product_batches.id as batch_id',
+                'product_batches.batch_code',
+                'product_batches.remaining_quantity',
+                'product_batches.updated_at',
+                'products.id as product_id',
+                'products.name as product_name',
+                'products.internal_code',
+                'products.is_sold_by_weight',
+                DB::raw("COALESCE(categories.name, 'Sin Categoría') as category"),
+            ])
+            ->get()
+            ->map(fn ($row) => [
+                'batch_id' => (int) $row->batch_id,
+                'batch_code' => $row->batch_code,
+                'product_id' => (int) $row->product_id,
+                'product_name' => $row->product_name,
+                'internal_code' => $row->internal_code,
+                'is_sold_by_weight' => (bool) $row->is_sold_by_weight,
+                'category' => $row->category,
+                'deficit_quantity' => abs((float) $row->remaining_quantity),
+                'current_stock' => (float) $row->remaining_quantity,
+                'alert_type' => 'deficit_batch',
+                'alert_level' => 'critical',
+                'message' => 'Venta sin lote respaldatorio: pendiente de conciliar con producción o compra.',
+                'updated_at' => $row->updated_at,
+            ])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Motor de Alertas de Vencimiento en Cascada con soporte de Snooze inteligente
+     * y seguimiento granular por lote para productos con `track_batches = true`.
      */
     public function getExpirationAlerts(): array
     {
         $now = now();
         $today = $now->copy()->startOfDay();
+        $results = [];
+        $hasLotSchema = BatchStockService::hasLotTrackingSchema();
 
-        $candidates = DB::table('products')
+        // 1. Productos clásicos sin control granular por lotes (100% compatibilidad v1.8.5/v2.1.0)
+        $legacyQuery = DB::table('products')
             ->leftJoin('categories', 'categories.id', '=', 'products.category_id')
             ->where('products.active', true)
             ->where('products.is_combo', false)
-            ->where('products.is_service', false)
+            ->where('products.is_service', false);
+
+        if ($hasLotSchema) {
+            $legacyQuery->where('products.track_batches', false);
+        }
+
+        $legacyCandidates = $legacyQuery
             ->where('products.stock', '>', 0)
             ->whereNull('products.deleted_at')
             ->whereNotNull('products.expiration_date')
@@ -175,6 +272,7 @@ class InventoryAlertService
                 'products.is_sold_by_weight',
                 'products.stock as current_stock',
                 'products.expiration_date',
+                'products.vencimiento_dias',
                 'products.expiry_alert_days',
                 'products.expiry_alert_snoozed_until',
                 'products.expiry_alert_last_stage',
@@ -184,48 +282,27 @@ class InventoryAlertService
             ->limit(150)
             ->get();
 
-        $results = [];
-
-        foreach ($candidates as $row) {
+        foreach ($legacyCandidates as $row) {
             $expDate = \Carbon\Carbon::parse($row->expiration_date)->startOfDay();
-            $daysUntil = (int) $today->diffInDays($expDate, false);
-            $preAlertThreshold = max(1, (int) ($row->expiry_alert_days ?? 15));
+            $classified = self::classifyExpirationStage(
+                $expDate,
+                (int) ($row->expiry_alert_days ?? 15),
+                $row->vencimiento_dias !== null ? (int) $row->vencimiento_dias : null,
+                $today
+            );
 
-            if ($daysUntil > $preAlertThreshold) {
+            if ($classified === null) {
                 continue;
             }
 
-            if ($daysUntil <= 0) {
-                $stage = 0;
-                $stageCode = 'expired';
-                $alertLevel = 'critical';
-            } elseif ($daysUntil <= 3) {
-                $stage = 3;
-                $stageCode = 'critical_3d';
-                $alertLevel = 'critical';
-            } elseif ($daysUntil <= 7) {
-                $stage = 7;
-                $stageCode = 'warning_7d';
-                $alertLevel = 'warning';
-            } else {
-                $stage = 15;
-                $stageCode = 'pre_alert';
-                $alertLevel = 'info';
-            }
-
-            // Verificar Snooze en cascada
-            if (! empty($row->expiry_alert_snoozed_until)) {
-                $snoozedUntil = \Carbon\Carbon::parse($row->expiry_alert_snoozed_until);
-                $lastStage = $row->expiry_alert_last_stage !== null ? (int) $row->expiry_alert_last_stage : $stage;
-
-                // Sigue silenciada sólo si la fecha de snooze sigue vigente Y no avanzó a una etapa más urgente
-                if ($snoozedUntil->isFuture() && $stage >= $lastStage) {
-                    continue;
-                }
+            if ($this->isAlertSnoozed($row->expiry_alert_snoozed_until, $row->expiry_alert_last_stage, $classified['stage'])) {
+                continue;
             }
 
             $results[] = [
                 'product_id' => (int) $row->product_id,
+                'batch_id' => null,
+                'batch_code' => null,
                 'product_name' => $row->product_name,
                 'name' => $row->product_name,
                 'internal_code' => $row->internal_code,
@@ -234,15 +311,131 @@ class InventoryAlertService
                 'category' => $row->category,
                 'current_stock' => (float) $row->current_stock,
                 'expiration_date' => $expDate->format('Y-m-d'),
-                'days_until_expiry' => $daysUntil,
-                'days_until_expiration' => $daysUntil,
-                'stage' => $stage,
-                'stage_code' => $stageCode,
-                'alert_level' => $alertLevel,
+                'days_until_expiry' => $classified['days_until'],
+                'days_until_expiration' => $classified['days_until'],
+                'stage' => $classified['stage'],
+                'stage_code' => $classified['stage_code'],
+                'expiry_stage_label' => $classified['label'],
+                'alert_level' => $classified['alert_level'],
                 'alert_type' => 'expiration',
             ];
         }
 
-        return $results;
+        // 2. Productos con control granular por lotes (1 alerta por cada lote activo próximo a vencer)
+        $batchCandidates = ! $hasLotSchema ? collect() : DB::table('product_batches')
+            ->join('products', 'products.id', '=', 'product_batches.product_id')
+            ->leftJoin('categories', 'categories.id', '=', 'products.category_id')
+            ->where('products.active', true)
+            ->where('products.is_combo', false)
+            ->where('products.is_service', false)
+            ->where('products.track_batches', true)
+            ->whereNull('products.deleted_at')
+            ->where('product_batches.status', 'active')
+            ->where('product_batches.remaining_quantity', '>', 0)
+            ->whereNull('product_batches.deleted_at')
+            ->whereNotNull('product_batches.expiration_date')
+            ->select([
+                'product_batches.id as batch_id',
+                'product_batches.batch_code',
+                'product_batches.source_type',
+                'product_batches.manufactured_at',
+                'product_batches.expiration_date',
+                'product_batches.remaining_quantity',
+                'product_batches.reserved_quantity',
+                'product_batches.unit_cost',
+                'product_batches.alert_snoozed_until',
+                'product_batches.alert_last_stage',
+                'products.id as product_id',
+                'products.name as product_name',
+                'products.internal_code',
+                'products.barcode',
+                'products.is_sold_by_weight',
+                'products.stock as total_product_stock',
+                'products.vencimiento_dias',
+                'products.expiry_alert_days',
+                DB::raw("COALESCE(categories.name, 'Sin Categoría') as category"),
+            ])
+            ->orderBy('product_batches.expiration_date', 'asc')
+            ->orderBy('product_batches.id', 'asc')
+            ->limit(200)
+            ->get();
+
+        foreach ($batchCandidates as $row) {
+            $expDate = \Carbon\Carbon::parse($row->expiration_date)->startOfDay();
+            $shelfLife = $row->vencimiento_dias !== null ? (int) $row->vencimiento_dias : null;
+            if ($shelfLife === null && ! empty($row->manufactured_at)) {
+                $mfgDate = \Carbon\Carbon::parse($row->manufactured_at)->startOfDay();
+                $span = (int) $mfgDate->diffInDays($expDate, false);
+                if ($span > 0) {
+                    $shelfLife = $span;
+                }
+            }
+
+            $classified = self::classifyExpirationStage(
+                $expDate,
+                (int) ($row->expiry_alert_days ?? 15),
+                $shelfLife,
+                $today
+            );
+
+            if ($classified === null) {
+                continue;
+            }
+
+            if ($this->isAlertSnoozed($row->alert_snoozed_until, $row->alert_last_stage, $classified['stage'])) {
+                continue;
+            }
+
+            $remaining = (float) $row->remaining_quantity;
+            $reserved = (float) ($row->reserved_quantity ?? 0);
+
+            $results[] = [
+                'product_id' => (int) $row->product_id,
+                'batch_id' => (int) $row->batch_id,
+                'batch_code' => $row->batch_code,
+                'source_type' => $row->source_type,
+                'product_name' => $row->product_name,
+                'name' => $row->product_name,
+                'internal_code' => $row->internal_code,
+                'barcode' => $row->barcode,
+                'is_sold_by_weight' => (bool) $row->is_sold_by_weight,
+                'category' => $row->category,
+                'current_stock' => $remaining,
+                'total_product_stock' => (float) $row->total_product_stock,
+                'available_to_sell' => max(0.0, round($remaining - $reserved, 3)),
+                'unit_cost' => $row->unit_cost !== null ? (float) $row->unit_cost : null,
+                'expiration_date' => $expDate->format('Y-m-d'),
+                'days_until_expiry' => $classified['days_until'],
+                'days_until_expiration' => $classified['days_until'],
+                'stage' => $classified['stage'],
+                'stage_code' => $classified['stage_code'],
+                'expiry_stage_label' => $classified['label'],
+                'alert_level' => $classified['alert_level'],
+                'alert_type' => 'expiration',
+            ];
+        }
+
+        usort($results, function (array $a, array $b): int {
+            $dateCmp = strcmp($a['expiration_date'], $b['expiration_date']);
+            if ($dateCmp !== 0) {
+                return $dateCmp;
+            }
+
+            return ($a['product_id'] <=> $b['product_id']) ?: (($a['batch_id'] ?? 0) <=> ($b['batch_id'] ?? 0));
+        });
+
+        return array_slice($results, 0, 200);
+    }
+
+    protected function isAlertSnoozed(mixed $snoozedUntilRaw, mixed $lastStageRaw, int $currentStage): bool
+    {
+        if (empty($snoozedUntilRaw)) {
+            return false;
+        }
+
+        $snoozedUntil = \Carbon\Carbon::parse($snoozedUntilRaw);
+        $lastStage = $lastStageRaw !== null ? (int) $lastStageRaw : $currentStage;
+
+        return $snoozedUntil->isFuture() && $currentStage >= $lastStage;
     }
 }

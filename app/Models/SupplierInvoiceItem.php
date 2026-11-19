@@ -12,6 +12,9 @@ class SupplierInvoiceItem extends Model
     protected $fillable = [
         'supplier_invoice_id',
         'product_id',
+        'batch_id',
+        'batch_code',
+        'expiration_date',
         'quantity',
         'previous_cost',
         'unit_cost',
@@ -25,7 +28,21 @@ class SupplierInvoiceItem extends Model
         'unit_cost' => 'float',
         'new_selling_price' => 'float',
         'subtotal' => 'float',
+        'expiration_date' => 'date:Y-m-d',
     ];
+
+    protected static function booted(): void
+    {
+        static::saving(function (SupplierInvoiceItem $item) {
+            if (! \App\Services\BatchStockService::hasLotTrackingSchema()) {
+                unset(
+                    $item->attributes['batch_id'],
+                    $item->attributes['batch_code'],
+                    $item->attributes['expiration_date']
+                );
+            }
+        });
+    }
 
     public function invoice()
     {
@@ -35,5 +52,10 @@ class SupplierInvoiceItem extends Model
     public function product()
     {
         return $this->belongsTo(Product::class)->withTrashed();
+    }
+
+    public function batch()
+    {
+        return $this->belongsTo(ProductBatch::class, 'batch_id');
     }
 }

@@ -141,37 +141,13 @@ class DeliveryNoteController extends Controller
                         $product = $lockedProducts[$item->product_id] ?? null;
                         if ($product) {
                             $user = $request->user() ?? $request->attributes->get('authenticated_user');
-                            $userId = $user?->id;
-
-                            if ($product->is_combo) {
-                                foreach ($product->children as $child) {
-                                    $qtyDeducted = $actualDeliveredNow * $child->pivot->quantity;
-                                    $canonicalChild = $lockedProducts[$child->id] ?? $child;
-                                    $canonicalChild->stock -= $qtyDeducted;
-                                    $canonicalChild->save();
-
-                                    StockMovement::create([
-                                        'product_id' => $canonicalChild->id,
-                                        'user_id' => $userId,
-                                        'sale_id' => $note->sale_id,
-                                        'type' => 'sale',
-                                        'quantity' => -$qtyDeducted,
-                                        'notes' => "Despacho Logístico (Hijo del Combo: {$product->name}) Remito #{$note->id}",
-                                    ]);
-                                }
-                            } else {
-                                $product->stock -= $actualDeliveredNow;
-                                $product->save();
-
-                                StockMovement::create([
-                                    'product_id' => $product->id,
-                                    'user_id' => $userId,
-                                    'sale_id' => $note->sale_id,
-                                    'type' => 'sale',
-                                    'quantity' => -$actualDeliveredNow,
-                                    'notes' => "Despacho Logístico Remito #{$note->id}",
-                                ]);
-                            }
+                            $this->stockService->deductForDeferredDelivery(
+                                $note,
+                                $product,
+                                (float) $actualDeliveredNow,
+                                $lockedProducts,
+                                $user?->id
+                            );
                         }
                     }
                 }

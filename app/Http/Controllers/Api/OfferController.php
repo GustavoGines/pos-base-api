@@ -86,6 +86,9 @@ class OfferController extends Controller
         $now = Carbon::now();
         $startDate = ! empty($validated['start_date']) ? Carbon::parse($validated['start_date']) : $now->copy();
         $endDate = ! empty($validated['end_date']) ? Carbon::parse($validated['end_date']) : null;
+        if ($endDate && $endDate->format('H:i:s') === '00:00:00') {
+            $endDate = $endDate->copy()->endOfDay();
+        }
 
         // Auto-calcular rango tomando como base $startDate si no se proveyó end_date explícito
         if (! $endDate) {
@@ -104,6 +107,10 @@ class OfferController extends Controller
                     $endDate = $startDate->copy()->addDay()->endOfDay();
                     break;
             }
+        }
+
+        if ($dateError = $this->validateOfferDates($startDate, $endDate, $now, true)) {
+            return $dateError;
         }
 
         if (($validated['type'] ?? '') === 'fixed_price' && ! empty($validated['discount_amount'])) {
@@ -195,6 +202,9 @@ class OfferController extends Controller
         $originalPeriodType = $offer->period_type;
         $startDate = ! empty($validated['start_date']) ? Carbon::parse($validated['start_date']) : null;
         $endDate = ! empty($validated['end_date']) ? Carbon::parse($validated['end_date']) : null;
+        if ($endDate && $endDate->format('H:i:s') === '00:00:00') {
+            $endDate = $endDate->copy()->endOfDay();
+        }
 
         // Si no se proporcionaron fechas explícitas y el period_type no cambió, conservar las fechas originales
         if ($startDate === null && $endDate === null && $validated['period_type'] === $originalPeriodType) {
@@ -203,7 +213,7 @@ class OfferController extends Controller
         } else {
             // Reiniciar fechas solo si se cambió period_type o se proporcionaron fechas explícitas
             if ($startDate === null) {
-                $startDate = $now->copy();
+                $startDate = $offer->start_date ?? $now->copy();
             }
             if ($endDate === null) {
                 switch ($validated['period_type']) {
@@ -222,6 +232,10 @@ class OfferController extends Controller
                         break;
                 }
             }
+        }
+
+        if ($dateError = $this->validateOfferDates($startDate, $endDate, $now, false)) {
+            return $dateError;
         }
 
         if (($validated['type'] ?? '') === 'fixed_price' && ! empty($validated['discount_amount'])) {
@@ -305,6 +319,9 @@ class OfferController extends Controller
         $now = Carbon::now();
         $startDate = ! empty($validated['start_date']) ? Carbon::parse($validated['start_date']) : $now->copy();
         $endDate = ! empty($validated['end_date']) ? Carbon::parse($validated['end_date']) : null;
+        if ($endDate && $endDate->format('H:i:s') === '00:00:00') {
+            $endDate = $endDate->copy()->endOfDay();
+        }
 
         if (! $endDate) {
             switch ($validated['period_type']) {
@@ -322,6 +339,10 @@ class OfferController extends Controller
                     $endDate = $startDate->copy()->addDay()->endOfDay();
                     break;
             }
+        }
+
+        if ($dateError = $this->validateOfferDates($startDate, $endDate, $now, true)) {
+            return $dateError;
         }
 
         // Candado Anti-$0 en Relanzar: verificar que ningún producto actual quede en <= $0 con el monto fijo
@@ -446,6 +467,38 @@ class OfferController extends Controller
             'message' => $offer->is_active ? 'Oferta reanudada y activada' : 'Oferta pausada correctamente',
             'data' => $offer->load('products:id,name,barcode,internal_code,selling_price,cost_price'),
         ]);
+    }
+
+    /**
+     * Valida que el rango de vigencia sea consistente y que no nazca vencido al crear o relanzar.
+     */
+    private function validateOfferDates(
+        ?Carbon $startDate,
+        ?Carbon $endDate,
+        Carbon $now,
+        bool $rejectPastEndDate = false
+    ): ?JsonResponse {
+        if ($startDate && $endDate && $endDate->lt($startDate)) {
+            $msg = 'La fecha de fin de vigencia no puede ser anterior a la fecha de inicio.';
+
+            return response()->json([
+                'success' => false,
+                'message' => $msg,
+                'errors' => ['end_date' => [$msg]],
+            ], 422);
+        }
+
+        if ($rejectPastEndDate && $endDate && $endDate->lt($now)) {
+            $msg = 'La fecha de fin de la oferta ya pasó. Elegí hoy o una fecha futura para que impacte en caja.';
+
+            return response()->json([
+                'success' => false,
+                'message' => $msg,
+                'errors' => ['end_date' => [$msg]],
+            ], 422);
+        }
+
+        return null;
     }
 
     /**

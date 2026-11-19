@@ -27,6 +27,14 @@ class AdjustStockRequest extends FormRequest
             'notes' => 'nullable|string|max:500',
             'min_stock' => 'nullable|numeric|min:0',
             'user_id' => 'nullable|exists:users,id',
+            'batch_id' => \App\Services\BatchStockService::hasLotTrackingSchema()
+                ? 'nullable|integer|exists:product_batches,id'
+                : 'nullable|integer',
+            'batch_code' => 'nullable|string|max:64',
+            'expiration_date' => 'nullable|date',
+            'manufactured_at' => 'nullable|date',
+            'unit_cost' => 'nullable|numeric|min:0',
+            'reason_code' => 'nullable|string|in:adjustment,waste,opening',
         ];
     }
 }

@@ -742,6 +742,8 @@ class SaleService
     protected function materializeOnTheFlyCatalogProducts(array $items, Collection $lockedProducts): array
     {
         $barcodeService = app(BarcodeService::class);
+        /** @var array<string, Product> $materializedByBarcode */
+        $materializedByBarcode = [];
 
         foreach ($items as $idx => $itemData) {
             $saveToCatalog = filter_var($itemData['save_to_catalog'] ?? false, FILTER_VALIDATE_BOOLEAN);
@@ -759,10 +761,36 @@ class SaleService
             $isCombo = filter_var($itemData['is_combo'] ?? false, FILTER_VALIDATE_BOOLEAN);
             $isService = filter_var($itemData['is_service'] ?? false, FILTER_VALIDATE_BOOLEAN);
 
-            $internalCode = $this->generateNonLockingInternalCode();
-            $barcode = ! empty($itemData['barcode'])
+            $requestedBarcode = (! $isService && ! empty($itemData['barcode']))
                 ? trim((string) $itemData['barcode'])
-                : ($isSoldByWeight ? null : $barcodeService->generateInternalEan13($internalCode));
+                : '';
+
+            if ($requestedBarcode !== '') {
+                $barcodeKey = mb_strtoupper($requestedBarcode, 'UTF-8');
+                if (isset($materializedByBarcode[$barcodeKey])) {
+                    $reusedProduct = $materializedByBarcode[$barcodeKey];
+                    $items[$idx]['product_id'] = $reusedProduct->id;
+                    $items[$idx]['is_temporary'] = false;
+                    $items[$idx]['_created_on_the_fly'] = true;
+
+                    continue;
+                }
+            }
+
+            $internalCode = $this->generateNonLockingInternalCode();
+            $barcode = null;
+            if ($requestedBarcode !== '') {
+                $barcodeInUse = Product::where('barcode', $requestedBarcode)
+                    ->whereNull('deleted_at')
+                    ->exists();
+                if (! $barcodeInUse) {
+                    $barcode = $requestedBarcode;
+                }
+            }
+
+            if ($barcode === null && ! $isSoldByWeight && ! $isService) {
+                $barcode = $barcodeService->generateInternalEan13($internalCode);
+            }
 
             $newProduct = Product::create([
                 'name' => $name,
@@ -778,6 +806,10 @@ class SaleService
                 'is_combo' => $isCombo,
                 'is_service' => $isService,
             ]);
+
+            if ($requestedBarcode !== '' && $barcode === $requestedBarcode) {
+                $materializedByBarcode[mb_strtoupper($requestedBarcode, 'UTF-8')] = $newProduct;
+            }
 
             if ($isCombo && ! empty($itemData['combo_ingredients']) && is_array($itemData['combo_ingredients'])) {
                 $syncData = [];
@@ -924,7 +956,7 @@ class SaleService
             if (isset($itemData['custom_cost_price']) && is_numeric($itemData['custom_cost_price']) && (float) $itemData['custom_cost_price'] >= 0) {
                 $costPrice = round((float) $itemData['custom_cost_price'], 2);
             } else {
-                $costPrice = $this->stockService->calculateCostPrice($product);
+                $costPrice = $this->stockService->calculateCostPrice($product, $sale);
             }
 
             $ivaRate = isset($itemData['iva_rate']) && is_numeric($itemData['iva_rate'])

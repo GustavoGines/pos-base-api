@@ -205,6 +205,91 @@ class Fase1CommercialEnhancementsTest extends TestCase
         ]);
     }
 
+    public function test_quick_product_with_save_to_catalog_preserves_scanned_barcode_and_is_searchable_in_pos(): void
+    {
+        $scannedEan = '7798765432109';
+
+        $response = $this->withHeaders($this->authHeaders())
+            ->postJson('/api/pos/sales', [
+                'total' => 3600,
+                'total_surcharge' => 0,
+                'cash_shift_id' => $this->shift->id,
+                'items' => [
+                    [
+                        'product_id' => null,
+                        'is_temporary' => false,
+                        'save_to_catalog' => true,
+                        'barcode' => $scannedEan,
+                        'name' => 'Alfajor Triple Artesanal',
+                        'cost_price' => 1100,
+                        'iva_rate' => 21,
+                        'quantity' => 2,
+                        'unit_price' => 1800,
+                        'subtotal' => 3600,
+                    ],
+                ],
+                'payments' => [
+                    [
+                        'payment_method_id' => $this->cashMethod->id,
+                        'base_amount' => 3600,
+                        'surcharge_amount' => 0,
+                        'total_amount' => 3600,
+                    ],
+                ],
+            ]);
+
+        $response->assertCreated();
+
+        $createdProduct = Product::where('name', 'Alfajor Triple Artesanal')->first();
+        $this->assertNotNull($createdProduct);
+        $this->assertSame($scannedEan, $createdProduct->barcode);
+        $this->assertTrue($createdProduct->needs_catalog_review);
+
+        // Debe aparecer inmediatamente en el buscador del POS con el código escaneado
+        $searchResp = $this->withHeaders($this->authHeaders())
+            ->getJson("/api/pos/products/search?query={$scannedEan}");
+        $searchResp->assertOk();
+        $this->assertCount(1, $searchResp->json());
+        $this->assertSame($createdProduct->id, $searchResp->json('0.id'));
+
+        // Si otra venta posterior intenta crear un producto rápido con ese mismo barcode ya ocupado,
+        // no debe abortar el cobro ni duplicar el EAN activo: hace fallback a EAN-13 interno.
+        $secondResp = $this->withHeaders($this->authHeaders())
+            ->postJson('/api/pos/sales', [
+                'total' => 2000,
+                'total_surcharge' => 0,
+                'cash_shift_id' => $this->shift->id,
+                'items' => [
+                    [
+                        'product_id' => null,
+                        'is_temporary' => false,
+                        'save_to_catalog' => true,
+                        'barcode' => $scannedEan,
+                        'name' => 'Otro Producto con EAN Colisionado',
+                        'cost_price' => 1000,
+                        'iva_rate' => 21,
+                        'quantity' => 1,
+                        'unit_price' => 2000,
+                        'subtotal' => 2000,
+                    ],
+                ],
+                'payments' => [
+                    [
+                        'payment_method_id' => $this->cashMethod->id,
+                        'base_amount' => 2000,
+                        'surcharge_amount' => 0,
+                        'total_amount' => 2000,
+                    ],
+                ],
+            ]);
+
+        $secondResp->assertCreated();
+        $collisionProduct = Product::where('name', 'Otro Producto con EAN Colisionado')->first();
+        $this->assertNotNull($collisionProduct);
+        $this->assertNotSame($scannedEan, $collisionProduct->barcode);
+        $this->assertStringStartsWith('2000000', (string) $collisionProduct->barcode);
+    }
+
     public function test_custom_description_and_details_override_ticket_pdf_while_keeping_product_traceability(): void
     {
         $product = Product::create([

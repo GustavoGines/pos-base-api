@@ -12,6 +12,7 @@ use App\Models\Sale;
 use App\Models\User;
 use App\Services\Afip\AfipPadronService;
 use App\Services\Afip\AfipWsfeService;
+use App\Services\ReportCacheService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -153,9 +154,19 @@ class ElectronicInvoiceController extends Controller
                                 ]);
                             }
                         }
+                    } elseif (
+                        array_key_exists('iibb_perception_rate', $validated)
+                        && $validated['iibb_perception_rate'] !== null
+                        && (float) $validated['iibb_perception_rate'] <= 0.0
+                        && round((float) ($lockedSale->iibb_perception_amount ?? 0.0), 2) <= 0.0
+                    ) {
+                        $saleUpdates['iibb_perception_amount'] = 0.0;
+                        $saleUpdates['iibb_perception_rate'] = 0.0;
                     }
 
                     $lockedSale->update($saleUpdates);
+
+                    ReportCacheService::flush();
 
                     return response()->json([
                         'success' => true,

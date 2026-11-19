@@ -233,7 +233,8 @@ class AfipWsfeService
         } elseif ($docType === AfipHelper::DOC_CONSUMIDOR_FINAL) {
             // Verificar tope de Consumidor Final anónimo
             $anonymousLimit = (float) (BusinessSetting::where('key', 'afip_cf_max_limit')->value('value') ?? 340000.00);
-            if ((float) $sale->total >= $anonymousLimit && empty($docNumber)) {
+            $grossSaleTotal = round((float) $sale->total + (float) $sale->total_surcharge + (float) $sale->shipping_cost, 2);
+            if ($grossSaleTotal >= $anonymousLimit && empty($docNumber)) {
                 throw new InvalidArgumentException(
                     'El importe total supera el límite de consumidor final anónimo ($'.number_format($anonymousLimit, 2).'). Debe identificar al cliente con DNI o CUIT.'
                 );
@@ -252,28 +253,58 @@ class AfipWsfeService
         }
 
         $numericDocNro = (int) $docNumber;
+        $isCreditNote = ! empty($options['cbtes_asoc']);
 
         // Percepción IIBB
+        $hasExplicitAmountOption = array_key_exists('iibb_perception_amount', $options) && $options['iibb_perception_amount'] !== null;
+        $hasExplicitRateOption = array_key_exists('iibb_perception_rate', $options) && $options['iibb_perception_rate'] !== null;
         $hasExplicitZeroRateInSale = $sale->iibb_perception_rate !== null
             && (float) $sale->iibb_perception_rate <= 0.0
             && round((float) ($sale->iibb_perception_amount ?? 0.0), 2) <= 0.0;
-        $hasExplicitPerceptionOption = (array_key_exists('iibb_perception_amount', $options) && $options['iibb_perception_amount'] !== null)
-            || (array_key_exists('iibb_perception_rate', $options) && $options['iibb_perception_rate'] !== null)
+        $hasExplicitPerceptionOption = $hasExplicitAmountOption
+            || $hasExplicitRateOption
             || $hasExplicitZeroRateInSale;
+
+        $existingSalePerception = round((float) ($sale->iibb_perception_amount ?? 0.0), 2);
         $perceptionAmount = round((float) ($options['iibb_perception_amount'] ?? $sale->iibb_perception_amount ?? 0.0), 2);
         $perceptionRate = (float) ($options['iibb_perception_rate'] ?? $sale->iibb_perception_rate ?? 0.0);
 
-        // Auto-cálculo de tasa si el cliente aplica y negocio es agente (solo cuando no hubo override explícito en la venta)
-        if (! $hasExplicitPerceptionOption && $perceptionAmount <= 0.0 && ! empty($customer?->applies_iibb_perception)) {
-            $isAgent = BusinessSetting::where('key', 'is_iibb_perception_agent')->value('value');
-            if ($isAgent === '1' || $isAgent === 'true' || $isAgent === true || $isAgent === 1) {
+        $isAgentRaw = BusinessSetting::where('key', 'is_iibb_perception_agent')->value('value');
+        $isIibbAgent = $isAgentRaw === '1' || $isAgentRaw === 'true' || $isAgentRaw === true || $isAgentRaw === 1;
+
+        $receiverCondId = AfipHelper::getCondicionIvaReceptorId((string) $receiverTaxCondition, $voucherLetter);
+        $isFiscalCuitSubjectToIibb = $voucherLetter === 'A'
+            || ($voucherLetter === 'C' && $docType === AfipHelper::DOC_CUIT && in_array($receiverCondId, [1, 6], true));
+        $hasExplicitlyDisabledCustomRate = $customer !== null
+            && ! $customer->applies_iibb_perception
+            && (float) ($customer->iibb_perception_rate ?? 0.0) > 0.0;
+
+        $shouldAutoCalculateRate = false;
+        // Auto-cálculo de tasa cuando el comercio es agente IIBB y no hubo override explícito (ni es Nota de Crédito)
+        if (! $hasExplicitPerceptionOption && ! $isCreditNote && $perceptionAmount <= 0.0 && $isIibbAgent) {
+            $defaultIibbRate = (float) (BusinessSetting::where('key', 'default_iibb_perception_rate')->value('value') ?? 0.0);
+
+            if (! empty($customer?->applies_iibb_perception)) {
                 if ($perceptionRate <= 0.0) {
-                    $perceptionRate = (float) ($customer->iibb_perception_rate
-                        ?? BusinessSetting::where('key', 'default_iibb_perception_rate')->value('value')
-                        ?? 0.0);
+                    $custRate = (float) ($customer->iibb_perception_rate ?? 0.0);
+                    $perceptionRate = $custRate > 0.0 ? $custRate : $defaultIibbRate;
                 }
+                $shouldAutoCalculateRate = $perceptionRate > 0.0;
+            } elseif ($isFiscalCuitSubjectToIibb && ! $hasExplicitlyDisabledCustomRate && $defaultIibbRate > 0.0) {
+                if ($perceptionRate <= 0.0) {
+                    $perceptionRate = $defaultIibbRate;
+                }
+                $shouldAutoCalculateRate = $perceptionRate > 0.0;
             }
         }
+
+        $shouldComputeAmountFromRate = $perceptionAmount <= 0.0
+            && $perceptionRate > 0.0
+            && (
+                $shouldAutoCalculateRate
+                || ($hasExplicitRateOption && ! $hasExplicitAmountOption)
+                || ($isIibbAgent && (! empty($customer?->applies_iibb_perception) || ($isFiscalCuitSubjectToIibb && ! $hasExplicitlyDisabledCustomRate)))
+            );
 
         // Cálculos e invariante matemático
         $extraAmount = round((float) $sale->total_surcharge + (float) $sale->shipping_cost, 2);
@@ -287,17 +318,14 @@ class AfipWsfeService
             // 2. ImpNeto es igual al total base (restando percepción si el total de la venta ya la contenía)
             // 3. El nodo <Iva> DEBE SER ESTRICTAMENTE OMITIDO
             $baseSaleAmount = $totalAmount;
-            if ($perceptionAmount > 0.0 && $baseSaleAmount > $perceptionAmount && round((float) ($sale->iibb_perception_amount ?? 0), 2) > 0) {
-                $netAmount = round($baseSaleAmount - $perceptionAmount, 2);
+            if ($existingSalePerception > 0.0 && $baseSaleAmount > $existingSalePerception) {
+                $netAmount = round($baseSaleAmount - $existingSalePerception, 2);
             } else {
                 $netAmount = $baseSaleAmount;
             }
 
-            if ($perceptionAmount <= 0.0 && $perceptionRate > 0.0 && ! empty($customer?->applies_iibb_perception)) {
-                $isAgent = BusinessSetting::where('key', 'is_iibb_perception_agent')->value('value');
-                if ($isAgent === '1' || $isAgent === 'true' || $isAgent === true || $isAgent === 1) {
-                    $perceptionAmount = round($netAmount * ($perceptionRate / 100), 2);
-                }
+            if ($shouldComputeAmountFromRate) {
+                $perceptionAmount = round($netAmount * ($perceptionRate / 100), 2);
             }
 
             if ($perceptionAmount > 0.0 && $perceptionRate <= 0.0 && $netAmount > 0.0) {
@@ -338,8 +366,8 @@ class AfipWsfeService
             if (empty($groupedByAliquot)) {
                 // Fallback por si la venta no tiene items cargados
                 $fallbackSubtotal = $totalAmount;
-                if ($perceptionAmount > 0.0 && $totalAmount > $perceptionAmount && round((float) ($sale->iibb_perception_amount ?? 0), 2) > 0) {
-                    $fallbackSubtotal = round($totalAmount - $perceptionAmount, 2);
+                if ($existingSalePerception > 0.0 && $totalAmount > $existingSalePerception) {
+                    $fallbackSubtotal = round($totalAmount - $existingSalePerception, 2);
                 }
                 $groupedByAliquot[AfipHelper::ALIQUOT_21_PERCENT] = [
                     'rate' => 21.00,
@@ -365,21 +393,10 @@ class AfipWsfeService
             $netAmount = round($totalNet, 2);
             $ivaAmount = round($totalIva, 2);
 
-            if ($perceptionAmount <= 0.0 && $perceptionRate > 0.0 && ! empty($customer?->applies_iibb_perception)) {
-                $isAgent = BusinessSetting::where('key', 'is_iibb_perception_agent')->value('value');
-                if ($isAgent === '1' || $isAgent === 'true' || $isAgent === true || $isAgent === 1) {
-                    $perceptionAmount = round($netAmount * ($perceptionRate / 100), 2);
-                }
-            }
-
-            if ($perceptionAmount > 0.0 && $perceptionRate <= 0.0 && $netAmount > 0.0) {
-                $perceptionRate = round(($perceptionAmount / $netAmount) * 100, 2);
-            }
-
             // Base esperada de los items para chequear redondeo
             $baseSale = $totalAmount;
-            if ($perceptionAmount > 0.0 && round((float) ($sale->iibb_perception_amount ?? 0), 2) > 0) {
-                $baseSale = round($totalAmount - $perceptionAmount, 2);
+            if ($existingSalePerception > 0.0 && $totalAmount > $existingSalePerception) {
+                $baseSale = round($totalAmount - $existingSalePerception, 2);
             }
             $diff = round($baseSale - ($netAmount + $ivaAmount), 2);
             if ($diff !== 0.00 && abs($diff) < 1.00) {
@@ -393,6 +410,14 @@ class AfipWsfeService
                     $netAmount = round(array_sum(array_column($aliquotResults, 'BaseImp')), 2);
                     $ivaAmount = round(array_sum(array_column($aliquotResults, 'Importe')), 2);
                 }
+            }
+
+            if ($shouldComputeAmountFromRate) {
+                $perceptionAmount = round($netAmount * ($perceptionRate / 100), 2);
+            }
+
+            if ($perceptionAmount > 0.0 && $perceptionRate <= 0.0 && $netAmount > 0.0) {
+                $perceptionRate = round(($perceptionAmount / $netAmount) * 100, 2);
             }
 
             $ivaBreakdown = array_values($aliquotResults);
@@ -514,7 +539,6 @@ class AfipWsfeService
         $cacheStore = Cache::store($cacheDriver);
         $lock = $cacheStore->lock("afip_wsfe_lock:{$issuerCuit}:{$ptoVta}:{$voucherType}", 25);
 
-        $isCreditNote = ! empty($options['cbtes_asoc']);
         $pendingCacheKey = ! empty($sale->id)
             ? ('afip_pending_'.($isCreditNote ? 'nc' : 'sale').":{$sale->id}:{$ptoVta}:{$voucherType}")
             : null;
@@ -691,6 +715,7 @@ class AfipWsfeService
                                 ivaBreakdown: $ivaBreakdown,
                                 issuerCuit: $issuerCuit,
                                 resultado: (string) $recovered['resultado'],
+                                concepto: $concepto,
                             );
                         }
                     }

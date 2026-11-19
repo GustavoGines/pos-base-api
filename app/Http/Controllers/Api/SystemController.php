@@ -22,6 +22,7 @@ class SystemController extends Controller
         }
 
         Artisan::call('migrate', ['--force' => true]);
+        \App\Services\BatchStockService::flushSchemaCache();
 
         return response()->json(['success' => true, 'output' => Artisan::output()]);
     }
@@ -504,11 +505,47 @@ class SystemController extends Controller
                 $statements = $this->parseSqlStatements($sqlContent);
 
                 try {
+                    $existingTables = $isMysql ? $this->listMysqlTables($pdo) : $this->listSqliteTables($pdo);
+                    $restoredTableNames = [];
+
                     foreach ($statements as $stmt) {
-                        if (preg_match('/^\s*CREATE\s+TABLE/i', $stmt)) {
+                        if (preg_match('/^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"]?([a-zA-Z0-9_]+)[`"]?/i', $stmt, $m)) {
                             $tablesRestored++;
+                            $restoredTableNames[] = strtolower($m[1]);
                         }
                         $pdo->exec($stmt);
+                    }
+
+                    // Si el backup restaurado es de una versión anterior (ej. v1.8.5) que no incluía
+                    // tablas nuevas (ej. lotes/producción), eliminarlas en orden hijo -> padre antes de
+                    // re-ejecutar Artisan::call('migrate') para no dejar filas huérfanas.
+                    if (! empty($restoredTableNames)) {
+                        $extraTables = array_values(array_filter(
+                            $existingTables,
+                            fn (string $t) => ! in_array(strtolower($t), $restoredTableNames, true)
+                        ));
+
+                        if (! empty($extraTables)) {
+                            $childFirstPriority = [
+                                'production_order_consumptions' => 1,
+                                'production_orders' => 2,
+                                'product_recipe_items' => 3,
+                                'sale_item_batch_allocations' => 4,
+                                'product_batches' => 5,
+                            ];
+                            usort($extraTables, function (string $a, string $b) use ($childFirstPriority): int {
+                                $pa = $childFirstPriority[strtolower($a)] ?? 0;
+                                $pb = $childFirstPriority[strtolower($b)] ?? 0;
+
+                                return $pa <=> $pb;
+                            });
+
+                            foreach ($extraTables as $extraTable) {
+                                $pdo->exec($isMysql
+                                    ? "DROP TABLE IF EXISTS `{$extraTable}`"
+                                    : "DROP TABLE IF EXISTS \"{$extraTable}\"");
+                            }
+                        }
                     }
                     if ($snapshotPath !== null && file_exists($snapshotPath)) {
                         @unlink($snapshotPath);
@@ -534,6 +571,15 @@ class SystemController extends Controller
                     } else {
                         $pdo->exec('PRAGMA foreign_keys=ON');
                     }
+                }
+
+                // Aplicar automáticamente cualquier migración posterior al backup restaurado (ej. backup v1.8.5 en código v2.2+)
+                try {
+                    \Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
+                } catch (\Throwable $migrateEx) {
+                    report($migrateEx);
+                } finally {
+                    \App\Services\BatchStockService::flushSchemaCache();
                 }
 
                 // Restaurar licencia local si existía

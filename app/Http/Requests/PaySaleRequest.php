@@ -46,8 +46,12 @@ class PaySaleRequest extends FormRequest
                 'integer',
                 Rule::exists('products', 'id')->whereNull('deleted_at'),
             ],
+            'items.*.batch_id' => \App\Services\BatchStockService::hasLotTrackingSchema()
+                ? 'nullable|integer|exists:product_batches,id'
+                : 'nullable|integer',
             'items.*.is_temporary' => 'nullable|boolean',
             'items.*.save_to_catalog' => 'nullable|boolean',
+            'items.*.barcode' => 'nullable|string|max:255',
             'items.*.name' => 'nullable|string|max:255',
             'items.*.product_name' => 'nullable|string|max:255',
             'items.*.custom_description' => 'nullable|string|max:255',

@@ -7,10 +7,13 @@ use App\Http\Requests\StoreSupplierInvoiceRequest;
 use App\Http\Requests\UpdateSupplierInvoiceRequest;
 use App\Jobs\SyncProductStockToPlatformsJob;
 use App\Models\Product;
+use App\Models\ProductBatch;
+use App\Models\SaleItemBatchAllocation;
 use App\Models\StockMovement;
 use App\Models\Supplier;
 use App\Models\SupplierInvoice;
 use App\Models\SupplierInvoiceAudit;
+use App\Services\BatchStockService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -223,6 +226,9 @@ class SupplierInvoiceController extends Controller
                     ? (float) $i->new_selling_price
                     : ($i->product?->selling_price !== null ? (float) $i->product->selling_price : null),
                 'subtotal' => (float) $i->subtotal,
+                'batch_id' => $i->batch_id !== null ? (int) $i->batch_id : null,
+                'batch_code' => $i->batch_code,
+                'expiration_date' => $i->expiration_date?->format('Y-m-d'),
             ])->values()->all(),
             'audits' => $audits,
         ];
@@ -720,6 +726,10 @@ class SupplierInvoiceController extends Controller
             return response()->json([
                 'message' => 'Comprobante anulado correctamente. Se revirtió la deuda del proveedor y el stock ingresado.',
             ]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+            ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Error al anular el comprobante: '.$e->getMessage(),
@@ -800,6 +810,10 @@ class SupplierInvoiceController extends Controller
                 'unit_cost' => (float) $item->unit_cost,
                 'subtotal' => (float) $item->subtotal,
                 'new_selling_price' => $item->new_selling_price !== null ? (float) $item->new_selling_price : null,
+                'batch_id' => $item->batch_id,
+                'batch_code' => $item->batch_code,
+                'expiration_date' => $item->expiration_date?->format('Y-m-d'),
+                '_invoice_item_id' => $item->id,
             ])->values()->all();
 
             if (! empty($existingItems)) {
@@ -917,6 +931,7 @@ class SupplierInvoiceController extends Controller
     ): void {
         $requestedIds = array_values(array_unique(array_column($items, 'product_id')));
         [$lockedProducts, $parentComboIds] = $this->lockProductsGraph($requestedIds);
+        $batchService = app(BatchStockService::class);
 
         foreach ($items as $itemData) {
             $product = $lockedProducts->get($itemData['product_id']);
@@ -926,15 +941,21 @@ class SupplierInvoiceController extends Controller
                 ? (float) $rawNewPrice
                 : ($product ? (float) $product->selling_price : null);
 
+            $createdInvoiceItem = null;
             if ($createInvoiceItemRows) {
-                $invoice->items()->create([
+                $createdInvoiceItem = $invoice->items()->create([
                     'product_id' => $itemData['product_id'],
+                    'batch_id' => $itemData['batch_id'] ?? null,
+                    'batch_code' => $itemData['batch_code'] ?? null,
+                    'expiration_date' => $itemData['expiration_date'] ?? null,
                     'quantity' => $itemData['quantity'],
                     'previous_cost' => $previousCost,
                     'unit_cost' => $itemData['unit_cost'],
                     'new_selling_price' => $effectiveSellingPrice,
                     'subtotal' => $itemData['subtotal'],
                 ]);
+            } elseif (! empty($itemData['_invoice_item_id'])) {
+                $createdInvoiceItem = $invoice->items->firstWhere('id', (int) $itemData['_invoice_item_id']);
             }
 
             if (! $product) {
@@ -950,17 +971,43 @@ class SupplierInvoiceController extends Controller
                     $lockedChild = $lockedProducts->get($child->id) ?? $child;
                     $childDelta = $quantityModifier * (float) $child->pivot->quantity;
 
-                    StockMovement::create([
-                        'product_id' => $lockedChild->id,
-                        'user_id' => $userId,
-                        'supplier_invoice_id' => $invoice->id,
-                        'type' => $isCreditNote ? 'out' : 'purchase',
-                        'quantity' => $childDelta,
-                        'notes' => "{$notePrefix}(Hijo Combo) #{$invNumLabel}",
-                    ]);
+                    if (BatchStockService::hasLotTrackingSchema() && $lockedChild->track_batches && ! $lockedChild->is_service) {
+                        $batchService->ensureInitialBatchOnEnable($lockedChild, $userId);
+                        if ($childDelta > 0) {
+                            $batchService->receiveStockBatch($lockedChild, $childDelta, [
+                                'source_type' => ProductBatch::SOURCE_PURCHASE,
+                                'supplier_invoice_id' => $invoice->id,
+                                'supplier_id' => $invoice->supplier_id,
+                                'batch_code' => $itemData['batch_code'] ?? null,
+                                'expiration_date' => $itemData['expiration_date'] ?? null,
+                                'unit_cost' => (float) $lockedChild->cost_price,
+                                'user_id' => $userId,
+                                'movement_type' => 'purchase',
+                                'movement_notes' => "{$notePrefix}(Hijo Combo) #{$invNumLabel}",
+                            ]);
+                        } else {
+                            $batchService->deductStockFEFO($lockedChild, abs($childDelta), [
+                                'supplier_invoice_id' => $invoice->id,
+                                'user_id' => $userId,
+                                'allow_deficit' => true,
+                                'ignore_expired_guard' => true,
+                                'movement_type' => 'out',
+                                'movement_notes' => "{$notePrefix}(Hijo Combo) #{$invNumLabel}",
+                            ]);
+                        }
+                    } else {
+                        StockMovement::create([
+                            'product_id' => $lockedChild->id,
+                            'user_id' => $userId,
+                            'supplier_invoice_id' => $invoice->id,
+                            'type' => $isCreditNote ? 'out' : 'purchase',
+                            'quantity' => $childDelta,
+                            'notes' => "{$notePrefix}(Hijo Combo) #{$invNumLabel}",
+                        ]);
 
-                    $lockedChild->stock = (float) $lockedChild->stock + $childDelta;
-                    $lockedChild->save();
+                        $lockedChild->stock = (float) $lockedChild->stock + $childDelta;
+                        $lockedChild->save();
+                    }
                     $affectedProductIds[] = $lockedChild->id;
                 }
 
@@ -975,6 +1022,68 @@ class SupplierInvoiceController extends Controller
                 $product->stock = $product->calculateComboAvailableStock();
                 $product->save();
                 $affectedProductIds[] = $product->id;
+            } elseif (BatchStockService::hasLotTrackingSchema() && $product->track_batches && ! $product->is_service) {
+                $batchService->ensureInitialBatchOnEnable($product, $userId);
+
+                if (! $isCreditNote) {
+                    $unitCost = (float) ($itemData['unit_cost'] ?? 0);
+                    if ($unitCost > 0) {
+                        $product->cost_price = $unitCost;
+                    }
+                    $newPrice = $itemData['new_selling_price'] ?? $itemData['new_sale_price'] ?? null;
+                    if ($newPrice !== null && (float) $newPrice > 0) {
+                        $product->selling_price = (float) $newPrice;
+                    }
+                    $product->save();
+
+                    $restoredBatch = null;
+                    if (! $createInvoiceItemRows && ! empty($itemData['batch_id'])) {
+                        $candidate = ProductBatch::where('id', (int) $itemData['batch_id'])
+                            ->where('product_id', $product->id)
+                            ->lockForUpdate()
+                            ->first();
+                        if ($candidate && $candidate->status === ProductBatch::STATUS_VOIDED) {
+                            $restoredBatch = $batchService->reactivateVoidedBatch($product, $candidate, $absQty, [
+                                'user_id' => $userId,
+                                'supplier_invoice_id' => $invoice->id,
+                                'movement_type' => 'purchase',
+                                'movement_notes' => "{$notePrefix}#{$invNumLabel}",
+                            ]);
+                        }
+                    }
+
+                    $batch = $restoredBatch ?? $batchService->receiveStockBatch($product, $absQty, [
+                        'source_type' => ProductBatch::SOURCE_PURCHASE,
+                        'supplier_invoice_id' => $invoice->id,
+                        'supplier_id' => $invoice->supplier_id,
+                        'batch_code' => $itemData['batch_code'] ?? null,
+                        'expiration_date' => $itemData['expiration_date'] ?? null,
+                        'unit_cost' => $unitCost > 0 ? $unitCost : (float) $product->cost_price,
+                        'user_id' => $userId,
+                        'movement_type' => 'purchase',
+                        'movement_notes' => "{$notePrefix}#{$invNumLabel}",
+                    ]);
+
+                    if ($createdInvoiceItem) {
+                        $createdInvoiceItem->update([
+                            'batch_id' => $batch->id,
+                            'batch_code' => $batch->batch_code,
+                            'expiration_date' => $batch->expiration_date?->format('Y-m-d'),
+                        ]);
+                    }
+                } else {
+                    $batchService->deductStockFEFO($product, $absQty, [
+                        'explicit_batch_id' => $itemData['batch_id'] ?? null,
+                        'supplier_invoice_id' => $invoice->id,
+                        'user_id' => $userId,
+                        'allow_deficit' => true,
+                        'ignore_expired_guard' => true,
+                        'movement_type' => 'out',
+                        'movement_notes' => "{$notePrefix}#{$invNumLabel}",
+                    ]);
+                }
+
+                $affectedProductIds[] = $product->id;
             } else {
                 StockMovement::create([
                     'product_id' => $product->id,
@@ -982,6 +1091,7 @@ class SupplierInvoiceController extends Controller
                     'supplier_invoice_id' => $invoice->id,
                     'type' => $isCreditNote ? 'out' : 'purchase',
                     'quantity' => $quantityModifier,
+                    'unit_cost' => $product->cost_price,
                     'notes' => "{$notePrefix}#{$invNumLabel}",
                 ]);
 
@@ -1037,6 +1147,7 @@ class SupplierInvoiceController extends Controller
 
         $requestedIds = $invoice->items->pluck('product_id')->filter()->unique()->values()->all();
         [$lockedProducts, $parentComboIds] = $this->lockProductsGraph($requestedIds);
+        $batchService = app(BatchStockService::class);
 
         foreach ($invoice->items as $oldItem) {
             $product = $lockedProducts->get($oldItem->product_id);
@@ -1053,17 +1164,40 @@ class SupplierInvoiceController extends Controller
                     $lockedChild = $lockedProducts->get($child->id) ?? $child;
                     $childDelta = $reverseDelta * (float) $child->pivot->quantity;
 
-                    StockMovement::create([
-                        'product_id' => $lockedChild->id,
-                        'user_id' => $userId,
-                        'supplier_invoice_id' => $invoice->id,
-                        'type' => $childDelta >= 0 ? 'in' : 'out',
-                        'quantity' => $childDelta,
-                        'notes' => "{$noteLabel} (Hijo Combo)",
-                    ]);
+                    if (BatchStockService::hasLotTrackingSchema() && $lockedChild->track_batches && ! $lockedChild->is_service) {
+                        if ($childDelta > 0) {
+                            $batchService->receiveStockBatch($lockedChild, $childDelta, [
+                                'source_type' => ProductBatch::SOURCE_ADJUSTMENT,
+                                'supplier_invoice_id' => $invoice->id,
+                                'supplier_id' => $invoice->supplier_id,
+                                'unit_cost' => (float) $lockedChild->cost_price,
+                                'user_id' => $userId,
+                                'movement_type' => 'in',
+                                'movement_notes' => "{$noteLabel} (Hijo Combo)",
+                            ]);
+                        } else {
+                            $batchService->deductStockFEFO($lockedChild, abs($childDelta), [
+                                'supplier_invoice_id' => $invoice->id,
+                                'user_id' => $userId,
+                                'allow_deficit' => true,
+                                'ignore_expired_guard' => true,
+                                'movement_type' => 'out',
+                                'movement_notes' => "{$noteLabel} (Hijo Combo)",
+                            ]);
+                        }
+                    } else {
+                        StockMovement::create([
+                            'product_id' => $lockedChild->id,
+                            'user_id' => $userId,
+                            'supplier_invoice_id' => $invoice->id,
+                            'type' => $childDelta >= 0 ? 'in' : 'out',
+                            'quantity' => $childDelta,
+                            'notes' => "{$noteLabel} (Hijo Combo)",
+                        ]);
 
-                    $lockedChild->stock = (float) $lockedChild->stock + $childDelta;
-                    $lockedChild->save();
+                        $lockedChild->stock = (float) $lockedChild->stock + $childDelta;
+                        $lockedChild->save();
+                    }
                     $affectedProductIds[] = $lockedChild->id;
                 }
 
@@ -1071,6 +1205,74 @@ class SupplierInvoiceController extends Controller
                 $product->cost_price = $product->calculateComboCostPrice();
                 $product->stock = $product->calculateComboAvailableStock();
                 $product->save();
+                $affectedProductIds[] = $product->id;
+            } elseif (BatchStockService::hasLotTrackingSchema() && $product->track_batches && ! $product->is_service) {
+                if (! $wasCreditNote && $oldItem->batch_id) {
+                    $batch = ProductBatch::where('id', $oldItem->batch_id)
+                        ->where('product_id', $product->id)
+                        ->lockForUpdate()
+                        ->first();
+
+                    if ($batch) {
+                        $hasActiveAllocations = SaleItemBatchAllocation::where('batch_id', $batch->id)
+                            ->whereColumn('quantity', '>', 'restored_quantity')
+                            ->exists();
+                        $hasWasteOrProductionOut = StockMovement::where('batch_id', $batch->id)
+                            ->whereIn('type', ['waste', 'production_out'])
+                            ->exists();
+                        $wasConsumed = ((float) $batch->remaining_quantity + 0.0005) < (float) $batch->initial_quantity
+                            || $hasActiveAllocations
+                            || $hasWasteOrProductionOut;
+
+                        if ($wasConsumed) {
+                            throw new \InvalidArgumentException(
+                                "No se puede anular ni editar el comprobante porque el lote {$batch->batch_code} de «{$product->name}» ya registra ventas, consumos o mermas."
+                            );
+                        }
+
+                        $batch->remaining_quantity = 0.0;
+                        $batch->status = ProductBatch::STATUS_VOIDED;
+                        $batch->save();
+
+                        StockMovement::create([
+                            'product_id' => $product->id,
+                            'batch_id' => $batch->id,
+                            'user_id' => $userId,
+                            'supplier_invoice_id' => $invoice->id,
+                            'type' => 'out',
+                            'quantity' => -$absQty,
+                            'unit_cost' => $batch->unit_cost ?? $product->cost_price,
+                            'notes' => $noteLabel,
+                        ]);
+                    }
+                } elseif ($wasCreditNote) {
+                    $batchService->receiveStockBatch($product, $absQty, [
+                        'source_type' => ProductBatch::SOURCE_ADJUSTMENT,
+                        'supplier_invoice_id' => $invoice->id,
+                        'supplier_id' => $invoice->supplier_id,
+                        'expiration_date' => $oldItem->expiration_date?->format('Y-m-d'),
+                        'unit_cost' => (float) $product->cost_price,
+                        'user_id' => $userId,
+                        'movement_type' => 'in',
+                        'movement_notes' => $noteLabel,
+                    ]);
+                } else {
+                    $batchService->deductStockFEFO($product, $absQty, [
+                        'supplier_invoice_id' => $invoice->id,
+                        'user_id' => $userId,
+                        'allow_deficit' => true,
+                        'ignore_expired_guard' => true,
+                        'movement_type' => 'out',
+                        'movement_notes' => $noteLabel,
+                    ]);
+                }
+
+                if (! $wasCreditNote && $oldItem->previous_cost !== null && (float) $oldItem->previous_cost > 0) {
+                    $product->cost_price = (float) $oldItem->previous_cost;
+                    $product->save();
+                }
+
+                $batchService->syncProductMaterializedFields($product);
                 $affectedProductIds[] = $product->id;
             } else {
                 StockMovement::create([

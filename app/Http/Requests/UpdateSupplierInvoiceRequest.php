@@ -99,6 +99,10 @@ class UpdateSupplierInvoiceRequest extends FormRequest
             'items.*.new_selling_price' => 'nullable|numeric|min:0',
             'items.*.new_sale_price' => 'nullable|numeric|min:0',
             'items.*.expiration_date' => 'nullable|date',
+            'items.*.batch_code' => 'nullable|string|max:64',
+            'items.*.batch_id' => \App\Services\BatchStockService::hasLotTrackingSchema()
+                ? 'nullable|integer|exists:product_batches,id'
+                : 'nullable|integer',
         ];
     }
 

@@ -283,4 +283,35 @@ class OfferCrudTest extends TestCase
         $this->assertEquals($futureStart->toDateString(), $offer->start_date->toDateString());
         $this->assertEquals($futureStart->copy()->addDays(7)->toDateString(), $offer->end_date->toDateString());
     }
+
+    public function test_store_rejects_past_or_inverted_end_date()
+    {
+        $resPast = $this->postJson('/api/offers', [
+            'name' => 'Liquidación Fecha Pasada',
+            'type' => 'percentage',
+            'discount_percentage' => 30,
+            'period_type' => 'custom',
+            'start_date' => now()->toIso8601String(),
+            'end_date' => now()->subDays(2)->format('Y-m-d 23:59:59'),
+            'products' => [
+                ['product_id' => $this->product1->id],
+            ],
+        ]);
+        $resPast->assertStatus(422)
+            ->assertJsonValidationErrors(['end_date']);
+
+        $resInverted = $this->postJson('/api/offers', [
+            'name' => 'Liquidación Invertida',
+            'type' => 'percentage',
+            'discount_percentage' => 30,
+            'period_type' => 'custom',
+            'start_date' => now()->addDays(5)->toIso8601String(),
+            'end_date' => now()->addDays(2)->format('Y-m-d 23:59:59'),
+            'products' => [
+                ['product_id' => $this->product1->id],
+            ],
+        ]);
+        $resInverted->assertStatus(422)
+            ->assertJsonValidationErrors(['end_date']);
+    }
 }

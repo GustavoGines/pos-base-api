@@ -848,4 +848,403 @@ class IibbPerceptionBackendTest extends TestCase
         $this->assertStringContainsString('<ImpTotal>1210.00</ImpTotal>', $ncXml);
         $this->assertStringNotContainsString('<Tributos>', $ncXml);
     }
+
+    /**
+     * 10. Deferred Factura A from Sales History auto-applies default IIBB rate when business is agent,
+     * even if the registered customer does not have applies_iibb_perception=true.
+     */
+    public function test_deferred_factura_a_auto_applies_default_iibb_rate_for_customer_without_flag(): void
+    {
+        BusinessSetting::updateOrCreate(['key' => 'is_iibb_perception_agent'], ['value' => '1']);
+        BusinessSetting::updateOrCreate(['key' => 'default_iibb_perception_rate'], ['value' => '3.00']);
+        BusinessSetting::updateOrCreate(['key' => 'tax_condition'], ['value' => 'IVA Responsable Inscripto']);
+
+        $interceptedXml = null;
+        $this->mockAfipSuccess(cbteNro: 110, cae: '86461089624789', requestInspector: function (HttpClientRequest $req) use (&$interceptedXml) {
+            $body = $req->body();
+            if (str_contains($body, 'FECAESolicitar')) {
+                $interceptedXml = $body;
+            }
+        });
+
+        $shift = $this->createOpenShift();
+
+        $product = Product::create([
+            'name' => 'Refrescante Bucal',
+            'internal_code' => 'REF-01',
+            'cost_price' => 4000.00,
+            'selling_price' => 10000.00,
+            'iva_rate' => 21.00,
+            'stock' => 20,
+            'active' => true,
+        ]);
+
+        // Exact real-world scenario: customer has CUIT 27388231497, applies_iibb_perception=false, rate=null
+        $customer = Customer::create([
+            'name' => 'Supermercado Los Primos SRL',
+            'document_type' => AfipHelper::DOC_CUIT,
+            'document_number' => '27388231497',
+            'tax_condition' => 'consumidor_final',
+            'fiscal_address' => 'Av. 25 de Mayo 1420, Formosa',
+            'applies_iibb_perception' => false,
+            'iibb_perception_rate' => null,
+        ]);
+
+        $sale = Sale::create([
+            'total' => 10000.00,
+            'total_surcharge' => 0.00,
+            'payment_status' => 'paid',
+            'amount_due' => 0.00,
+            'status' => 'completed',
+            'invoice_status' => 'none',
+            'cash_shift_id' => $shift->id,
+            'user_id' => $this->adminUser->id,
+            'cashier_id' => $this->adminUser->id,
+            'customer_id' => $customer->id,
+            'iibb_perception_amount' => 0.00,
+            'iibb_perception_rate' => null,
+        ]);
+
+        $sale->items()->create([
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
+            'unit_cost_price' => 4000.00,
+            'unit_price' => 10000.00,
+            'subtotal' => 10000.00,
+            'iva_rate' => 21.00,
+            'net_amount' => 8264.46,
+            'iva_amount' => 1735.54,
+        ]);
+
+        $response = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/invoice", [
+            'voucher_type' => AfipHelper::VOUCHER_FACTURA_A,
+            'doc_type' => AfipHelper::DOC_CUIT,
+            'doc_number' => '27388231497',
+            'receiver_name' => 'Supermercado Los Primos SRL',
+            'receiver_tax_condition' => 'responsable_inscripto',
+            'customer_id' => $customer->id,
+        ]);
+
+        // Net = 8264.46, IVA = 1735.54, IIBB 3% = 247.93, Total = 10247.93
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('invoice.net_amount', '8264.46')
+            ->assertJsonPath('invoice.iva_amount', '1735.54')
+            ->assertJsonPath('invoice.tribute_amount', '247.93')
+            ->assertJsonPath('invoice.total_amount', '10247.93');
+
+        $this->assertNotNull($interceptedXml);
+        $this->assertStringContainsString('<ImpTrib>247.93</ImpTrib>', $interceptedXml);
+        $this->assertStringContainsString('<Alic>3.00</Alic>', $interceptedXml);
+        $this->assertStringContainsString('<ImpTotal>10247.93</ImpTotal>', $interceptedXml);
+
+        $freshSale = $sale->fresh();
+        $this->assertEquals(10247.93, (float) $freshSale->total);
+        $this->assertEquals(247.93, (float) $freshSale->iibb_perception_amount);
+        $this->assertEquals(3.00, (float) $freshSale->iibb_perception_rate);
+    }
+
+    /**
+     * 11. Deferred Factura A without a linked customer_id auto-applies default IIBB rate.
+     */
+    public function test_deferred_factura_a_auto_applies_default_iibb_rate_without_local_customer(): void
+    {
+        BusinessSetting::updateOrCreate(['key' => 'is_iibb_perception_agent'], ['value' => '1']);
+        BusinessSetting::updateOrCreate(['key' => 'default_iibb_perception_rate'], ['value' => '3.00']);
+        BusinessSetting::updateOrCreate(['key' => 'tax_condition'], ['value' => 'IVA Responsable Inscripto']);
+
+        $this->mockAfipSuccess(cbteNro: 111, cae: '86461089624790');
+        $shift = $this->createOpenShift();
+
+        $product = Product::create([
+            'name' => 'Refrescante Bucal',
+            'internal_code' => 'REF-02',
+            'cost_price' => 4000.00,
+            'selling_price' => 10000.00,
+            'iva_rate' => 21.00,
+            'stock' => 20,
+            'active' => true,
+        ]);
+
+        $sale = Sale::create([
+            'total' => 10000.00,
+            'total_surcharge' => 0.00,
+            'payment_status' => 'paid',
+            'amount_due' => 0.00,
+            'status' => 'completed',
+            'invoice_status' => 'none',
+            'cash_shift_id' => $shift->id,
+            'user_id' => $this->adminUser->id,
+            'cashier_id' => $this->adminUser->id,
+            'customer_id' => null,
+            'iibb_perception_amount' => 0.00,
+            'iibb_perception_rate' => null,
+        ]);
+
+        $sale->items()->create([
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
+            'unit_cost_price' => 4000.00,
+            'unit_price' => 10000.00,
+            'subtotal' => 10000.00,
+            'iva_rate' => 21.00,
+            'net_amount' => 8264.46,
+            'iva_amount' => 1735.54,
+        ]);
+
+        $response = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/invoice", [
+            'voucher_type' => AfipHelper::VOUCHER_FACTURA_A,
+            'doc_type' => AfipHelper::DOC_CUIT,
+            'doc_number' => '27388231497',
+            'receiver_name' => 'Supermercado Los Primos SRL',
+            'receiver_tax_condition' => 'responsable_inscripto',
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('invoice.tribute_amount', '247.93')
+            ->assertJsonPath('invoice.total_amount', '10247.93');
+    }
+
+    /**
+     * 12. Deferred Factura A respects explicit 0% IIBB override sent from Sales History dialog.
+     */
+    public function test_deferred_factura_a_respects_explicit_zero_iibb_override_from_sales_history(): void
+    {
+        BusinessSetting::updateOrCreate(['key' => 'is_iibb_perception_agent'], ['value' => '1']);
+        BusinessSetting::updateOrCreate(['key' => 'default_iibb_perception_rate'], ['value' => '3.00']);
+        BusinessSetting::updateOrCreate(['key' => 'tax_condition'], ['value' => 'IVA Responsable Inscripto']);
+
+        $interceptedXml = null;
+        $this->mockAfipSuccess(cbteNro: 112, cae: '86461089624791', requestInspector: function (HttpClientRequest $req) use (&$interceptedXml) {
+            $body = $req->body();
+            if (str_contains($body, 'FECAESolicitar')) {
+                $interceptedXml = $body;
+            }
+        });
+
+        $shift = $this->createOpenShift();
+        $product = Product::create([
+            'name' => 'Refrescante Bucal',
+            'internal_code' => 'REF-03',
+            'cost_price' => 4000.00,
+            'selling_price' => 10000.00,
+            'iva_rate' => 21.00,
+            'stock' => 20,
+            'active' => true,
+        ]);
+
+        $sale = Sale::create([
+            'total' => 10000.00,
+            'total_surcharge' => 0.00,
+            'payment_status' => 'paid',
+            'amount_due' => 0.00,
+            'status' => 'completed',
+            'invoice_status' => 'none',
+            'cash_shift_id' => $shift->id,
+            'user_id' => $this->adminUser->id,
+            'cashier_id' => $this->adminUser->id,
+            'customer_id' => null,
+            'iibb_perception_amount' => 0.00,
+            'iibb_perception_rate' => null,
+        ]);
+
+        $sale->items()->create([
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
+            'unit_cost_price' => 4000.00,
+            'unit_price' => 10000.00,
+            'subtotal' => 10000.00,
+            'iva_rate' => 21.00,
+            'net_amount' => 8264.46,
+            'iva_amount' => 1735.54,
+        ]);
+
+        $response = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/invoice", [
+            'voucher_type' => AfipHelper::VOUCHER_FACTURA_A,
+            'doc_type' => AfipHelper::DOC_CUIT,
+            'doc_number' => '27388231497',
+            'receiver_name' => 'Supermercado Los Primos SRL',
+            'receiver_tax_condition' => 'responsable_inscripto',
+            'iibb_perception_amount' => 0.00,
+            'iibb_perception_rate' => 0.00,
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('invoice.tribute_amount', '0.00')
+            ->assertJsonPath('invoice.total_amount', '10000.00');
+
+        $this->assertNotNull($interceptedXml);
+        $this->assertStringNotContainsString('<Tributos>', $interceptedXml);
+        $this->assertStringContainsString('<ImpTrib>0.00</ImpTrib>', $interceptedXml);
+        $this->assertStringContainsString('<ImpTotal>10000.00</ImpTotal>', $interceptedXml);
+
+        $freshSale = $sale->fresh();
+        $this->assertEquals(10000.00, (float) $freshSale->total);
+        $this->assertSame('0.00', (string) $freshSale->iibb_perception_rate);
+    }
+
+    /**
+     * 13. Respects customer explicitly disabled with prior custom rate, and computes amount when only rate is provided.
+     */
+    public function test_deferred_factura_a_respects_customer_explicitly_disabled_custom_rate_and_explicit_rate_only(): void
+    {
+        BusinessSetting::updateOrCreate(['key' => 'is_iibb_perception_agent'], ['value' => '1']);
+        BusinessSetting::updateOrCreate(['key' => 'default_iibb_perception_rate'], ['value' => '3.00']);
+        BusinessSetting::updateOrCreate(['key' => 'tax_condition'], ['value' => 'IVA Responsable Inscripto']);
+
+        $cbteNroSeq = 112;
+        Http::fake(function (HttpClientRequest $request) use (&$cbteNroSeq) {
+            $body = $request->body();
+            if (str_contains($body, 'FECompUltimoAutorizado')) {
+                $last = $cbteNroSeq;
+                $cbteNroSeq++;
+
+                return Http::response('<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <FECompUltimoAutorizadoResponse xmlns="http://ar.gov.afip.dif.FEV1/">
+      <FECompUltimoAutorizadoResult>
+        <PtoVta>1</PtoVta>
+        <CbteTipo>1</CbteTipo>
+        <CbteNro>'.$last.'</CbteNro>
+      </FECompUltimoAutorizadoResult>
+    </FECompUltimoAutorizadoResponse>
+  </soap:Body>
+</soap:Envelope>', 200, ['Content-Type' => 'text/xml']);
+            }
+            if (str_contains($body, 'FECAESolicitar')) {
+                return Http::response('<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <FECAESolicitarResponse xmlns="http://ar.gov.afip.dif.FEV1/">
+      <FECAESolicitarResult>
+        <FeCabResp>
+          <Cuit>'.$this->testCuit.'</Cuit>
+          <PtoVta>1</PtoVta>
+          <CbteTipo>1</CbteTipo>
+          <Resultado>A</Resultado>
+        </FeCabResp>
+        <FeDetResp>
+          <FECAEDetResponse>
+            <Concepto>1</Concepto>
+            <DocTipo>80</DocTipo>
+            <DocNro>30500010912</DocNro>
+            <CbteDesde>'.$cbteNroSeq.'</CbteDesde>
+            <CbteHasta>'.$cbteNroSeq.'</CbteHasta>
+            <CbteFch>'.date('Ymd').'</CbteFch>
+            <Resultado>A</Resultado>
+            <CAE>86461089624'.$cbteNroSeq.'</CAE>
+            <CAEFchVto>'.date('Ymd', strtotime('+10 days')).'</CAEFchVto>
+          </FECAEDetResponse>
+        </FeDetResp>
+      </FECAESolicitarResult>
+    </FECAESolicitarResponse>
+  </soap:Body>
+</soap:Envelope>', 200, ['Content-Type' => 'text/xml']);
+            }
+
+            return Http::response('', 200);
+        });
+        $shift = $this->createOpenShift();
+        $product = Product::create([
+            'name' => 'Refrescante Bucal',
+            'internal_code' => 'REF-04',
+            'cost_price' => 4000.00,
+            'selling_price' => 10000.00,
+            'iva_rate' => 21.00,
+            'stock' => 20,
+            'active' => true,
+        ]);
+
+        // Subcase A: customer explicitly has applies_iibb_perception=false AND custom rate 4.00 stored
+        $disabledCustomer = Customer::create([
+            'name' => 'Cliente Exento IIBB',
+            'document_type' => AfipHelper::DOC_CUIT,
+            'document_number' => '27388231497',
+            'tax_condition' => 'responsable_inscripto',
+            'applies_iibb_perception' => false,
+            'iibb_perception_rate' => 4.00,
+        ]);
+
+        $saleA = Sale::create([
+            'total' => 10000.00,
+            'total_surcharge' => 0.00,
+            'payment_status' => 'paid',
+            'amount_due' => 0.00,
+            'status' => 'completed',
+            'invoice_status' => 'none',
+            'cash_shift_id' => $shift->id,
+            'user_id' => $this->adminUser->id,
+            'cashier_id' => $this->adminUser->id,
+            'customer_id' => $disabledCustomer->id,
+            'iibb_perception_amount' => 0.00,
+            'iibb_perception_rate' => null,
+        ]);
+        $saleA->items()->create([
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
+            'unit_cost_price' => 4000.00,
+            'unit_price' => 10000.00,
+            'subtotal' => 10000.00,
+            'iva_rate' => 21.00,
+            'net_amount' => 8264.46,
+            'iva_amount' => 1735.54,
+        ]);
+
+        $respA = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$saleA->id}/invoice", [
+            'voucher_type' => AfipHelper::VOUCHER_FACTURA_A,
+        ]);
+        $respA->assertStatus(200)
+            ->assertJsonPath('invoice.tribute_amount', '0.00')
+            ->assertJsonPath('invoice.total_amount', '10000.00');
+
+        // Subcase B: only iibb_perception_rate=1.5 is sent (without iibb_perception_amount) for a customer without flag
+        $plainCustomer = Customer::create([
+            'name' => 'Cliente Sin Flag',
+            'document_type' => AfipHelper::DOC_CUIT,
+            'document_number' => '30500010912',
+            'tax_condition' => 'responsable_inscripto',
+            'applies_iibb_perception' => false,
+            'iibb_perception_rate' => null,
+        ]);
+
+        $saleB = Sale::create([
+            'total' => 10000.00,
+            'total_surcharge' => 0.00,
+            'payment_status' => 'paid',
+            'amount_due' => 0.00,
+            'status' => 'completed',
+            'invoice_status' => 'none',
+            'cash_shift_id' => $shift->id,
+            'user_id' => $this->adminUser->id,
+            'cashier_id' => $this->adminUser->id,
+            'customer_id' => $plainCustomer->id,
+            'iibb_perception_amount' => 0.00,
+            'iibb_perception_rate' => null,
+        ]);
+        $saleB->items()->create([
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
+            'unit_cost_price' => 4000.00,
+            'unit_price' => 10000.00,
+            'subtotal' => 10000.00,
+            'iva_rate' => 21.00,
+            'net_amount' => 8264.46,
+            'iva_amount' => 1735.54,
+        ]);
+
+        $respB = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$saleB->id}/invoice", [
+            'voucher_type' => AfipHelper::VOUCHER_FACTURA_A,
+            'iibb_perception_rate' => 1.5,
+        ]);
+        // round(8264.46 * 0.015, 2) = 123.97 -> total = 10123.97
+        $respB->assertStatus(200)
+            ->assertJsonPath('invoice.tribute_amount', '123.97')
+            ->assertJsonPath('invoice.total_amount', '10123.97');
+    }
 }

@@ -19,6 +19,8 @@ class Product extends Model
         'price_wholesale', 'price_card',  // [hardware_store] Listas de Precio
         'stock', 'min_stock', 'active', 'needs_catalog_review', 'is_combo', 'is_service', 'is_sold_by_weight', 'sales_count', 'vencimiento_dias',
         'expiration_date', 'expiry_alert_days', 'expiry_alert_snoozed_until', 'expiry_alert_last_stage',
+        'track_batches', 'lot_deduction_policy', 'allow_sell_expired',
+        'has_production_recipe', 'recipe_yield_quantity',
         'unit_type', 'category_id', 'brand_id', 'supplier_id', 'image_path',
     ];
 
@@ -30,6 +32,10 @@ class Product extends Model
         'is_combo' => 'boolean',
         'is_service' => 'boolean',
         'is_sold_by_weight' => 'boolean',
+        'track_batches' => 'boolean',
+        'allow_sell_expired' => 'boolean',
+        'has_production_recipe' => 'boolean',
+        'recipe_yield_quantity' => 'decimal:3',
         'cost_price' => 'decimal:2',
         'selling_price' => 'decimal:2',
         'iva_rate' => 'decimal:2',
@@ -44,6 +50,25 @@ class Product extends Model
         'expiry_alert_snoozed_until' => 'datetime',
         'expiry_alert_last_stage' => 'integer',
     ];
+
+    protected static function booted(): void
+    {
+        static::saving(function (Product $product) {
+            if (! \App\Services\BatchStockService::hasLotTrackingSchema()) {
+                unset(
+                    $product->attributes['track_batches'],
+                    $product->attributes['lot_deduction_policy'],
+                    $product->attributes['allow_sell_expired']
+                );
+            }
+            if (! \App\Services\BatchStockService::hasProductionRecipeSchema()) {
+                unset(
+                    $product->attributes['has_production_recipe'],
+                    $product->attributes['recipe_yield_quantity']
+                );
+            }
+        });
+    }
 
     /**
      * Relación de Recetas / Combos
@@ -84,6 +109,42 @@ class Product extends Model
     public function stockMovements(): HasMany
     {
         return $this->hasMany(StockMovement::class);
+    }
+
+    /**
+     * Todos los lotes registrados para este producto.
+     */
+    public function batches(): HasMany
+    {
+        return $this->hasMany(ProductBatch::class);
+    }
+
+    /**
+     * Lotes activos ordenados según política FEFO (próximos a vencer primero).
+     */
+    public function activeBatches(): HasMany
+    {
+        return $this->hasMany(ProductBatch::class)
+            ->where('status', ProductBatch::STATUS_ACTIVE)
+            ->orderByRaw('CASE WHEN expiration_date IS NULL THEN 1 ELSE 0 END ASC')
+            ->orderBy('expiration_date', 'asc')
+            ->orderBy('id', 'asc');
+    }
+
+    /**
+     * Ingredientes requeridos para elaborar este producto en cocina / pastelería.
+     */
+    public function recipeItems(): HasMany
+    {
+        return $this->hasMany(ProductRecipeItem::class, 'parent_product_id');
+    }
+
+    /**
+     * Recetas de elaboración en las que este producto participa como materia prima o semi-elaborado.
+     */
+    public function usedInRecipes(): HasMany
+    {
+        return $this->hasMany(ProductRecipeItem::class, 'ingredient_product_id');
     }
 
     /**

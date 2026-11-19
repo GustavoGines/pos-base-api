@@ -14,7 +14,9 @@ use App\Http\Controllers\Api\ElectronicInvoiceController;
 use App\Http\Controllers\Api\MercadoPagoController;
 use App\Http\Controllers\Api\OfferController;
 use App\Http\Controllers\Api\PosController;
+use App\Http\Controllers\Api\ProductBatchController;
 use App\Http\Controllers\Api\ProductController;
+use App\Http\Controllers\Api\ProductionOrderController;
 use App\Http\Controllers\Api\QuoteController;
 use App\Http\Controllers\Api\RubroController;
 use App\Http\Controllers\Api\SalesController;
@@ -89,6 +91,7 @@ Route::get('/registers', [CashRegisterController::class, 'index']);
 
 // Búsqueda de productos POS (usada antes de confirmar la venta)
 Route::get('/pos/products/search', [PosController::class, 'searchProducts']);
+Route::get('/pos/batches/scan', [PosController::class, 'scanBatch']);
 
 // Lectura de catálogo, clientes e historial (pantallas de solo lectura)
 Route::get('/catalog/products/alerts/critical', [ProductController::class, 'criticalAlerts']);
@@ -272,6 +275,35 @@ Route::middleware(['session.validate', 'license.active'])->group(function () {
         ->middleware('permission.or.pin:'.Permissions::BULK_PRICE_UPDATE);
     Route::post('/catalog/products/{product}/adjust-stock', [StockController::class, 'adjust'])
         ->middleware('permission.or.pin:'.Permissions::ADJUST_STOCK);
+    Route::get('/catalog/products/{product}/batches', [ProductBatchController::class, 'index']);
+    Route::post('/catalog/products/{product}/batches', [ProductBatchController::class, 'store'])
+        ->middleware('permission.or.pin:'.Permissions::ADJUST_STOCK.','.Permissions::MANAGE_CATALOG);
+    Route::get('/batches/expired', [ProductBatchController::class, 'expiredBatches']);
+    Route::post('/batches/write-off-expired', [ProductBatchController::class, 'writeOffExpired'])
+        ->middleware('permission.or.pin:'.Permissions::ADJUST_STOCK);
+    Route::patch('/batches/{batch}', [ProductBatchController::class, 'update'])
+        ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG.','.Permissions::ADJUST_STOCK)
+        ->where(['batch' => '[0-9]+']);
+    Route::post('/batches/{batch}/split', [ProductBatchController::class, 'split'])
+        ->middleware('permission.or.pin:'.Permissions::ADJUST_STOCK.','.Permissions::MANAGE_CATALOG)
+        ->where(['batch' => '[0-9]+']);
+    Route::post('/batches/{batch}/write-off', [ProductBatchController::class, 'writeOff'])
+        ->middleware('permission.or.pin:'.Permissions::ADJUST_STOCK)
+        ->where(['batch' => '[0-9]+']);
+
+    // ── Producción Propia (Pastelería / Cocina) ──────────────────────
+    Route::prefix('production-orders')->group(function () {
+        Route::get('/', [ProductionOrderController::class, 'index']);
+        Route::get('/{productionOrder}', [ProductionOrderController::class, 'show'])
+            ->where(['productionOrder' => '[0-9]+']);
+        Route::post('/batch', [ProductionOrderController::class, 'storeBatch'])
+            ->middleware('permission.or.pin:'.Permissions::ADJUST_STOCK.','.Permissions::MANAGE_CATALOG);
+        Route::post('/', [ProductionOrderController::class, 'store'])
+            ->middleware('permission.or.pin:'.Permissions::ADJUST_STOCK.','.Permissions::MANAGE_CATALOG);
+        Route::post('/{productionOrder}/void', [ProductionOrderController::class, 'void'])
+            ->middleware('permission.or.pin:'.Permissions::ADJUST_STOCK.','.Permissions::MANAGE_CATALOG)
+            ->where(['productionOrder' => '[0-9]+']);
+    });
     Route::post('/catalog/products/{product}/image', [ProductController::class, 'uploadImage'])
         ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
     Route::delete('/catalog/products/{product}/image', [ProductController::class, 'deleteImage'])
@@ -362,6 +394,7 @@ Route::middleware(['session.validate', 'license.active'])->group(function () {
         Route::get('/monthly-balance/export', [ReportController::class, 'exportMonthlyBalanceExcel']);
         Route::get('/monthly-balance/pdf', [ReportController::class, 'exportMonthlyBalancePdf']);
         Route::get('/monthly-balance', [ReportController::class, 'monthlyBalance']);
+        Route::get('/waste', [ProductBatchController::class, 'wasteReport']);
         Route::get('/vat-sales/export', [ReportController::class, 'exportVatSalesExcel']);
         Route::get('/vat-sales/pdf', [ReportController::class, 'exportVatSalesPdf']);
         Route::get('/vat-sales', [ReportController::class, 'vatSales']);

@@ -7,6 +7,7 @@ use App\Models\BusinessSetting;
 use App\Models\DeliveryNote;
 use App\Models\Product;
 use App\Models\Sale;
+use App\Models\SaleItem;
 use App\Models\StockMovement;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Collection;
@@ -14,6 +15,14 @@ use Illuminate\Support\Facades\DB;
 
 class StockService
 {
+    public function __construct(
+        protected ?BatchStockService $batchStockService = null
+    ) {}
+
+    protected function batchService(): BatchStockService
+    {
+        return $this->batchStockService ??= app(BatchStockService::class);
+    }
     /**
      * Pre-carga y bloquea todos los productos (padres e hijos) en una sola query para evitar N+1 y Deadlocks.
      */
@@ -59,8 +68,17 @@ class StockService
         $metric = $this->getPopularityMetric();
         $countedInTicket = [];
         $allDeductedIds = [];
+        $saleItems = $sale->items()->orderBy('id')->get()->values();
 
-        foreach ($items as $itemData) {
+        foreach ($items as $idx => $itemData) {
+            $candidateSaleItem = $saleItems->get($idx);
+            $matchingSaleItem = ($candidateSaleItem && (int) ($candidateSaleItem->product_id ?? 0) === (int) ($itemData['product_id'] ?? 0))
+                ? $candidateSaleItem
+                : null;
+            $hasCustomCost = isset($itemData['custom_cost_price'])
+                && is_numeric($itemData['custom_cost_price'])
+                && (float) $itemData['custom_cost_price'] >= 0;
+
             $isTemporary = filter_var($itemData['is_temporary'] ?? false, FILTER_VALIDATE_BOOLEAN);
             if (empty($itemData['product_id']) || $isTemporary) {
                 // Si es un Combo Rápido temporal armado en POS con ingredientes reales del catálogo,
@@ -68,6 +86,8 @@ class StockService
                 if (! empty($itemData['combo_ingredients']) && is_array($itemData['combo_ingredients'])) {
                     $comboQty = max(0.0, (float) ($itemData['quantity'] ?? 1));
                     $comboLabel = trim((string) ($itemData['custom_description'] ?? $itemData['product_name'] ?? $itemData['name'] ?? 'Combo Rápido'));
+                    $quickComboCost = 0.0;
+                    $quickComboUsedBatches = false;
                     foreach ($itemData['combo_ingredients'] as $ing) {
                         $childId = (int) ($ing['id'] ?? 0);
                         $ingQty = (float) ($ing['quantity'] ?? 0);
@@ -75,19 +95,39 @@ class StockService
                             $childProduct = $products[$childId];
                             if (! $childProduct->is_service) {
                                 $totalChildDeduct = $comboQty * $ingQty;
-                                $effectiveDelta = $this->applyStockDeltaWithFractionSnap($childProduct, -$totalChildDeduct);
-                                $childProduct->save();
-                                $this->logMovement(
-                                    $childProduct->id,
-                                    $effectiveDelta,
-                                    'sale',
-                                    'Venta '.StockMovement::CHECKOUT_NOTE_TOKEN."{$sale->id} (Hijo de Combo Rápido: {$comboLabel})",
-                                    $context,
-                                    $sale
-                                );
+                                $noteText = 'Venta '.StockMovement::CHECKOUT_NOTE_TOKEN."{$sale->id} (Hijo de Combo Rápido: {$comboLabel})";
+                                if (BatchStockService::hasLotTrackingSchema() && $childProduct->track_batches) {
+                                    $res = $this->batchService()->deductStockFEFO($childProduct, $totalChildDeduct, [
+                                        'sale_id' => $sale->id,
+                                        'sale_item_id' => $matchingSaleItem?->id,
+                                        'user_id' => $context->userId,
+                                        'authorized_by_admin_id' => $context->authorizedByAdminId,
+                                        'cash_shift_id' => $context->cashShiftId,
+                                        'movement_type' => 'sale',
+                                        'movement_notes' => $noteText,
+                                    ]);
+                                    $quickComboCost += $res['weighted_unit_cost'] * $ingQty;
+                                    $quickComboUsedBatches = true;
+                                } else {
+                                    $effectiveDelta = $this->applyStockDeltaWithFractionSnap($childProduct, -$totalChildDeduct);
+                                    $childProduct->save();
+                                    $this->logMovement(
+                                        $childProduct->id,
+                                        $effectiveDelta,
+                                        'sale',
+                                        $noteText,
+                                        $context,
+                                        $sale
+                                    );
+                                    $quickComboCost += ((float) $childProduct->cost_price) * $ingQty;
+                                }
                                 $allDeductedIds[] = $childProduct->id;
                             }
                         }
+                    }
+
+                    if ($quickComboUsedBatches && ! $hasCustomCost && $matchingSaleItem) {
+                        $matchingSaleItem->update(['unit_cost_price' => round($quickComboCost, 2)]);
                     }
                 }
 
@@ -100,6 +140,7 @@ class StockService
 
             $product = $products[$itemData['product_id']];
             $qty = (float) $itemData['quantity'];
+            $explicitBatchId = ! empty($itemData['batch_id']) ? (int) $itemData['batch_id'] : null;
 
             // En modo 'tickets' cada producto suma como máximo 1 vez por ticket
             $trackPopularity = true;
@@ -123,7 +164,18 @@ class StockService
                 continue;
             }
 
-            $deducted = $this->deductProductStock($product, $qty, $sale, $context, false, $products, $trackPopularity);
+            $deducted = $this->deductProductStock(
+                $product,
+                $qty,
+                $sale,
+                $context,
+                false,
+                $products,
+                $trackPopularity,
+                $matchingSaleItem,
+                $explicitBatchId,
+                ! $hasCustomCost
+            );
             $allDeductedIds = array_merge($allDeductedIds, $deducted);
         }
 
@@ -141,71 +193,123 @@ class StockService
      */
     protected function applyStockDeltaWithFractionSnap(Product $target, float $signedDelta): float
     {
-        $stockBefore = round((float) $target->stock, 3);
-        $rawAfter = round($stockBefore + $signedDelta, 3);
-        $isFractionalOp = abs($signedDelta - round($signedDelta)) > 0.0001
-            || abs($stockBefore - round($stockBefore)) > 0.0001;
+        $result = BatchStockService::computeQuantityDeltaWithFractionSnap((float) $target->stock, $signedDelta);
+        $target->stock = $result['new_stock'];
 
-        $stockAfter = $rawAfter;
-        if ($isFractionalOp && abs($signedDelta) >= 0.030) {
-            $nearestInt = round($rawAfter, 0);
-            if (abs($rawAfter - $nearestInt) <= 0.010) {
-                $candidateDelta = round($nearestInt - $stockBefore, 3);
-                if (($signedDelta < 0 && $candidateDelta < 0) || ($signedDelta > 0 && $candidateDelta > 0)) {
-                    $stockAfter = (float) $nearestInt;
-                }
-            }
-        }
-
-        if (abs($stockAfter) < 0.0001) {
-            $stockAfter = 0.0;
-        }
-
-        $target->stock = $stockAfter;
-
-        return round($stockAfter - $stockBefore, 3);
+        return $result['effective_delta'];
     }
 
     /**
-     * Deduct stock mathematically for a specific product (Combo-aware)
+     * Deduct stock mathematically for a specific product (Combo & Batch-aware)
      */
-    protected function deductProductStock(Product $product, float $qty, Sale $sale, SaleContextDTO $context, bool $isAdjustment, Collection $products, bool $trackPopularity = true): array
-    {
+    protected function deductProductStock(
+        Product $product,
+        float $qty,
+        Sale $sale,
+        SaleContextDTO $context,
+        bool $isAdjustment,
+        Collection $products,
+        bool $trackPopularity = true,
+        ?SaleItem $saleItem = null,
+        ?int $explicitBatchId = null,
+        bool $updateSaleItemCost = true
+    ): array {
         $deductedIds = [];
         if ($product->is_service) {
             // Los servicios / honorarios no descuentan stock físico ni registran movimientos de stock,
             // pero sí incrementan su popularidad para el Acceso Rápido POS.
         } elseif ($product->is_combo) {
+            $comboWeightedCost = 0.0;
+            $usedBatchChild = false;
+
             foreach ($product->children as $child) {
                 $qtyDeducted = $qty * (float) $child->pivot->quantity;
 
                 // CRITICAL FIX: Use canonical instance from the root $products collection
                 // to prevent in-memory race conditions if the same product is processed twice.
                 $canonicalChild = $products[$child->id] ?? $child;
-                $effectiveDelta = $this->applyStockDeltaWithFractionSnap($canonicalChild, -$qtyDeducted);
-                $canonicalChild->save(); // Dispara Observers
+                $note = ($isAdjustment ? 'Ajuste Recall ' : 'Venta ').StockMovement::CHECKOUT_NOTE_TOKEN."{$sale->id} (Hijo de: {$product->name})";
 
-                $this->logMovement(
-                    $canonicalChild->id,
-                    $effectiveDelta,
-                    'sale',
-                    ($isAdjustment ? 'Ajuste Recall ' : 'Venta ').StockMovement::CHECKOUT_NOTE_TOKEN."{$sale->id} (Hijo de: {$product->name})",
-                    $context,
-                    $sale
-                );
+                if (BatchStockService::hasLotTrackingSchema() && $canonicalChild->track_batches) {
+                    $usedBatchChild = true;
+                    if ($qtyDeducted > 0) {
+                        $res = $this->batchService()->deductStockFEFO($canonicalChild, $qtyDeducted, [
+                            'sale_id' => $sale->id,
+                            'sale_item_id' => $saleItem?->id,
+                            'user_id' => $context->userId,
+                            'authorized_by_admin_id' => $context->authorizedByAdminId,
+                            'cash_shift_id' => $context->cashShiftId,
+                            'movement_type' => 'sale',
+                            'movement_notes' => $note,
+                        ]);
+                        $comboWeightedCost += $res['weighted_unit_cost'] * (float) $child->pivot->quantity;
+                    } elseif ($qtyDeducted < 0) {
+                        $this->batchService()->restoreFromSaleAllocations($sale, $canonicalChild, abs($qtyDeducted), [
+                            'user_id' => $context->userId,
+                            'authorized_by_admin_id' => $context->authorizedByAdminId,
+                            'cash_shift_id' => $context->cashShiftId,
+                            'movement_type' => 'in',
+                            'movement_notes' => "Ajuste Recall (Reversión Hijo de: {$product->name}) Venta #{$sale->id}",
+                        ]);
+                        $comboWeightedCost += ((float) $canonicalChild->cost_price) * (float) $child->pivot->quantity;
+                    }
+                } else {
+                    $effectiveDelta = $this->applyStockDeltaWithFractionSnap($canonicalChild, -$qtyDeducted);
+                    $canonicalChild->save(); // Dispara Observers
+
+                    $this->logMovement(
+                        $canonicalChild->id,
+                        $effectiveDelta,
+                        'sale',
+                        $note,
+                        $context,
+                        $sale
+                    );
+                    $comboWeightedCost += ((float) $canonicalChild->cost_price) * (float) $child->pivot->quantity;
+                }
                 $deductedIds[] = $canonicalChild->id;
+            }
+
+            if ($usedBatchChild && $updateSaleItemCost && $saleItem && $qty > 0) {
+                $saleItem->update(['unit_cost_price' => round($comboWeightedCost, 2)]);
             }
         } else {
             // Update the canonical product (which $product already is, as it comes from $products)
-            $effectiveDelta = $this->applyStockDeltaWithFractionSnap($product, -$qty);
-            $this->logMovement(
-                $product->id,
-                $effectiveDelta,
-                'sale',
-                ($isAdjustment ? 'Ajuste Recall ' : 'Venta ').StockMovement::CHECKOUT_NOTE_TOKEN."{$sale->id}",
-                $context,
-                $sale
-            );
+            if (BatchStockService::hasLotTrackingSchema() && $product->track_batches) {
+                if ($qty > 0) {
+                    $res = $this->batchService()->deductStockFEFO($product, $qty, [
+                        'sale_id' => $sale->id,
+                        'sale_item_id' => $saleItem?->id,
+                        'explicit_batch_id' => $explicitBatchId,
+                        'user_id' => $context->userId,
+                        'authorized_by_admin_id' => $context->authorizedByAdminId,
+                        'cash_shift_id' => $context->cashShiftId,
+                        'movement_type' => 'sale',
+                        'movement_notes' => ($isAdjustment ? 'Ajuste Recall ' : 'Venta ').StockMovement::CHECKOUT_NOTE_TOKEN."{$sale->id}",
+                    ]);
+                    if ($updateSaleItemCost && $saleItem) {
+                        $saleItem->update(['unit_cost_price' => $res['weighted_unit_cost']]);
+                    }
+                } elseif ($qty < 0) {
+                    $this->batchService()->restoreFromSaleAllocations($sale, $product, abs($qty), [
+                        'user_id' => $context->userId,
+                        'authorized_by_admin_id' => $context->authorizedByAdminId,
+                        'cash_shift_id' => $context->cashShiftId,
+                        'movement_type' => 'in',
+                        'movement_notes' => "Ajuste Recall Venta #{$sale->id}",
+                    ]);
+                }
+            } else {
+                $effectiveDelta = $this->applyStockDeltaWithFractionSnap($product, -$qty);
+                $this->logMovement(
+                    $product->id,
+                    $effectiveDelta,
+                    'sale',
+                    ($isAdjustment ? 'Ajuste Recall ' : 'Venta ').StockMovement::CHECKOUT_NOTE_TOKEN."{$sale->id}",
+                    $context,
+                    $sale
+                );
+            }
             $deductedIds[] = $product->id;
         }
 
@@ -367,9 +471,19 @@ class StockService
                 if (! $childProduct || $qtyToRestore <= 0 || $childProduct->is_service) {
                     continue;
                 }
-                $effectiveDelta = $this->applyStockDeltaWithFractionSnap($childProduct, +$qtyToRestore);
-                $childProduct->save();
-                $this->logMovement($childProduct->id, abs($effectiveDelta), 'in', "Reversión (Combo Rápido) Venta #{$sale->id}", $context, $sale);
+                if (BatchStockService::hasLotTrackingSchema() && $childProduct->track_batches) {
+                    $this->batchService()->restoreFromSaleAllocations($sale, $childProduct, $qtyToRestore, [
+                        'user_id' => $context->userId,
+                        'authorized_by_admin_id' => $context->authorizedByAdminId,
+                        'cash_shift_id' => $context->cashShiftId,
+                        'movement_type' => 'in',
+                        'movement_notes' => "Reversión (Combo Rápido) Venta #{$sale->id}",
+                    ]);
+                } else {
+                    $effectiveDelta = $this->applyStockDeltaWithFractionSnap($childProduct, +$qtyToRestore);
+                    $childProduct->save();
+                    $this->logMovement($childProduct->id, abs($effectiveDelta), 'in', "Reversión (Combo Rápido) Venta #{$sale->id}", $context, $sale);
+                }
                 $physicallyRestoredIds[] = $childProduct->id;
             }
         }
@@ -514,17 +628,37 @@ class StockService
             foreach ($product->children as $child) {
                 $qtyRestored = $qtyToRestore * (float) $child->pivot->quantity;
                 $canonicalChild = $products[$child->id] ?? $child;
-                $effectiveDelta = $this->applyStockDeltaWithFractionSnap($canonicalChild, +$qtyRestored);
-                $canonicalChild->save();
+                if (BatchStockService::hasLotTrackingSchema() && $canonicalChild->track_batches) {
+                    $this->batchService()->restoreFromSaleAllocations($sale, $canonicalChild, $qtyRestored, [
+                        'user_id' => $context->userId,
+                        'authorized_by_admin_id' => $context->authorizedByAdminId,
+                        'cash_shift_id' => $context->cashShiftId,
+                        'movement_type' => 'in',
+                        'movement_notes' => "Reversión (Combo Hijo) Venta #{$sale->id}",
+                    ]);
+                } else {
+                    $effectiveDelta = $this->applyStockDeltaWithFractionSnap($canonicalChild, +$qtyRestored);
+                    $canonicalChild->save();
 
-                $this->logMovement($canonicalChild->id, abs($effectiveDelta), 'in', "Reversión (Combo Hijo) Venta #{$sale->id}", $context, $sale);
+                    $this->logMovement($canonicalChild->id, abs($effectiveDelta), 'in', "Reversión (Combo Hijo) Venta #{$sale->id}", $context, $sale);
+                }
                 $restoredIds[] = $canonicalChild->id;
             }
         } else {
-            $effectiveDelta = $this->applyStockDeltaWithFractionSnap($product, +$qtyToRestore);
-            $product->save();
+            if (BatchStockService::hasLotTrackingSchema() && $product->track_batches) {
+                $this->batchService()->restoreFromSaleAllocations($sale, $product, $qtyToRestore, [
+                    'user_id' => $context->userId,
+                    'authorized_by_admin_id' => $context->authorizedByAdminId,
+                    'cash_shift_id' => $context->cashShiftId,
+                    'movement_type' => 'in',
+                    'movement_notes' => "Reversión por anulación de Venta #{$sale->id}",
+                ]);
+            } else {
+                $effectiveDelta = $this->applyStockDeltaWithFractionSnap($product, +$qtyToRestore);
+                $product->save();
 
-            $this->logMovement($product->id, abs($effectiveDelta), 'in', "Reversión por anulación de Venta #{$sale->id}", $context, $sale);
+                $this->logMovement($product->id, abs($effectiveDelta), 'in', "Reversión por anulación de Venta #{$sale->id}", $context, $sale);
+            }
             $restoredIds[] = $product->id;
         }
 
@@ -532,20 +666,115 @@ class StockService
     }
 
     /**
-     * Calculate historical cost for combos or normal products
+     * Descuenta stock al despachar un remito de entrega diferida (FEFO para lotes).
      */
-    public function calculateCostPrice(Product $product): float
+    public function deductForDeferredDelivery(DeliveryNote $note, Product $product, float $qtyDelivered, Collection $products, ?int $userId = null): void
+    {
+        if ($qtyDelivered <= 0 || $product->is_service) {
+            return;
+        }
+
+        if ($product->is_combo) {
+            foreach ($product->children as $child) {
+                $qtyDeducted = $qtyDelivered * (float) $child->pivot->quantity;
+                $canonicalChild = $products[$child->id] ?? $child;
+                if (BatchStockService::hasLotTrackingSchema() && $canonicalChild->track_batches) {
+                    $this->batchService()->deductStockFEFO($canonicalChild, $qtyDeducted, [
+                        'sale_id' => $note->sale_id,
+                        'user_id' => $userId,
+                        'movement_type' => 'sale',
+                        'movement_notes' => "Despacho Logístico (Hijo del Combo: {$product->name}) Remito #{$note->id}",
+                    ]);
+                } else {
+                    $effectiveDelta = $this->applyStockDeltaWithFractionSnap($canonicalChild, -$qtyDeducted);
+                    $canonicalChild->save();
+                    StockMovement::create([
+                        'product_id' => $canonicalChild->id,
+                        'user_id' => $userId,
+                        'sale_id' => $note->sale_id,
+                        'type' => 'sale',
+                        'quantity' => $effectiveDelta,
+                        'notes' => "Despacho Logístico (Hijo del Combo: {$product->name}) Remito #{$note->id}",
+                    ]);
+                }
+            }
+
+            return;
+        }
+
+        if (BatchStockService::hasLotTrackingSchema() && $product->track_batches) {
+            $this->batchService()->deductStockFEFO($product, $qtyDelivered, [
+                'sale_id' => $note->sale_id,
+                'user_id' => $userId,
+                'movement_type' => 'sale',
+                'movement_notes' => "Despacho Logístico Remito #{$note->id}",
+            ]);
+
+            return;
+        }
+
+        $effectiveDelta = $this->applyStockDeltaWithFractionSnap($product, -$qtyDelivered);
+        $product->save();
+
+        StockMovement::create([
+            'product_id' => $product->id,
+            'user_id' => $userId,
+            'sale_id' => $note->sale_id,
+            'type' => 'sale',
+            'quantity' => $effectiveDelta,
+            'notes' => "Despacho Logístico Remito #{$note->id}",
+        ]);
+    }
+
+    /**
+     * Calculate historical cost for combos or normal products (using real batch allocations when present).
+     */
+    public function calculateCostPrice(Product $product, ?Sale $sale = null): float
     {
         if ($product->is_combo) {
             $currentCostPrice = 0.0;
             foreach ($product->children as $child) {
-                $currentCostPrice += ((float) $child->cost_price * $child->pivot->quantity);
+                $childCost = ($sale !== null && $child->track_batches)
+                    ? $this->resolveAllocatedWeightedCost($sale, $child)
+                    : (float) $child->cost_price;
+                $currentCostPrice += ($childCost * $child->pivot->quantity);
             }
 
-            return $currentCostPrice;
+            return round($currentCostPrice, 2);
+        }
+
+        if ($sale !== null && $product->track_batches) {
+            return $this->resolveAllocatedWeightedCost($sale, $product);
         }
 
         return (float) $product->cost_price;
+    }
+
+    protected function resolveAllocatedWeightedCost(Sale $sale, Product $product): float
+    {
+        if (! BatchStockService::hasLotTrackingSchema()) {
+            return (float) $product->cost_price;
+        }
+
+        $allocations = \App\Models\SaleItemBatchAllocation::where('sale_id', $sale->id)
+            ->where('product_id', $product->id)
+            ->whereColumn('quantity', '>', 'restored_quantity')
+            ->get();
+
+        if ($allocations->isEmpty()) {
+            return (float) $product->cost_price;
+        }
+
+        $totalQty = 0.0;
+        $totalCost = 0.0;
+        foreach ($allocations as $alloc) {
+            $netQty = max(0.0, (float) $alloc->quantity - (float) $alloc->restored_quantity);
+            $unitCost = $alloc->unit_cost !== null ? (float) $alloc->unit_cost : (float) $product->cost_price;
+            $totalQty += $netQty;
+            $totalCost += $netQty * $unitCost;
+        }
+
+        return $totalQty > 0.0005 ? round($totalCost / $totalQty, 2) : (float) $product->cost_price;
     }
 
     protected function logMovement(int $productId, float $quantity, string $type, string $notes, SaleContextDTO $context, ?Sale $sale = null): void

@@ -9,6 +9,7 @@ use App\Models\EcommerceSyncLog;
 use App\Models\EcommerceWebhook;
 use App\Models\Product;
 use App\Models\StockMovement;
+use App\Services\BatchStockService;
 use App\Services\Ecommerce\EcommerceManager;
 use App\Services\StockService;
 use Illuminate\Bus\Queueable;
@@ -270,21 +271,32 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
                         : (float) $product->stock;
 
                     if ($product->is_combo) {
+                        $batchService = app(BatchStockService::class);
                         // Combo sale: deduct from component children
                         foreach ($product->children as $child) {
                             $lockedChild = $lockedProducts->get($child->id) ?? Product::find($child->id);
                             if ($lockedChild) {
                                 $pivotQty = (float) ($child->pivot->quantity ?? 1);
                                 $childDeduct = $qty * $pivotQty;
-                                $lockedChild->stock = (float) $lockedChild->stock - $childDeduct;
-                                $lockedChild->save();
 
-                                StockMovement::create([
-                                    'product_id' => $lockedChild->id,
-                                    'type' => 'sale_ecommerce',
-                                    'quantity' => $childDeduct,
-                                    'notes' => "Venta Online {$webhook->platform} Orden #{$externalOrderId} (Hijo de Combo #{$product->id})",
-                                ]);
+                                if (BatchStockService::hasLotTrackingSchema() && $lockedChild->track_batches) {
+                                    $batchService->deductStockFEFO($lockedChild, $childDeduct, [
+                                        'movement_type' => 'sale_ecommerce',
+                                        'movement_notes' => "Venta Online {$webhook->platform} Orden #{$externalOrderId} (Hijo de Combo #{$product->id})",
+                                        'ignore_expired_guard' => true,
+                                    ]);
+                                    $lockedChild->refresh();
+                                } else {
+                                    $lockedChild->stock = (float) $lockedChild->stock - $childDeduct;
+                                    $lockedChild->save();
+
+                                    StockMovement::create([
+                                        'product_id' => $lockedChild->id,
+                                        'type' => 'sale_ecommerce',
+                                        'quantity' => $childDeduct,
+                                        'notes' => "Venta Online {$webhook->platform} Orden #{$externalOrderId} (Hijo de Combo #{$product->id})",
+                                    ]);
+                                }
 
                                 $affectedProductsToPropagate[$lockedChild->id] = (float) $lockedChild->stock;
                             }
@@ -296,18 +308,27 @@ class ProcessInboundEcommerceWebhookJob implements ShouldQueue
                         $status = 'success';
                     } else {
                         // Single product sale
-                        $product->stock = (float) $product->stock - $qty;
-                        $product->save();
+                        if (BatchStockService::hasLotTrackingSchema() && $product->track_batches) {
+                            app(BatchStockService::class)->deductStockFEFO($product, $qty, [
+                                'movement_type' => 'sale_ecommerce',
+                                'movement_notes' => "Venta Online {$webhook->platform} Orden #{$externalOrderId}",
+                                'ignore_expired_guard' => true,
+                            ]);
+                            $product->refresh();
+                        } else {
+                            $product->stock = (float) $product->stock - $qty;
+                            $product->save();
+
+                            StockMovement::create([
+                                'product_id' => $product->id,
+                                'type' => 'sale_ecommerce',
+                                'quantity' => $qty,
+                                'notes' => "Venta Online {$webhook->platform} Orden #{$externalOrderId}",
+                            ]);
+                        }
 
                         $stockAfter = (float) $product->stock;
                         $status = $stockAfter < 0 ? 'stock_conflict_review' : 'success';
-
-                        StockMovement::create([
-                            'product_id' => $product->id,
-                            'type' => 'sale_ecommerce',
-                            'quantity' => $qty,
-                            'notes' => "Venta Online {$webhook->platform} Orden #{$externalOrderId}",
-                        ]);
 
                         $affectedProductsToPropagate[$product->id] = $stockAfter;
                     }

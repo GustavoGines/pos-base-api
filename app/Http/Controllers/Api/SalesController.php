@@ -30,11 +30,11 @@ class SalesController extends Controller
         $userId = $request->query('user_id');
 
         $query = Sale::with([
-            'items.product:id,name,internal_code,stock,is_sold_by_weight,selling_price',
+            'items.product:id,name,internal_code,stock,is_sold_by_weight,is_service,selling_price',
             'items.product.offers',
             'user:id,name',
             'cashier:id,name',
-            'customer:id,name,document_type,document_number,tax_condition,fiscal_address,delivery_address',
+            'customer:id,name,document_type,document_number,tax_condition,fiscal_address,delivery_address,applies_iibb_perception,iibb_perception_rate',
             'cashShift.cashRegister:id,name',
             'payments.paymentMethod:id,name,code,is_cash',
             'electronicInvoice',
@@ -103,12 +103,12 @@ class SalesController extends Controller
     public function show(Sale $sale)
     {
         $sale->load([
-            'items.product:id,name,internal_code,is_sold_by_weight,selling_price',
+            'items.product:id,name,internal_code,is_sold_by_weight,is_service,selling_price',
             'items.product.offers',
             'user:id,name',
             'cashier:id,name',
             'cashShift.cashRegister:id,name',
-            'customer:id,name,document_number',
+            'customer:id,name,document_type,document_number,tax_condition,fiscal_address,delivery_address,applies_iibb_perception,iibb_perception_rate',
             'payments.paymentMethod:id,name,code,is_cash',
             'electronicInvoice',
             'deliveryNote.items.product:id,name,internal_code,is_sold_by_weight',
@@ -124,7 +124,7 @@ class SalesController extends Controller
     public function pending(Request $request)
     {
         $query = Sale::with([
-            'items.product:id,name,internal_code,stock,is_sold_by_weight,selling_price,cost_price,price_wholesale,price_card',
+            'items.product:id,name,barcode,internal_code,stock,is_sold_by_weight,selling_price,cost_price,price_wholesale,price_card',
             'user:id,name',
             'cashier:id,name',
             'cashShift.cashRegister:id,name',

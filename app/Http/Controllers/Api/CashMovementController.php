@@ -399,10 +399,11 @@ class CashMovementController extends Controller
                 if ($movement->supplier_id) {
                     $supplier = Supplier::where('id', $movement->supplier_id)->lockForUpdate()->first();
                     if ($supplier) {
+                        $movementAmount = (float) ($movement->amount ?? 0);
                         if (in_array($movement->type, ['supplier_payment', 'expense'])) {
-                            $supplier->increment('balance', $movement->amount);
+                            $supplier->increment('balance', $movementAmount);
                         } elseif ($movement->type === 'deposit') {
-                            $supplier->decrement('balance', $movement->amount);
+                            $supplier->decrement('balance', $movementAmount);
                         }
                     }
                 }
