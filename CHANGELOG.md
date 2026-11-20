@@ -2,13 +2,19 @@
 Todos los cambios notables del servidor base están documentados aquí.
 
 
-## [2.1.0] - 2026-11-03
-### Facturación Electrónica ARCA / AFIP y Seguridad
+## [2.1.0] - 2026-11-20
+### Facturación Electrónica ARCA / AFIP, Libro IVA y Seguridad
 - Soporte integral para Factura A, B y C con cálculo de IVA discriminado y validación de padrón/receptor.
 - Generador de CSR y configuración guiada de certificados digitales ARCA/AFIP con soporte de entorno Demo (Homologación) y Producción.
+- Libro IVA Compras y Ventas, posición mensual de IVA, desglose fiscal de comprobantes y percepciones IIBB en compras y facturación diferida.
 - Verificación criptográfica Ed25519 offline/online para validación de licencias y planes modulares.
+### Lotes, Vencimientos, Producción Propia y Aislamiento por Rubro (Opción 1A)
+- Control de lotes y vencimientos con despacho automático FEFO/FIFO, auto-activación desde compras, reserva/liberación en presupuestos y alertas predictivas.
+- Módulo de Producción Propia y recetas multi-nivel con descuento automático de insumos y registro de mermas.
+- Aislamiento modular `batch_expiration` y `production` en licencias y rutas protegidas por rubro (`retail` vs `hardware_store`), manteniendo compatibilidad 100% con v1.8.5.
 ### Catálogo, Reportes y Branding Caja4U
 - Rebranding del motor backend a **Caja4U** manteniendo compatibilidad total con variables de entorno y sesiones existentes.
+- Porciones en combos, edición rápida de precios desde carrito y filtros de ordenamiento avanzados en catálogo.
 - Optimización de consultas SQL en alertas predictivas de inventario (`havingRaw`) compatible con MySQL `only_full_group_by`.
 - Traducciones completas de validación al español (`lang/es/validation.php`) y seeder de datos de demostración (`DemoMarketingDataSeeder`).
 
