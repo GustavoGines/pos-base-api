@@ -20,6 +20,30 @@ use Illuminate\Support\Facades\DB;
 class ProductBatchController extends Controller
 {
     /**
+     * Relaciones estándar de producto para sincronización integral con el catálogo en frontend.
+     */
+    protected function productRelations(): array
+    {
+        $relations = [
+            'category.rubro',
+            'brand',
+            'supplier',
+            'children',
+            'priceTiers',
+        ];
+
+        if (BatchStockService::hasProductionRecipeSchema()) {
+            $ingCols = 'id,name,internal_code,cost_price,stock,unit_type,is_sold_by_weight';
+            if (BatchStockService::hasLotTrackingSchema()) {
+                $ingCols .= ',track_batches';
+            }
+            $relations[] = "recipeItems.ingredient:{$ingCols}";
+        }
+
+        return $relations;
+    }
+
+    /**
      * Lista los lotes de un producto ordenados con los lotes activos / déficit primero (FEFO).
      * GET /api/catalog/products/{product}/batches
      */
@@ -134,7 +158,7 @@ class ProductBatchController extends Controller
         return response()->json([
             'message' => 'Lote registrado correctamente.',
             'batch' => $this->formatBatch($created),
-            'product' => $product->load(['category.rubro', 'brand', 'supplier', 'children', 'priceTiers']),
+            'product' => $product->load($this->productRelations()),
         ], 201);
     }
 
@@ -175,7 +199,7 @@ class ProductBatchController extends Controller
         return response()->json([
             'message' => 'Lote actualizado correctamente.',
             'batch' => $this->formatBatch($updatedBatch),
-            'product' => $batch->product()->first(),
+            'product' => $batch->product()->with($this->productRelations())->first(),
         ]);
     }
 
@@ -191,15 +215,16 @@ class ProductBatchController extends Controller
         ]);
 
         try {
-            $writtenOffBatch = DB::transaction(function () use ($request, $batch, $validated) {
+            $result = DB::transaction(function () use ($request, $batch, $validated) {
                 // Orden canónico anti-deadlock: Product primero -> ProductBatch después
-                Product::where('id', $batch->product_id)->lockForUpdate()->firstOrFail();
+                $lockedProduct = Product::where('id', $batch->product_id)->lockForUpdate()->firstOrFail();
+                $beforeRemaining = (float) ProductBatch::where('id', $batch->id)->lockForUpdate()->value('remaining_quantity');
 
                 $actorUser = $request->user() ?? $request->attributes->get('authenticated_user');
                 $adminId = $request->attributes->get('authorized_by_admin_id')
                     ?? ($actorUser?->isAdmin() ? $actorUser->id : null);
 
-                return app(BatchStockService::class)->writeOffBatch(
+                $writtenOffBatch = app(BatchStockService::class)->writeOffBatch(
                     $batch,
                     isset($validated['quantity']) ? (float) $validated['quantity'] : null,
                     [
@@ -208,6 +233,17 @@ class ProductBatchController extends Controller
                         'notes' => $validated['notes'] ?? "Merma / baja por vencimiento ({$batch->batch_code})",
                     ]
                 );
+
+                $writtenOffQty = max(0.0, round($beforeRemaining - (float) $writtenOffBatch->remaining_quantity, 3));
+                $unitCost = $writtenOffBatch->unit_cost !== null
+                    ? (float) $writtenOffBatch->unit_cost
+                    : (float) $lockedProduct->cost_price;
+
+                return [
+                    'batch' => $writtenOffBatch,
+                    'written_off_quantity' => $writtenOffQty,
+                    'cost_lost' => round($writtenOffQty * $unitCost, 2),
+                ];
             });
         } catch (\InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
@@ -222,8 +258,10 @@ class ProductBatchController extends Controller
 
         return response()->json([
             'message' => 'Baja por merma registrada correctamente.',
-            'batch' => $this->formatBatch($writtenOffBatch),
-            'product' => $product,
+            'batch' => $this->formatBatch($result['batch']),
+            'product' => $product?->load($this->productRelations()),
+            'written_off_quantity' => $result['written_off_quantity'],
+            'cost_lost' => $result['cost_lost'],
         ]);
     }
 
@@ -357,7 +395,7 @@ class ProductBatchController extends Controller
             'message' => 'Sub-lote de vitrina creado correctamente.',
             'source_batch' => $this->formatBatch($result['source_batch']),
             'batch' => $this->formatBatch($result['new_batch']),
-            'product' => $product->load(['category.rubro', 'brand', 'supplier', 'children', 'priceTiers']),
+            'product' => $product->load($this->productRelations()),
         ], 201);
     }
 

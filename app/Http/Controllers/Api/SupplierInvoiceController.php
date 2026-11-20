@@ -932,10 +932,16 @@ class SupplierInvoiceController extends Controller
         $requestedIds = array_values(array_unique(array_column($items, 'product_id')));
         [$lockedProducts, $parentComboIds] = $this->lockProductsGraph($requestedIds);
         $batchService = app(BatchStockService::class);
+        $preInvoiceCosts = [];
+        foreach ($lockedProducts as $lpId => $lp) {
+            $preInvoiceCosts[$lpId] = (float) $lp->cost_price;
+        }
 
         foreach ($items as $itemData) {
             $product = $lockedProducts->get($itemData['product_id']);
-            $previousCost = $product ? (float) $product->cost_price : null;
+            $previousCost = $product
+                ? ($preInvoiceCosts[$product->id] ?? (float) $product->cost_price)
+                : null;
             $rawNewPrice = $itemData['new_selling_price'] ?? $itemData['new_sale_price'] ?? null;
             $effectiveSellingPrice = ($rawNewPrice !== null && (float) $rawNewPrice > 0)
                 ? (float) $rawNewPrice
@@ -965,6 +971,11 @@ class SupplierInvoiceController extends Controller
             $absQty = abs((float) $itemData['quantity']);
             $quantityModifier = $isCreditNote ? -$absQty : $absQty;
             $invNumLabel = $invoice->invoice_number ?? 'S/N';
+            $hasExplicitLotInput = ! $isCreditNote
+                && (
+                    ! empty(trim((string) ($itemData['batch_code'] ?? '')))
+                    || ! empty($itemData['expiration_date'])
+                );
 
             if ($product->is_combo && $product->children->isNotEmpty()) {
                 foreach ($product->children as $child) {
@@ -1022,7 +1033,12 @@ class SupplierInvoiceController extends Controller
                 $product->stock = $product->calculateComboAvailableStock();
                 $product->save();
                 $affectedProductIds[] = $product->id;
-            } elseif (BatchStockService::hasLotTrackingSchema() && $product->track_batches && ! $product->is_service) {
+            } elseif (BatchStockService::hasLotTrackingSchema() && ! $product->is_service && ($product->track_batches || $hasExplicitLotInput)) {
+                if (! $product->track_batches) {
+                    $product->track_batches = true;
+                    $product->save();
+                }
+                // Materializar primero el stock previo con su costo y vencimiento históricos antes de aplicar la compra nueva
                 $batchService->ensureInitialBatchOnEnable($product, $userId);
 
                 if (! $isCreditNote) {

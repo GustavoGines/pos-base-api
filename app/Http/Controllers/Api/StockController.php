@@ -42,7 +42,17 @@ class StockController extends Controller
                         ?? ($actorUser?->isAdmin() ? $actorUser->id : null);
                     $notes = $validated['notes'] ?? 'Ajuste manual desde panel de control';
 
-                    if (BatchStockService::hasLotTrackingSchema() && $lockedProduct->track_batches && ! $lockedProduct->is_service) {
+                    $hasExplicitLotInput = $type === 'in'
+                        && (
+                            ! empty(trim((string) ($validated['batch_code'] ?? '')))
+                            || ! empty($validated['expiration_date'])
+                        );
+
+                    if (BatchStockService::hasLotTrackingSchema() && ! $lockedProduct->is_service && ($lockedProduct->track_batches || $hasExplicitLotInput)) {
+                        if (! $lockedProduct->track_batches) {
+                            $lockedProduct->track_batches = true;
+                            $lockedProduct->save();
+                        }
                         $batchService = app(BatchStockService::class);
                         $batchService->ensureInitialBatchOnEnable($lockedProduct, $userId);
 
@@ -92,13 +102,15 @@ class StockController extends Controller
                             $lockedProduct->save();
                         }
 
+                        $isWasteOut = ($validated['reason_code'] ?? null) === 'waste' && $type === 'out';
+
                         // Registrar el movimiento solo si hubo cambio físico de stock
                         StockMovement::create([
                             'product_id' => $lockedProduct->id,
                             'user_id' => $userId,
                             'authorized_by_admin_id' => $adminId,
-                            'type' => ($validated['reason_code'] ?? null) === 'waste' ? 'waste' : $type,
-                            'quantity' => $validated['quantity'],
+                            'type' => $isWasteOut ? 'waste' : $type,
+                            'quantity' => $isWasteOut ? -abs((float) $validated['quantity']) : $validated['quantity'],
                             'unit_cost' => $lockedProduct->cost_price,
                             'notes' => $notes,
                         ]);
@@ -124,9 +136,18 @@ class StockController extends Controller
 
         $product->refresh();
 
+        $relations = ['category.rubro', 'brand', 'supplier', 'children', 'priceTiers'];
+        if (BatchStockService::hasProductionRecipeSchema()) {
+            $ingCols = 'id,name,internal_code,cost_price,stock,unit_type,is_sold_by_weight';
+            if (BatchStockService::hasLotTrackingSchema()) {
+                $ingCols .= ',track_batches';
+            }
+            $relations[] = "recipeItems.ingredient:{$ingCols}";
+        }
+
         return response()->json([
             'message' => 'Gestión de stock procesada con éxito.',
-            'product' => $product->load(['category', 'brand', 'supplier']), // Enviamos el objeto completo para el frontend
+            'product' => $product->load($relations), // Enviamos el objeto completo para el frontend
             'new_stock' => $product->stock,
         ]);
     }

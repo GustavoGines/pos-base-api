@@ -7,6 +7,7 @@ namespace Tests\Feature;
 use App\Jobs\ProcessInboundEcommerceWebhookJob;
 use App\Models\CashRegister;
 use App\Models\CashShift;
+use App\Models\Category;
 use App\Models\EcommerceIntegration;
 use App\Models\EcommerceProductMapping;
 use App\Models\EcommerceWebhook;
@@ -1146,5 +1147,368 @@ class BatchExpirationAndProductionTest extends TestCase
         $this->assertEquals($expectedExp, $res->json('orders.0.produced_batch.expiration_date'));
         $this->assertEquals(6, (int) $cake->fresh()->vencimiento_dias);
         $this->assertEquals($expectedExp, $cake->fresh()->expiration_date?->format('Y-m-d'));
+    }
+
+    public function test_alert_actions_write_off_update_snooze_and_legacy_waste_contracts(): void
+    {
+        $category = Category::create(['name' => 'Pastelería Artesanal']);
+
+        // 1. Producto con seguimiento por lotes
+        $batchProd = Product::create([
+            'name' => 'Selva Negra Loteada',
+            'internal_code' => '81101',
+            'category_id' => $category->id,
+            'cost_price' => 2500,
+            'selling_price' => 6200,
+            'stock' => 0,
+            'active' => true,
+            'track_batches' => true,
+            'expiry_alert_days' => 60,
+        ]);
+
+        $batchCreate = $this->withHeaders($this->authHeaders())
+            ->postJson("/api/catalog/products/{$batchProd->id}/batches", [
+                'quantity' => 5,
+                'batch_code' => 'SEL-01',
+                'expiration_date' => now()->addDays(45)->format('Y-m-d'),
+                'unit_cost' => 2400,
+            ])
+            ->assertCreated();
+        $this->assertEquals('Pastelería Artesanal', $batchCreate->json('product.category.name'));
+        $batchId = (int) $batchCreate->json('batch.id');
+
+        // 2. Snooze siguiente etapa en vida útil larga (45d) fija snoozed_until > 40 días
+        $snoozeRes = $this->withHeaders($this->authHeaders())
+            ->postJson("/api/inventory/alerts/{$batchProd->id}/snooze", [
+                'action' => 'snooze_next_stage',
+                'batch_id' => $batchId,
+            ])
+            ->assertOk();
+        $snoozedUntil = \Carbon\Carbon::parse((string) $snoozeRes->json('snoozed_until'));
+        $this->assertGreaterThan(40, now()->diffInDays($snoozedUntil, false));
+
+        // 3. PATCH /api/batches/{batch} devuelve product.category cargado
+        $newExp = now()->addDays(10)->format('Y-m-d');
+        $patchRes = $this->withHeaders($this->authHeaders())
+            ->patchJson("/api/batches/{$batchId}", [
+                'expiration_date' => $newExp,
+            ])
+            ->assertOk();
+        $this->assertEquals('Pastelería Artesanal', $patchRes->json('product.category.name'));
+
+        // 4. Snooze update_expiration y clear_expiration devuelven product.category cargado
+        $updExp = now()->addDays(12)->format('Y-m-d');
+        $updRes = $this->withHeaders($this->authHeaders())
+            ->postJson("/api/inventory/alerts/{$batchProd->id}/snooze", [
+                'action' => 'update_expiration',
+                'batch_id' => $batchId,
+                'expiration_date' => $updExp,
+            ])
+            ->assertOk();
+        $this->assertEquals('Pastelería Artesanal', $updRes->json('product.category.name'));
+        $this->assertEquals($updExp, $updRes->json('batch.expiration_date'));
+
+        $clrRes = $this->withHeaders($this->authHeaders())
+            ->postJson("/api/inventory/alerts/{$batchProd->id}/snooze", [
+                'action' => 'clear_expiration',
+                'batch_id' => $batchId,
+            ])
+            ->assertOk();
+        $this->assertEquals('Pastelería Artesanal', $clrRes->json('product.category.name'));
+        $this->assertNull($clrRes->json('batch.expiration_date'));
+
+        // 5. Write-off parcial de lote retorna cost_lost, written_off_quantity y product.category
+        $writeOffRes = $this->withHeaders($this->authHeaders())
+            ->postJson("/api/batches/{$batchId}/write-off", [
+                'quantity' => 2,
+                'notes' => 'Merma parcial test',
+            ])
+            ->assertOk();
+        $this->assertEquals(2.0, (float) $writeOffRes->json('written_off_quantity'));
+        $this->assertEquals(4800.0, (float) $writeOffRes->json('cost_lost'));
+        $this->assertEquals('Pastelería Artesanal', $writeOffRes->json('product.category.name'));
+
+        // 6. Producto sin lotes: adjust-stock waste registra cantidad negativa en Kardex y devuelve product.category
+        $legacyProd = Product::create([
+            'name' => 'Alfajor Clásico',
+            'internal_code' => '81102',
+            'category_id' => $category->id,
+            'cost_price' => 600,
+            'selling_price' => 1400,
+            'stock' => 10,
+            'active' => true,
+            'track_batches' => false,
+        ]);
+
+        $adjRes = $this->withHeaders($this->authHeaders())
+            ->postJson("/api/catalog/products/{$legacyProd->id}/adjust-stock", [
+                'type' => 'out',
+                'quantity' => 3,
+                'reason_code' => 'waste',
+                'notes' => 'Alfajor roto en mostrador',
+            ])
+            ->assertOk();
+        $this->assertEquals('Pastelería Artesanal', $adjRes->json('product.category.name'));
+        $this->assertEquals(7.0, (float) $adjRes->json('new_stock'));
+
+        $mv = StockMovement::where('product_id', $legacyProd->id)
+            ->where('type', 'waste')
+            ->latest('id')
+            ->firstOrFail();
+        $this->assertEquals(-3.0, (float) $mv->quantity);
+    }
+
+    public function test_non_batch_product_auto_enables_batches_from_supplier_invoice_and_stock_adjustment_preserving_existing_stock(): void
+    {
+        \App\Models\BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['suppliers' => true])]
+        );
+
+        $supplier = Supplier::create([
+            'name' => 'Distribuidora Ledesma',
+            'cuit' => '30-66666666-6',
+            'balance' => 0,
+        ]);
+
+        // 1. Azúcar Ledesma SIN control por lotes previo, con 10 u. a costo $900 y vto +20d
+        $sugarOldExp = now()->addDays(20)->format('Y-m-d');
+        $sugarNewExp = now()->addDays(90)->format('Y-m-d');
+        $sugar = Product::create([
+            'name' => 'Azúcar Ledesma 1kg',
+            'internal_code' => '81201',
+            'cost_price' => 900,
+            'selling_price' => 1800,
+            'stock' => 10,
+            'active' => true,
+            'track_batches' => false,
+            'expiration_date' => $sugarOldExp,
+        ]);
+
+        // Compra en proveedor con lote y vencimiento -> auto-activa control por lotes protegiendo las 10 u. previas
+        $invRes = $this->withHeaders($this->authHeaders())
+            ->postJson("/api/suppliers/{$supplier->id}/invoices", [
+                'type' => 'delivery_note',
+                'invoice_number' => 'R-0001-00000901',
+                'items' => [[
+                    'product_id' => $sugar->id,
+                    'quantity' => 20,
+                    'unit_cost' => 1100,
+                    'subtotal' => 22000,
+                    'batch_code' => 'LED-COMP-01',
+                    'expiration_date' => $sugarNewExp,
+                ]],
+            ])
+            ->assertOk();
+        $invId = (int) $invRes->json('id');
+
+        $sugar->refresh();
+        $this->assertTrue((bool) $sugar->track_batches);
+        $this->assertEquals(30.0, (float) $sugar->stock);
+        $this->assertEquals($sugarOldExp, $sugar->expiration_date?->format('Y-m-d'));
+
+        $initialBatch = ProductBatch::where('product_id', $sugar->id)
+            ->where('batch_code', 'LOT-INICIAL-'.$sugar->id)
+            ->firstOrFail();
+        $this->assertEquals(10.0, (float) $initialBatch->remaining_quantity);
+        $this->assertEquals(900.0, (float) $initialBatch->unit_cost);
+        $this->assertEquals($sugarOldExp, $initialBatch->expiration_date?->format('Y-m-d'));
+
+        $purchasedBatch = ProductBatch::where('product_id', $sugar->id)
+            ->where('batch_code', 'LED-COMP-01')
+            ->firstOrFail();
+        $this->assertEquals(20.0, (float) $purchasedBatch->remaining_quantity);
+        $this->assertEquals(1100.0, (float) $purchasedBatch->unit_cost);
+        $this->assertEquals($sugarNewExp, $purchasedBatch->expiration_date?->format('Y-m-d'));
+
+        $invItem = \App\Models\SupplierInvoice::with('items')->findOrFail($invId)->items->firstOrFail();
+        $this->assertEquals($purchasedBatch->id, (int) $invItem->batch_id);
+
+        // 2. Harina 0000 SIN lotes previos con 5 u. -> Ajuste de Stock Ingreso (+) con vencimiento +60d
+        $flourOldExp = now()->addDays(15)->format('Y-m-d');
+        $flourNewExp = now()->addDays(60)->format('Y-m-d');
+        $flour = Product::create([
+            'name' => 'Harina 0000 1kg',
+            'internal_code' => '81202',
+            'cost_price' => 700,
+            'selling_price' => 1500,
+            'stock' => 5,
+            'active' => true,
+            'track_batches' => false,
+            'expiration_date' => $flourOldExp,
+        ]);
+
+        $this->withHeaders($this->authHeaders())
+            ->postJson("/api/catalog/products/{$flour->id}/adjust-stock", [
+                'type' => 'in',
+                'quantity' => 8,
+                'batch_code' => 'HAR-AJ-01',
+                'expiration_date' => $flourNewExp,
+                'notes' => 'Ingreso manual con vencimiento',
+            ])
+            ->assertOk();
+
+        $flour->refresh();
+        $this->assertTrue((bool) $flour->track_batches);
+        $this->assertEquals(13.0, (float) $flour->stock);
+        $this->assertEquals(2, ProductBatch::where('product_id', $flour->id)->count());
+        $this->assertEquals(5.0, (float) ProductBatch::where('batch_code', 'LOT-INICIAL-'.$flour->id)->value('remaining_quantity'));
+        $this->assertEquals(8.0, (float) ProductBatch::where('batch_code', 'HAR-AJ-01')->value('remaining_quantity'));
+
+        // 3. Producto no perecedero (Bolsas) sin lote ni fecha mantiene track_batches = false
+        $bags = Product::create([
+            'name' => 'Bolsas Camiseta x100',
+            'internal_code' => '81203',
+            'cost_price' => 300,
+            'selling_price' => 700,
+            'stock' => 4,
+            'active' => true,
+            'track_batches' => false,
+        ]);
+
+        $this->withHeaders($this->authHeaders())
+            ->postJson("/api/suppliers/{$supplier->id}/invoices", [
+                'type' => 'delivery_note',
+                'invoice_number' => 'R-0001-00000902',
+                'items' => [[
+                    'product_id' => $bags->id,
+                    'quantity' => 6,
+                    'unit_cost' => 320,
+                    'subtotal' => 1920,
+                ]],
+            ])
+            ->assertOk();
+
+        $this->withHeaders($this->authHeaders())
+            ->postJson("/api/catalog/products/{$bags->id}/adjust-stock", [
+                'type' => 'in',
+                'quantity' => 2,
+                'notes' => 'Reposición sin vencimiento',
+            ])
+            ->assertOk();
+
+        $bags->refresh();
+        $this->assertFalse((bool) $bags->track_batches);
+        $this->assertEquals(12.0, (float) $bags->stock);
+        $this->assertEquals(0, ProductBatch::where('product_id', $bags->id)->count());
+
+        // 4. Vender 12 u. de Azúcar Ledesma -> FEFO consume las 10 iniciales (+20d) + 2 de LED-COMP-01 (+90d) y bloquea anular la compra
+        $this->withHeaders($this->authHeaders())
+            ->postJson('/api/pos/sales', [
+                'cash_shift_id' => $this->shift->id,
+                'total' => 21600,
+                'total_surcharge' => 0,
+                'items' => [[
+                    'product_id' => $sugar->id,
+                    'quantity' => 12,
+                    'unit_price' => 1800,
+                    'subtotal' => 21600,
+                ]],
+                'payments' => [[
+                    'payment_method_id' => $this->cashMethod->id,
+                    'base_amount' => 21600,
+                    'surcharge_amount' => 0,
+                    'total_amount' => 21600,
+                ]],
+            ])
+            ->assertCreated();
+
+        $sugar->refresh();
+        $this->assertEquals(18.0, (float) $sugar->stock);
+        $this->assertEquals($sugarNewExp, $sugar->expiration_date?->format('Y-m-d'));
+        $this->assertEquals(ProductBatch::STATUS_EXHAUSTED, $initialBatch->fresh()->status);
+        $this->assertEquals(18.0, (float) $purchasedBatch->fresh()->remaining_quantity);
+
+        $this->withHeaders($this->authHeaders())
+            ->deleteJson("/api/supplier-invoices/{$invId}", ['reason' => 'Intento con lote consumido'])
+            ->assertStatus(422);
+    }
+
+    public function test_supplier_invoice_multiple_lots_same_product_and_clean_rollback(): void
+    {
+        \App\Models\BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['suppliers' => true])]
+        );
+
+        $supplier = Supplier::create([
+            'name' => 'Mayorista Ledesma',
+            'cuit' => '30-77777777-7',
+            'balance' => 0,
+        ]);
+
+        $sugar = Product::create([
+            'name' => 'Azúcar Ledesma 1kg Pack',
+            'internal_code' => '81250',
+            'cost_price' => 1000,
+            'selling_price' => 1800,
+            'stock' => 0,
+            'active' => true,
+            'track_batches' => false,
+        ]);
+
+        // Dos packs del MISMO producto en la MISMA factura con distinta fecha de vencimiento y distinto costo
+        $invRes = $this->withHeaders($this->authHeaders())
+            ->postJson("/api/suppliers/{$supplier->id}/invoices", [
+                'type' => 'delivery_note',
+                'invoice_number' => 'R-0001-00000950',
+                'items' => [
+                    [
+                        'product_id' => $sugar->id,
+                        'quantity' => 10,
+                        'unit_cost' => 1200,
+                        'subtotal' => 12000,
+                        'expiration_date' => '2027-06-15',
+                    ],
+                    [
+                        'product_id' => $sugar->id,
+                        'quantity' => 10,
+                        'unit_cost' => 1350,
+                        'subtotal' => 13500,
+                        'expiration_date' => '2027-11-20',
+                    ],
+                ],
+            ])
+            ->assertOk();
+
+        $invId = (int) $invRes->json('id');
+
+        $sugar->refresh();
+        $this->assertTrue((bool) $sugar->track_batches);
+        $this->assertEquals(20.0, (float) $sugar->stock);
+        $this->assertEquals('2027-06-15', $sugar->expiration_date?->format('Y-m-d'));
+
+        $batches = ProductBatch::where('product_id', $sugar->id)
+            ->where('status', ProductBatch::STATUS_ACTIVE)
+            ->orderBy('expiration_date', 'asc')
+            ->get();
+
+        $this->assertCount(2, $batches);
+        $this->assertEquals('2027-06-15', $batches[0]->expiration_date?->format('Y-m-d'));
+        $this->assertEquals(1200.0, (float) $batches[0]->unit_cost);
+        $this->assertEquals(10.0, (float) $batches[0]->remaining_quantity);
+        $this->assertEquals('2027-11-20', $batches[1]->expiration_date?->format('Y-m-d'));
+        $this->assertEquals(1350.0, (float) $batches[1]->unit_cost);
+        $this->assertEquals(10.0, (float) $batches[1]->remaining_quantity);
+        $this->assertNotEquals($batches[0]->batch_code, $batches[1]->batch_code);
+
+        // Todos los renglones guardan el cost_price previo a la factura ($1000)
+        $invItems = \App\Models\SupplierInvoice::with('items')->findOrFail($invId)->items;
+        $this->assertCount(2, $invItems);
+        foreach ($invItems as $itemRow) {
+            $this->assertEquals(1000.0, (float) $itemRow->previous_cost);
+        }
+
+        // Al anular la factura: se anulan ambos lotes y se restauran stock = 0 y cost_price = 1000
+        $this->withHeaders($this->authHeaders())
+            ->deleteJson("/api/supplier-invoices/{$invId}", ['reason' => 'Error de remito'])
+            ->assertOk();
+
+        $sugar->refresh();
+        $this->assertEquals(0.0, (float) $sugar->stock);
+        $this->assertEquals(1000.0, (float) $sugar->cost_price);
+        $this->assertNull($sugar->expiration_date);
+        $this->assertEquals(0, ProductBatch::where('product_id', $sugar->id)->where('status', ProductBatch::STATUS_ACTIVE)->count());
+        $this->assertEquals(2, ProductBatch::where('product_id', $sugar->id)->where('status', ProductBatch::STATUS_VOIDED)->count());
     }
 }

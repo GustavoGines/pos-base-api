@@ -591,7 +591,7 @@ class ProductController extends Controller
 
                 return response()->json([
                     'message' => 'Fecha de vencimiento quitada del producto.',
-                    'product' => $lockedProduct->fresh(),
+                    'product' => $lockedProduct->fresh($this->productRelations()),
                     'batch' => $targetBatch?->fresh(),
                 ]);
             }
@@ -614,7 +614,7 @@ class ProductController extends Controller
 
                 return response()->json([
                     'message' => 'Nueva fecha de vencimiento registrada.',
-                    'product' => $lockedProduct->fresh(),
+                    'product' => $lockedProduct->fresh($this->productRelations()),
                     'batch' => $targetBatch?->fresh(),
                 ]);
             }
@@ -637,7 +637,10 @@ class ProductController extends Controller
 
             $snoozeDays = (int) ($validated['days'] ?? 1);
             if (in_array($action, ['snooze_next_stage', 'snooze_stage'], true)) {
-                $snoozeDays = 30;
+                $daysUntilExp = $refExp
+                    ? max(0, (int) now()->startOfDay()->diffInDays($refExp->copy()->startOfDay(), false))
+                    : 30;
+                $snoozeDays = min(3650, max(30, $daysUntilExp + 1));
             }
             $snoozedUntil = now()->addDays($snoozeDays);
 
