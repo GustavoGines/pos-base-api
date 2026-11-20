@@ -223,6 +223,21 @@ class LicenseSyncService
             }
         }
 
+        // Opción 1A: normalización uniforme de `production` (explícito) y `batch_expiration`
+        // (nativo en Retail o cuando `production` está activo; apagado en hardware_store salvo override).
+        $isHardwareStore = $businessType === 'hardware_store';
+        $hasProduction = isset($rawFeatures['production'])
+            && ($rawFeatures['production'] === true || $rawFeatures['production'] === 1);
+        $features['production'] = $hasProduction;
+        if (array_key_exists('batch_expiration', $rawFeatures)) {
+            $features['batch_expiration'] = (
+                $rawFeatures['batch_expiration'] === true
+                || $rawFeatures['batch_expiration'] === 1
+            ) || $hasProduction;
+        } else {
+            $features['batch_expiration'] = (! $isHardwareStore) || $hasProduction;
+        }
+
         $featuresJson = json_encode($features);
 
         if ($licenseKey !== null) {

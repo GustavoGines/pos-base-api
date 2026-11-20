@@ -65,6 +65,15 @@ class BatchExpirationAndProductionTest extends TestCase
             'is_cash' => true,
             'is_active' => true,
         ]);
+
+        \App\Models\BusinessSetting::updateOrCreate(
+            ['key' => 'license_business_type'],
+            ['value' => 'retail']
+        );
+        \App\Models\BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['batch_expiration' => true, 'production' => true, 'suppliers' => true])]
+        );
     }
 
     private function authHeaders(): array
@@ -415,7 +424,7 @@ class BatchExpirationAndProductionTest extends TestCase
     {
         \App\Models\BusinessSetting::updateOrCreate(
             ['key' => 'license_features_dict'],
-            ['value' => json_encode(['suppliers' => true])]
+            ['value' => json_encode(['suppliers' => true, 'batch_expiration' => true, 'production' => true])]
         );
 
         $supplier = Supplier::create(['name' => 'Molino Central', 'cuit' => '30-55555555-5', 'balance' => 0]);
@@ -1262,7 +1271,7 @@ class BatchExpirationAndProductionTest extends TestCase
     {
         \App\Models\BusinessSetting::updateOrCreate(
             ['key' => 'license_features_dict'],
-            ['value' => json_encode(['suppliers' => true])]
+            ['value' => json_encode(['suppliers' => true, 'batch_expiration' => true, 'production' => true])]
         );
 
         $supplier = Supplier::create([
@@ -1428,7 +1437,7 @@ class BatchExpirationAndProductionTest extends TestCase
     {
         \App\Models\BusinessSetting::updateOrCreate(
             ['key' => 'license_features_dict'],
-            ['value' => json_encode(['suppliers' => true])]
+            ['value' => json_encode(['suppliers' => true, 'batch_expiration' => true, 'production' => true])]
         );
 
         $supplier = Supplier::create([
@@ -1510,5 +1519,109 @@ class BatchExpirationAndProductionTest extends TestCase
         $this->assertNull($sugar->expiration_date);
         $this->assertEquals(0, ProductBatch::where('product_id', $sugar->id)->where('status', ProductBatch::STATUS_ACTIVE)->count());
         $this->assertEquals(2, ProductBatch::where('product_id', $sugar->id)->where('status', ProductBatch::STATUS_VOIDED)->count());
+    }
+
+    public function test_feature_gating_option_1a_isolates_hardware_store_and_retail_production(): void
+    {
+        $product = Product::create([
+            'name' => 'Sellador Silicona / Producto Test',
+            'internal_code' => '81300',
+            'cost_price' => 1000,
+            'selling_price' => 2000,
+            'stock' => 5,
+            'active' => true,
+            'track_batches' => true,
+            'expiration_date' => now()->addDays(2)->format('Y-m-d'),
+        ]);
+        ProductBatch::create([
+            'product_id' => $product->id,
+            'batch_code' => 'TEST-HW-01',
+            'source_type' => ProductBatch::SOURCE_ADJUSTMENT,
+            'initial_quantity' => 5,
+            'remaining_quantity' => 5,
+            'unit_cost' => 1000,
+            'expiration_date' => now()->addDays(2)->format('Y-m-d'),
+            'status' => ProductBatch::STATUS_ACTIVE,
+        ]);
+
+        // 1. Ferretería sin addons (batch_expiration = false, production = false)
+        \App\Models\BusinessSetting::updateOrCreate(
+            ['key' => 'license_business_type'],
+            ['value' => 'hardware_store']
+        );
+        \App\Models\BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['batch_expiration' => false, 'production' => false, 'logistics' => true])]
+        );
+
+        $this->withHeaders($this->authHeaders())
+            ->getJson("/api/catalog/products/{$product->id}/batches")
+            ->assertStatus(403)
+            ->assertJsonPath('error_code', 'FEATURE_NOT_LICENSED');
+
+        $this->withHeaders($this->authHeaders())
+            ->getJson('/api/batches/expired')
+            ->assertStatus(403)
+            ->assertJsonPath('error_code', 'FEATURE_NOT_LICENSED');
+
+        $this->withHeaders($this->authHeaders())
+            ->getJson('/api/pos/batches/scan?code=L%231')
+            ->assertStatus(403)
+            ->assertJsonPath('error_code', 'FEATURE_NOT_LICENSED');
+
+        $this->withHeaders($this->authHeaders())
+            ->getJson('/api/production-orders')
+            ->assertStatus(403)
+            ->assertJsonPath('error_code', 'FEATURE_NOT_LICENSED');
+
+        $alertsHw = $this->withHeaders($this->authHeaders())
+            ->getJson('/api/inventory/alerts')
+            ->assertOk()
+            ->json();
+        $this->assertSame([], $alertsHw['expiration_alerts']);
+        $this->assertSame([], $alertsHw['deficit_alerts']);
+
+        // 2. Retail estándar sin addon production (batch_expiration = true, production = false)
+        \App\Models\BusinessSetting::updateOrCreate(
+            ['key' => 'license_business_type'],
+            ['value' => 'retail']
+        );
+        \App\Models\BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['batch_expiration' => true, 'production' => false])]
+        );
+
+        $this->withHeaders($this->authHeaders())
+            ->getJson("/api/catalog/products/{$product->id}/batches")
+            ->assertOk();
+
+        $this->withHeaders($this->authHeaders())
+            ->getJson('/api/production-orders')
+            ->assertStatus(403)
+            ->assertJsonPath('error_code', 'FEATURE_NOT_LICENSED');
+
+        $alertsRet = $this->withHeaders($this->authHeaders())
+            ->getJson('/api/inventory/alerts')
+            ->assertOk()
+            ->json();
+        $this->assertNotEmpty($alertsRet['expiration_alerts']);
+
+        // 3. Ferretería con addon production: true (sin batch_expiration explícito) -> habilita ambos por implicación
+        \App\Models\BusinessSetting::updateOrCreate(
+            ['key' => 'license_business_type'],
+            ['value' => 'hardware_store']
+        );
+        \App\Models\BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['production' => true])]
+        );
+
+        $this->withHeaders($this->authHeaders())
+            ->getJson("/api/catalog/products/{$product->id}/batches")
+            ->assertOk();
+
+        $this->withHeaders($this->authHeaders())
+            ->getJson('/api/production-orders')
+            ->assertOk();
     }
 }

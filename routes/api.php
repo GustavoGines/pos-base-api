@@ -91,7 +91,8 @@ Route::get('/registers', [CashRegisterController::class, 'index']);
 
 // Búsqueda de productos POS (usada antes de confirmar la venta)
 Route::get('/pos/products/search', [PosController::class, 'searchProducts']);
-Route::get('/pos/batches/scan', [PosController::class, 'scanBatch']);
+Route::get('/pos/batches/scan', [PosController::class, 'scanBatch'])
+    ->middleware('feature:batch_expiration');
 
 // Lectura de catálogo, clientes e historial (pantallas de solo lectura)
 Route::get('/catalog/products/alerts/critical', [ProductController::class, 'criticalAlerts']);
@@ -275,24 +276,26 @@ Route::middleware(['session.validate', 'license.active'])->group(function () {
         ->middleware('permission.or.pin:'.Permissions::BULK_PRICE_UPDATE);
     Route::post('/catalog/products/{product}/adjust-stock', [StockController::class, 'adjust'])
         ->middleware('permission.or.pin:'.Permissions::ADJUST_STOCK);
-    Route::get('/catalog/products/{product}/batches', [ProductBatchController::class, 'index']);
-    Route::post('/catalog/products/{product}/batches', [ProductBatchController::class, 'store'])
-        ->middleware('permission.or.pin:'.Permissions::ADJUST_STOCK.','.Permissions::MANAGE_CATALOG);
-    Route::get('/batches/expired', [ProductBatchController::class, 'expiredBatches']);
-    Route::post('/batches/write-off-expired', [ProductBatchController::class, 'writeOffExpired'])
-        ->middleware('permission.or.pin:'.Permissions::ADJUST_STOCK);
-    Route::patch('/batches/{batch}', [ProductBatchController::class, 'update'])
-        ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG.','.Permissions::ADJUST_STOCK)
-        ->where(['batch' => '[0-9]+']);
-    Route::post('/batches/{batch}/split', [ProductBatchController::class, 'split'])
-        ->middleware('permission.or.pin:'.Permissions::ADJUST_STOCK.','.Permissions::MANAGE_CATALOG)
-        ->where(['batch' => '[0-9]+']);
-    Route::post('/batches/{batch}/write-off', [ProductBatchController::class, 'writeOff'])
-        ->middleware('permission.or.pin:'.Permissions::ADJUST_STOCK)
-        ->where(['batch' => '[0-9]+']);
+    Route::middleware(['feature:batch_expiration'])->group(function () {
+        Route::get('/catalog/products/{product}/batches', [ProductBatchController::class, 'index']);
+        Route::post('/catalog/products/{product}/batches', [ProductBatchController::class, 'store'])
+            ->middleware('permission.or.pin:'.Permissions::ADJUST_STOCK.','.Permissions::MANAGE_CATALOG);
+        Route::get('/batches/expired', [ProductBatchController::class, 'expiredBatches']);
+        Route::post('/batches/write-off-expired', [ProductBatchController::class, 'writeOffExpired'])
+            ->middleware('permission.or.pin:'.Permissions::ADJUST_STOCK);
+        Route::patch('/batches/{batch}', [ProductBatchController::class, 'update'])
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG.','.Permissions::ADJUST_STOCK)
+            ->where(['batch' => '[0-9]+']);
+        Route::post('/batches/{batch}/split', [ProductBatchController::class, 'split'])
+            ->middleware('permission.or.pin:'.Permissions::ADJUST_STOCK.','.Permissions::MANAGE_CATALOG)
+            ->where(['batch' => '[0-9]+']);
+        Route::post('/batches/{batch}/write-off', [ProductBatchController::class, 'writeOff'])
+            ->middleware('permission.or.pin:'.Permissions::ADJUST_STOCK)
+            ->where(['batch' => '[0-9]+']);
+    });
 
     // ── Producción Propia (Pastelería / Cocina) ──────────────────────
-    Route::prefix('production-orders')->group(function () {
+    Route::middleware(['feature:production'])->prefix('production-orders')->group(function () {
         Route::get('/', [ProductionOrderController::class, 'index']);
         Route::get('/{productionOrder}', [ProductionOrderController::class, 'show'])
             ->where(['productionOrder' => '[0-9]+']);

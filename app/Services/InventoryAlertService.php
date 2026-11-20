@@ -130,14 +130,48 @@ class InventoryAlertService
             return $row;
         });
 
+        $batchEnabled = $this->isBatchExpirationEnabled();
+
         return [
             'period_analyzed_days' => $periodDays,
             'threshold_days' => $threshold,
             'generated_at' => now()->toIso8601String(),
             'alerts' => $alerts,
-            'expiration_alerts' => $this->getExpirationAlerts(),
-            'deficit_alerts' => $this->getDeficitBatchAlerts(),
+            'expiration_alerts' => $batchEnabled ? $this->getExpirationAlerts() : [],
+            'deficit_alerts' => $batchEnabled ? $this->getDeficitBatchAlerts() : [],
         ];
+    }
+
+    /**
+     * Evalúa si la licencia habilita el módulo de Vencimientos y Control por Lotes (Opción 1A).
+     */
+    protected function isBatchExpirationEnabled(): bool
+    {
+        $featuresJson = DB::table('business_settings')
+            ->where('key', 'license_features_dict')
+            ->value('value');
+
+        $features = [];
+        if (! empty($featuresJson)) {
+            $decoded = json_decode((string) $featuresJson, true);
+            if (is_array($decoded)) {
+                $features = $decoded;
+            }
+        }
+
+        if (! empty($features['production']) && ($features['production'] === true || $features['production'] === 1)) {
+            return true;
+        }
+
+        if (array_key_exists('batch_expiration', $features)) {
+            return $features['batch_expiration'] === true || $features['batch_expiration'] === 1;
+        }
+
+        $businessType = (string) (DB::table('business_settings')
+            ->where('key', 'license_business_type')
+            ->value('value') ?? 'retail');
+
+        return $businessType !== 'hardware_store';
     }
 
     /**
