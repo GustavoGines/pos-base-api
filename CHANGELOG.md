@@ -2,6 +2,11 @@
 Todos los cambios notables del servidor base están documentados aquí.
 
 
+## [2.1.1] - 2026-11-21
+### Motor OTA Diferencial Ultrarrápido y Blindaje de Actualización
+- Nuevo endpoint `/api/version-check` con huella criptográfica `vendor_hash` (`SHA-256` de `composer.lock`) para selección inteligente entre paquete completo (`Full ZIP`) y paquete liviano (`App ZIP` ~850 KB con `vendor/composer/*` sincronizado).
+- Pipeline dual de distribución con manifiesto de integridad (`ota_manifest.json`) para actualización y poda segura de archivos obsoletos en segundos.
+
 ## [2.1.0] - 2026-11-20
 ### Facturación Electrónica ARCA / AFIP, Libro IVA y Seguridad
 - Soporte integral para Factura A, B y C con cálculo de IVA discriminado y validación de padrón/receptor.

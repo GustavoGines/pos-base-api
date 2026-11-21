@@ -21,28 +21,110 @@ jobs:
         with:
           php-version: '8.3'
           extensions: mbstring, xml, bcmath, curl, zip
-          
+
       - name: Install dependencies
         run: composer install --optimize-autoloader --no-dev
-        
+
       - name: Write version.txt
         run: |
           echo "${{ github.ref_name }}" | sed 's/^v//' > public/version.txt
           echo "✅ version.txt escrito: $(cat public/version.txt)"
 
-      - name: Package Release
+      - name: Package Full & App Lightweight Releases
         run: |
-          zip -r update_backend_${{ github.ref_name }}.zip . \
+          FULL_ZIP="update_backend_${{ github.ref_name }}.zip"
+          APP_ZIP="update_backend_app_${{ github.ref_name }}.zip"
+          VENDOR_HASH=$(sha256sum composer.lock | awk '{print $1}')
+          echo "VENDOR_HASH=$VENDOR_HASH" >> $GITHUB_ENV
+
+          # 1. Empaquetar ZIP Completo (Full Release: incluye vendor/ completo)
+          zip -r "$FULL_ZIP" . \
             -x ".git/*" \
             -x "*.git*" \
+            -x ".github/*" \
             -x ".env*" \
             -x "storage/*" \
             -x "tests/*" \
             -x "node_modules/*" \
+            -x "bootstrap/cache/*.php" \
             -x "updater_log.txt" \
             -x "ota_result.txt" \
-            -x "ota_pending.json"
-          
+            -x "ota_pending.json" \
+            -x ".ota_manifest.json" \
+            -x "ota_manifest.json" \
+            -x "*.zip"
+
+          # Generar ota_manifest.json (scope: full) con las rutas exactas del ZIP completo
+          php -r '
+            $z = new ZipArchive();
+            $z->open($argv[1]);
+            $files = [];
+            for ($i = 0; $i < $z->numFiles; $i++) {
+              $name = ltrim(str_replace("\\", "/", $z->getNameIndex($i)), "./");
+              if ($name !== "" && !str_ends_with($name, "/")) {
+                $files[] = $name;
+              }
+            }
+            $z->close();
+            file_put_contents("ota_manifest.json", json_encode([
+              "version" => ltrim($argv[2], "vV"),
+              "component" => "backend",
+              "scope" => "full",
+              "files" => $files,
+            ], JSON_UNESCAPED_SLASHES));
+          ' "$FULL_ZIP" "${{ github.ref_name }}"
+          zip -u "$FULL_ZIP" ota_manifest.json
+          rm -f ota_manifest.json
+
+          # 2. Empaquetar ZIP Liviano de Aplicación (App Release: excluye vendor/* pero INCLUYE vendor/composer/*)
+          zip -r "$APP_ZIP" . \
+            -x ".git/*" \
+            -x "*.git*" \
+            -x ".github/*" \
+            -x ".env*" \
+            -x "storage/*" \
+            -x "tests/*" \
+            -x "node_modules/*" \
+            -x "vendor/*" \
+            -x "bootstrap/cache/*.php" \
+            -x "updater_log.txt" \
+            -x "ota_result.txt" \
+            -x "ota_pending.json" \
+            -x ".ota_manifest.json" \
+            -x "ota_manifest.json" \
+            -x "*.zip"
+
+          # Incluir obligatoriamente vendor/composer/* para mantener el classmap y autoloader 100% sincronizados
+          zip -r "$APP_ZIP" vendor/composer
+
+          # Generar ota_manifest.json (scope: app) con las rutas exactas del ZIP liviano
+          php -r '
+            $z = new ZipArchive();
+            $z->open($argv[1]);
+            $files = [];
+            for ($i = 0; $i < $z->numFiles; $i++) {
+              $name = ltrim(str_replace("\\", "/", $z->getNameIndex($i)), "./");
+              if ($name !== "" && !str_ends_with($name, "/")) {
+                $files[] = $name;
+              }
+            }
+            $z->close();
+            file_put_contents("ota_manifest.json", json_encode([
+              "version" => ltrim($argv[2], "vV"),
+              "component" => "backend",
+              "scope" => "app",
+              "files" => $files,
+            ], JSON_UNESCAPED_SLASHES));
+          ' "$APP_ZIP" "${{ github.ref_name }}"
+          zip -u "$APP_ZIP" ota_manifest.json
+          rm -f ota_manifest.json
+
+          FULL_SHA256=$(sha256sum "$FULL_ZIP" | awk '{print $1}')
+          APP_SHA256=$(sha256sum "$APP_ZIP" | awk '{print $1}')
+          echo "FULL_SHA256=$FULL_SHA256" >> $GITHUB_ENV
+          echo "APP_SHA256=$APP_SHA256" >> $GITHUB_ENV
+          ls -lh "$FULL_ZIP" "$APP_ZIP"
+
       - name: Upload to Cloudflare R2
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -50,7 +132,8 @@ jobs:
           AWS_DEFAULT_REGION: auto
         run: |
           aws s3 cp update_backend_${{ github.ref_name }}.zip s3://${{ secrets.R2_BUCKET_NAME }}/update_backend_${{ github.ref_name }}.zip --endpoint-url https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
-          
+          aws s3 cp update_backend_app_${{ github.ref_name }}.zip s3://${{ secrets.R2_BUCKET_NAME }}/update_backend_app_${{ github.ref_name }}.zip --endpoint-url https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
+
       - name: Notify License Server
         run: |
           # Leer el changelog directamente del archivo CHANGELOG.md
@@ -61,20 +144,25 @@ jobs:
             --arg version "${{ github.ref_name }}" \
             --arg component "backend" \
             --arg url "${{ secrets.R2_PUBLIC_BASE_URL }}/update_backend_${{ github.ref_name }}.zip" \
+            --arg sha256 "${{ env.FULL_SHA256 }}" \
+            --arg app_url "${{ secrets.R2_PUBLIC_BASE_URL }}/update_backend_app_${{ github.ref_name }}.zip" \
+            --arg app_sha256 "${{ env.APP_SHA256 }}" \
+            --arg vendor_hash "${{ env.VENDOR_HASH }}" \
             --arg changelog "$MSG" \
             --arg token "${{ secrets.LICENSE_SERVER_TOKEN }}" \
-            '{version: $version, component: $component, download_url: $url, changelog: $changelog, is_critical: false, token: $token}' > payload.json
-            
+            '{version: $version, component: $component, download_url: $url, sha256: $sha256, app_download_url: $app_url, app_sha256: $app_sha256, vendor_hash: $vendor_hash, changelog: $changelog, is_critical: false, token: $token}' > payload.json
+
           curl -X POST "${{ secrets.LICENSE_SERVER_URL }}/api/releases/new" \
           -H "Content-Type: application/json" \
           -d @payload.json
 
-      - name: 🏷️ Publicar GitHub Release con el ZIP
+      - name: 🏷️ Publicar GitHub Release con los ZIPs
         uses: softprops/action-gh-release@v2
         with:
-          files: update_backend_${{ github.ref_name }}.zip
+          files: |
+            update_backend_${{ github.ref_name }}.zip
+            update_backend_app_${{ github.ref_name }}.zip
           generate_release_notes: true
           name: "Backend ${{ github.ref_name }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-

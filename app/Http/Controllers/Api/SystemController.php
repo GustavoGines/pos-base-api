@@ -36,7 +36,16 @@ class SystemController extends Controller
             $version = trim(file_get_contents($path));
         }
 
-        return response()->json(['version' => $version])
+        $composerLockPath = base_path('composer.lock');
+        clearstatcache(true, $composerLockPath);
+        $vendorHash = file_exists($composerLockPath)
+            ? hash_file('sha256', $composerLockPath)
+            : null;
+
+        return response()->json([
+            'version' => $version,
+            'vendor_hash' => $vendorHash,
+        ])
             ->header('Cache-Control', 'no-cache, no-store, must-revalidate')
             ->header('Pragma', 'no-cache')
             ->header('Expires', '0');
