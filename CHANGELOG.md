@@ -2,6 +2,11 @@
 Todos los cambios notables del servidor base están documentados aquí.
 
 
+## [2.1.2] - 2026-11-21
+### Estabilidad OTA, Reinicio en Caliente de Servicios y Sincronización de Entorno
+- Nivelación de versión v2.1.2 con soporte completo de reinicio en caliente de workers de colas (`queue:restart`), WebSockets (`reverb:restart`) y tareas programadas tras actualizaciones OTA.
+- Saneamiento idempotente de variables `.env` y preservación de configuración local para clientes que actualizan desde `v1.4.4+` y `v1.8.5+`.
+
 ## [2.1.1] - 2026-11-21
 ### Motor OTA Diferencial Ultrarrápido y Blindaje de Actualización
 - Nuevo endpoint `/api/version-check` con huella criptográfica `vendor_hash` (`SHA-256` de `composer.lock`) para selección inteligente entre paquete completo (`Full ZIP`) y paquete liviano (`App ZIP` ~850 KB con `vendor/composer/*` sincronizado).
