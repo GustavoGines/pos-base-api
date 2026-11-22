@@ -311,6 +311,8 @@ Route::middleware(['session.validate', 'license.active'])->group(function () {
         ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
     Route::delete('/catalog/products/{product}/image', [ProductController::class, 'deleteImage'])
         ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
+    Route::patch('/catalog/products/{product}/calc-config', [ProductController::class, 'updateCalcConfig'])
+        ->where(['product' => '[0-9]+']);
     Route::get('/catalog/products/export', [CatalogController::class, 'export'])
         ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
     Route::post('/catalog/products/import', [CatalogController::class, 'import'])

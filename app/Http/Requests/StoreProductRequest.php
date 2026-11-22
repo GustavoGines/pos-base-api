@@ -67,6 +67,7 @@ class StoreProductRequest extends FormRequest
             'needs_catalog_review' => 'boolean',
             'is_sold_by_weight' => 'boolean',
             'unit_type' => 'sometimes|in:un,kg,lt,g',
+            'calc_config' => 'nullable|array',
             'vencimiento_dias' => 'nullable|integer|min:1|max:3650',
             'expiration_date' => 'nullable|date',
             'expiry_alert_days' => 'nullable|integer|min:1|max:365',

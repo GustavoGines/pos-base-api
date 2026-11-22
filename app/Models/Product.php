@@ -21,7 +21,7 @@ class Product extends Model
         'expiration_date', 'expiry_alert_days', 'expiry_alert_snoozed_until', 'expiry_alert_last_stage',
         'track_batches', 'lot_deduction_policy', 'allow_sell_expired',
         'has_production_recipe', 'recipe_yield_quantity',
-        'unit_type', 'category_id', 'brand_id', 'supplier_id', 'image_path',
+        'unit_type', 'calc_config', 'category_id', 'brand_id', 'supplier_id', 'image_path',
     ];
 
     protected $appends = ['image_url'];
@@ -49,6 +49,7 @@ class Product extends Model
         'expiry_alert_days' => 'integer',
         'expiry_alert_snoozed_until' => 'datetime',
         'expiry_alert_last_stage' => 'integer',
+        'calc_config' => 'array',
     ];
 
     protected static function booted(): void

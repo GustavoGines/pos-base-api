@@ -9,6 +9,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -89,6 +90,7 @@ class QuoteController extends Controller
                 'items' => 'required|array|min:1',
                 'items.*.product_id' => 'nullable|integer',
                 'items.*.product_name' => 'required|string|max:255',
+                'items.*.custom_details' => 'nullable|string|max:1000',
                 'items.*.unit_price' => 'required|numeric|min:0',
                 'items.*.quantity' => 'required|numeric|min:0.001',
             ]);
@@ -125,17 +127,26 @@ class QuoteController extends Controller
                     'price_list' => $validated['price_list'] ?? 'base',
                 ]);
 
+                $hasCustomDetailsColumn = Schema::hasColumn('quote_items', 'custom_details');
+
                 foreach ($validated['items'] as $item) {
                     $rawProductId = $item['product_id'] ?? null;
                     $productId = (is_numeric($rawProductId) && (int) $rawProductId > 0) ? (int) $rawProductId : null;
-                    QuoteItem::create([
+                    $customDetails = isset($item['custom_details']) && trim((string) $item['custom_details']) !== ''
+                        ? trim((string) $item['custom_details'])
+                        : null;
+                    $quoteItemData = [
                         'quote_id' => $quote->id,
                         'product_id' => $productId,
                         'product_name' => $item['product_name'],
                         'unit_price' => $item['unit_price'],
                         'quantity' => $item['quantity'],
                         'subtotal' => round($item['unit_price'] * $item['quantity'], 2),
-                    ]);
+                    ];
+                    if ($hasCustomDetailsColumn) {
+                        $quoteItemData['custom_details'] = $customDetails;
+                    }
+                    QuoteItem::create($quoteItemData);
                 }
 
                 DB::commit();

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreProductRequest;
 use App\Http\Requests\UpdateProductRequest;
 use App\Jobs\SyncProductStockToPlatformsJob;
+use App\Models\BusinessSetting;
 use App\Models\Product;
 use App\Models\ProductBatch;
 use App\Models\ProductPriceTier;
@@ -16,6 +17,7 @@ use App\Services\ProductionOrderService;
 use App\Services\ReportCacheService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 
 class ProductController extends Controller
@@ -734,5 +736,100 @@ class ProductController extends Controller
         $product->update(['image_path' => null]);
 
         return response()->json(null, 204);
+    }
+
+    /**
+     * Actualiza exclusivamente los parámetros técnicos de la Calculadora Ferretera (`calc_config`)
+     * para este producto sin tocar precios, costos ni stock.
+     * Accesible desde caja (con sesión activa) sin requerir PIN de supervisor.
+     * PATCH /api/catalog/products/{product}/calc-config
+     */
+    public function updateCalcConfig(Request $request, Product $product)
+    {
+        $businessType = BusinessSetting::where('key', 'license_business_type')->value('value')
+            ?? BusinessSetting::where('key', 'business_type')->value('value');
+        if (strtolower(trim((string) $businessType)) !== 'hardware_store') {
+            return response()->json([
+                'message' => 'La calculadora ferretera solo está habilitada para comercios de rubro Ferretería.',
+                'error_code' => 'HARDWARE_STORE_ONLY',
+            ], 403);
+        }
+
+        if (! Schema::hasColumn('products', 'calc_config')) {
+            return response()->json([
+                'message' => 'Migración pendiente: ejecute las actualizaciones de base de datos.',
+            ], 503);
+        }
+
+        $validated = $request->validate([
+            'calc_config' => 'present|nullable|array',
+            'calc_config.type' => 'nullable|string|in:wood,roof,paint',
+            'calc_config.inch_preset' => 'nullable|string|max:32',
+            'calc_config.nominal_width_m' => 'nullable|numeric|min:0.001|max:50',
+            'calc_config.useful_width_m' => 'nullable|numeric|min:0.001|max:50',
+            'calc_config.length_m' => 'nullable|numeric|min:0.05|max:50',
+            'calc_config.pricing_mode' => 'nullable|string|in:per_board,per_pack,per_linear_meter,per_m2,per_sheet,per_unit',
+            'calc_config.m2_billing_basis' => 'nullable|string|in:nominal,useful',
+            'calc_config.boards_per_pack' => 'nullable|integer|min:1|max:500',
+            'calc_config.round_to_full_pack' => 'nullable|boolean',
+            'calc_config.longitudinal_overlap_m' => 'nullable|numeric|min:0|max:5',
+            'calc_config.yield_m2_per_liter' => 'nullable|numeric|min:0.05|max:500',
+            'calc_config.yield_mode' => 'nullable|string|in:per_coat,final_total',
+            'calc_config.container_liters' => 'nullable|numeric|min:0.05|max:1000',
+            'calc_config.default_coats' => 'nullable|integer|min:1|max:20',
+            'calc_config.default_waste_pct' => 'nullable|numeric|min:0|max:100',
+        ]);
+
+        $rawConfig = $validated['calc_config'] ?? null;
+        if (
+            is_array($rawConfig)
+            && isset($rawConfig['nominal_width_m'], $rawConfig['useful_width_m'])
+            && is_numeric($rawConfig['nominal_width_m'])
+            && is_numeric($rawConfig['useful_width_m'])
+            && (float) $rawConfig['useful_width_m'] > (float) $rawConfig['nominal_width_m'] + 1e-6
+        ) {
+            return response()->json([
+                'message' => 'El ancho útil no puede superar al ancho nominal.',
+                'errors' => [
+                    'calc_config.useful_width_m' => ['El ancho útil no puede superar al ancho nominal.'],
+                ],
+            ], 422);
+        }
+
+        $allowedKeys = [
+            'type',
+            'inch_preset',
+            'nominal_width_m',
+            'useful_width_m',
+            'length_m',
+            'pricing_mode',
+            'm2_billing_basis',
+            'boards_per_pack',
+            'round_to_full_pack',
+            'longitudinal_overlap_m',
+            'yield_m2_per_liter',
+            'yield_mode',
+            'container_liters',
+            'default_coats',
+            'default_waste_pct',
+        ];
+
+        $sanitizedConfig = is_array($rawConfig)
+            ? array_intersect_key($rawConfig, array_flip($allowedKeys))
+            : null;
+
+        if (is_array($sanitizedConfig) && empty($sanitizedConfig)) {
+            $sanitizedConfig = null;
+        }
+
+        $product->update([
+            'calc_config' => $sanitizedConfig,
+        ]);
+
+        return response()->json([
+            'message' => 'Configuración de calculadora actualizada correctamente.',
+            'calc_config' => $product->calc_config,
+            'product' => $product->load($this->productRelations()),
+        ]);
     }
 }
