@@ -11,10 +11,16 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('products', function (Blueprint $table) {
-            $table->dropUnique('products_barcode_unique');
-            $table->dropUnique('products_internal_code_unique');
-        });
+        if (Schema::hasTable('products')) {
+            Schema::table('products', function (Blueprint $table) {
+                if (Schema::hasIndex('products', 'products_barcode_unique')) {
+                    $table->dropUnique('products_barcode_unique');
+                }
+                if (Schema::hasIndex('products', 'products_internal_code_unique')) {
+                    $table->dropUnique('products_internal_code_unique');
+                }
+            });
+        }
     }
 
     /**

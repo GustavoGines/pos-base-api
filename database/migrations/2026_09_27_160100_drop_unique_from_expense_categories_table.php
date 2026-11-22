@@ -11,9 +11,11 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('expense_categories', function (Blueprint $table) {
-            $table->dropUnique(['name']);
-        });
+        if (Schema::hasTable('expense_categories') && Schema::hasIndex('expense_categories', 'expense_categories_name_unique')) {
+            Schema::table('expense_categories', function (Blueprint $table) {
+                $table->dropUnique(['name']);
+            });
+        }
     }
 
     /**

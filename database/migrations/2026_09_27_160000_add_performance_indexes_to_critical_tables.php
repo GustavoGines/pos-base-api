@@ -11,21 +11,29 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('sales', function (Blueprint $table) {
-            $table->index(['created_at', 'status']);
-        });
+        if (Schema::hasTable('sales') && ! Schema::hasIndex('sales', 'sales_created_at_status_index')) {
+            Schema::table('sales', function (Blueprint $table) {
+                $table->index(['created_at', 'status']);
+            });
+        }
 
-        Schema::table('customer_transactions', function (Blueprint $table) {
-            $table->index(['created_at', 'type']);
-        });
+        if (Schema::hasTable('customer_transactions') && ! Schema::hasIndex('customer_transactions', 'customer_transactions_created_at_type_index')) {
+            Schema::table('customer_transactions', function (Blueprint $table) {
+                $table->index(['created_at', 'type']);
+            });
+        }
 
-        Schema::table('cash_movements', function (Blueprint $table) {
-            $table->index(['created_at', 'type']);
-        });
+        if (Schema::hasTable('cash_movements') && ! Schema::hasIndex('cash_movements', 'cash_movements_created_at_type_index')) {
+            Schema::table('cash_movements', function (Blueprint $table) {
+                $table->index(['created_at', 'type']);
+            });
+        }
 
-        Schema::table('stock_movements', function (Blueprint $table) {
-            $table->index('created_at');
-        });
+        if (Schema::hasTable('stock_movements') && ! Schema::hasIndex('stock_movements', 'stock_movements_created_at_index')) {
+            Schema::table('stock_movements', function (Blueprint $table) {
+                $table->index('created_at');
+            });
+        }
     }
 
     /**
@@ -33,20 +41,28 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('sales', function (Blueprint $table) {
-            $table->dropIndex(['created_at', 'status']);
-        });
+        if (Schema::hasTable('sales') && Schema::hasIndex('sales', 'sales_created_at_status_index')) {
+            Schema::table('sales', function (Blueprint $table) {
+                $table->dropIndex(['created_at', 'status']);
+            });
+        }
 
-        Schema::table('customer_transactions', function (Blueprint $table) {
-            $table->dropIndex(['created_at', 'type']);
-        });
+        if (Schema::hasTable('customer_transactions') && Schema::hasIndex('customer_transactions', 'customer_transactions_created_at_type_index')) {
+            Schema::table('customer_transactions', function (Blueprint $table) {
+                $table->dropIndex(['created_at', 'type']);
+            });
+        }
 
-        Schema::table('cash_movements', function (Blueprint $table) {
-            $table->dropIndex(['created_at', 'type']);
-        });
+        if (Schema::hasTable('cash_movements') && Schema::hasIndex('cash_movements', 'cash_movements_created_at_type_index')) {
+            Schema::table('cash_movements', function (Blueprint $table) {
+                $table->dropIndex(['created_at', 'type']);
+            });
+        }
 
-        Schema::table('stock_movements', function (Blueprint $table) {
-            $table->dropIndex(['created_at']);
-        });
+        if (Schema::hasTable('stock_movements') && Schema::hasIndex('stock_movements', 'stock_movements_created_at_index')) {
+            Schema::table('stock_movements', function (Blueprint $table) {
+                $table->dropIndex(['created_at']);
+            });
+        }
     }
 };

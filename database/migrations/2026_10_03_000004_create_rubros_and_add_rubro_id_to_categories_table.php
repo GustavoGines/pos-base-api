@@ -12,13 +12,15 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // 1. Crear tabla rubros
-        Schema::create('rubros', function (Blueprint $table) {
-            $table->id();
-            $table->string('name')->unique();
-            $table->boolean('is_system')->default(false);
-            $table->timestamps();
-        });
+        // 1. Crear tabla rubros (idempotente ante reintentos)
+        if (! Schema::hasTable('rubros')) {
+            Schema::create('rubros', function (Blueprint $table) {
+                $table->id();
+                $table->string('name')->unique();
+                $table->boolean('is_system')->default(false);
+                $table->timestamps();
+            });
+        }
 
         // 2. Determinar rubro principal basado en license_business_type de business_settings
         $businessType = 'retail';
@@ -45,26 +47,35 @@ return new class extends Migration
 
         $rubroName = $mapping[$businessType] ?? (ucfirst(str_replace('_', ' ', $businessType)) ?: 'Comercio General');
 
-        $now = now();
-        $defaultRubroId = DB::table('rubros')->insertGetId([
-            'name' => $rubroName,
-            'is_system' => true,
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
+        $existingRubroId = DB::table('rubros')->where('name', $rubroName)->value('id');
+        if ($existingRubroId) {
+            $defaultRubroId = $existingRubroId;
+        } else {
+            $now = now();
+            $defaultRubroId = DB::table('rubros')->insertGetId([
+                'name' => $rubroName,
+                'is_system' => true,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
 
         // 3. Añadir rubro_id a categories con backfill inmediato
-        Schema::table('categories', function (Blueprint $table) {
-            $table->foreignId('rubro_id')
-                ->nullable()
-                ->after('id')
-                ->constrained('rubros')
-                ->cascadeOnDelete();
-        });
+        if (Schema::hasTable('categories') && ! Schema::hasColumn('categories', 'rubro_id')) {
+            Schema::table('categories', function (Blueprint $table) {
+                $table->foreignId('rubro_id')
+                    ->nullable()
+                    ->after('id')
+                    ->constrained('rubros')
+                    ->cascadeOnDelete();
+            });
+        }
 
-        DB::table('categories')->whereNull('rubro_id')->update([
-            'rubro_id' => $defaultRubroId,
-        ]);
+        if (Schema::hasTable('categories') && Schema::hasColumn('categories', 'rubro_id')) {
+            DB::table('categories')->whereNull('rubro_id')->update([
+                'rubro_id' => $defaultRubroId,
+            ]);
+        }
     }
 
     /**

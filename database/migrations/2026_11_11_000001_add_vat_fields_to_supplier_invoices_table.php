@@ -58,7 +58,9 @@ return new class extends Migration
                 $table->boolean('affects_vat_book')->default(true)->after('internal_taxes')->comment('Si computa para el Libro IVA Compras');
             }
 
-            $table->index(['affects_vat_book', 'issue_date'], 'idx_supp_inv_vat_book');
+            if (! Schema::hasIndex('supplier_invoices', 'idx_supp_inv_vat_book')) {
+                $table->index(['affects_vat_book', 'issue_date'], 'idx_supp_inv_vat_book');
+            }
         });
     }
 
