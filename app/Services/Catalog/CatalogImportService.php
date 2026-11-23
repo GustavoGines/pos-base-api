@@ -16,9 +16,70 @@ use Rap2hpoutre\FastExcel\FastExcel;
 class CatalogImportService
 {
     /**
-     * Import products from an Excel/CSV file path.
+     * Mapa uniforme de alias de unidad => [unit_type canonico, is_sold_by_weight].
      */
-    public function import(string $filePath): array
+    private const UNIT_ALIASES = [
+        'kg' => ['kg', true],
+        'kilo' => ['kg', true],
+        'kilogramo' => ['kg', true],
+        'kilogramos' => ['kg', true],
+        'pesable' => ['kg', true],
+        'balanza' => ['kg', true],
+        'si' => ['kg', true],
+        'sí' => ['kg', true],
+        'g' => ['g', true],
+        'gr' => ['g', true],
+        'gramo' => ['g', true],
+        'gramos' => ['g', true],
+        'lt' => ['lt', true],
+        'l' => ['lt', true],
+        'litro' => ['lt', true],
+        'litros' => ['lt', true],
+        'mt' => ['mt', true],
+        'm' => ['mt', true],
+        'ml' => ['mt', true],
+        'metro' => ['mt', true],
+        'metros' => ['mt', true],
+        'metro_lineal' => ['mt', true],
+        'm2' => ['m2', true],
+        'm²' => ['m2', true],
+        'metro_cuadrado' => ['m2', true],
+        'metros_cuadrados' => ['m2', true],
+        'm3' => ['m3', true],
+        'm³' => ['m3', true],
+        'metro_cubico' => ['m3', true],
+        'metro_cúbico' => ['m3', true],
+        'metros_cubicos' => ['m3', true],
+        'bolsa' => ['bolsa', false],
+        'bolsas' => ['bolsa', false],
+        'rollo' => ['rollo', false],
+        'rollos' => ['rollo', false],
+        'caja' => ['caja', false],
+        'cajas' => ['caja', false],
+        'par' => ['par', false],
+        'pares' => ['par', false],
+        'un' => ['un', false],
+        'u' => ['un', false],
+        'unidad' => ['un', false],
+        'unidades' => ['un', false],
+    ];
+
+    /**
+     * @return array{0: string, 1: bool}
+     */
+    private function resolveUnitType(string $rawUnit): array
+    {
+        $uNorm = strtolower(str_replace(' ', '_', trim($rawUnit)));
+
+        return self::UNIT_ALIASES[$uNorm] ?? ['un', false];
+    }
+
+    /**
+     * Import products from an Excel/CSV file path.
+     *
+     * @param  array<string, mixed>  $options
+     */
+    public function import(string $filePath, array $options = []): array
     {
         ini_set('memory_limit', '1024M');
         set_time_limit(600);
@@ -30,8 +91,29 @@ class CatalogImportService
 
         $defaultRubro = Rubro::where('is_system', true)->first();
         $barcodeService = app(BarcodeService::class);
+        $hasExtendedCatalogCols = Product::hasExtendedCatalogColumns();
 
-        (new FastExcel)->import($filePath, function ($row) use (&$createdCount, &$updatedCount, &$failedCount, &$errors, $defaultRubro, $barcodeService) {
+        $rawDefaultSupplierId = $options['default_supplier_id'] ?? null;
+        $validDefaultSupplierId = ($rawDefaultSupplierId !== null && $rawDefaultSupplierId !== '')
+            ? Supplier::where('id', (int) $rawDefaultSupplierId)->value('id')
+            : null;
+
+        $rawDefaultMargin = $options['default_margin_percent'] ?? null;
+        $defaultMarginPercent = ($rawDefaultMargin !== null && $rawDefaultMargin !== '' && is_numeric($rawDefaultMargin))
+            ? max(0.0, (float) $rawDefaultMargin)
+            : null;
+
+        (new FastExcel)->import($filePath, function ($row) use (
+            &$createdCount,
+            &$updatedCount,
+            &$failedCount,
+            &$errors,
+            $defaultRubro,
+            $barcodeService,
+            $hasExtendedCatalogCols,
+            $validDefaultSupplierId,
+            $defaultMarginPercent
+        ) {
             $rowLower = [];
             foreach ($row as $k => $v) {
                 $key = strtolower(trim((string) $k));
@@ -52,6 +134,49 @@ class CatalogImportService
             $nombre = $getVal(['nombre', 'descripcion', 'descripción', 'articulo', 'artículo', 'producto', 'detalle']);
             $codInterno = $getVal(['codigo_interno', 'código_interno', 'codigo', 'cod', 'id']);
             $codBarras = $getVal(['codigo_barras', 'código_barras', 'barra', 'ean']);
+            $codProveedor = $getVal([
+                'cod_proveedor',
+                'codigo_proveedor',
+                'código_proveedor',
+                'cod._proveedor',
+                'cod_prov',
+                'cod._prov.',
+                'supplier_sku',
+                'sku_proveedor',
+                'cod_art_proveedor',
+            ]);
+            $medida = $getVal([
+                'medida',
+                'especificacion',
+                'especificación',
+                'technical_spec',
+                'medida_especificacion',
+                'medida_/_especificacion',
+                'medida_/_especificación',
+            ]);
+            $ubicacion = $getVal([
+                'ubicacion',
+                'ubicación',
+                'estanteria',
+                'estantería',
+                'gondola',
+                'góndola',
+                'storage_location',
+            ]);
+            $presentacionCompra = $getVal([
+                'presentacion_compra',
+                'presentación_compra',
+                'bulto_compra',
+                'purchase_package_name',
+                'presentacion',
+            ]);
+            $factorConversion = $getVal([
+                'factor_conversion',
+                'factor_conversión',
+                'factor_de_conversion',
+                'equivalencia',
+                'conversion_factor',
+            ]);
             $costo = $getVal(['costo', 'precios_costos_g3', 'precio_costo', 'costo_unitario']);
             $precio = $getVal(['precio', 'precio_mostrador', 'precios_pesos_g3_nomas', 'precio_venta', 'precio_publico', 'venta']);
             $precioTarjeta = $getVal(['precio_tarjeta']);
@@ -66,7 +191,7 @@ class CatalogImportService
             $iva = $getVal(['iva', 'iva_(%)', 'impuesto', 'tasa']);
             $activo = $getVal(['activo', 'estado']);
 
-            if (! $nombre && ! $codInterno && ! $codBarras) {
+            if (! $nombre && ! $codInterno && ! $codBarras && ! $codProveedor) {
                 return null;
             }
 
@@ -76,12 +201,39 @@ class CatalogImportService
                     $codInterno = str_pad($codInterno, 5, '0', STR_PAD_LEFT);
                 }
 
+                $effectiveSupplierId = $validDefaultSupplierId;
+                if ($proveedor) {
+                    $sup = Supplier::firstOrCreate(['name' => $proveedor]);
+                    $effectiveSupplierId = $sup->id;
+                }
+
                 $product = null;
                 if ($codInterno) {
                     $product = Product::where('internal_code', $codInterno)->first();
                 }
                 if (! $product && $codBarras) {
                     $product = Product::where('barcode', $codBarras)->first();
+                }
+                if (! $product && $codProveedor && $hasExtendedCatalogCols) {
+                    if ($effectiveSupplierId !== null) {
+                        $product = Product::where('supplier_sku', $codProveedor)
+                            ->where('supplier_id', $effectiveSupplierId)
+                            ->first();
+                    }
+                    if (! $product) {
+                        $skuMatches = Product::where('supplier_sku', $codProveedor)
+                            ->when($effectiveSupplierId !== null, function ($q) use ($effectiveSupplierId) {
+                                $q->where(function ($inner) use ($effectiveSupplierId) {
+                                    $inner->whereNull('supplier_id')
+                                        ->orWhere('supplier_id', $effectiveSupplierId);
+                                });
+                            })
+                            ->limit(2)
+                            ->get();
+                        if ($skuMatches->count() === 1) {
+                            $product = $skuMatches->first();
+                        }
+                    }
                 }
                 if (! $product && $nombre) {
                     $product = Product::where('name', $nombre)->first();
@@ -114,9 +266,8 @@ class CatalogImportService
                     $product->brand_id = $bnd->id;
                 }
 
-                if ($proveedor) {
-                    $sup = Supplier::firstOrCreate(['name' => $proveedor]);
-                    $product->supplier_id = $sup->id;
+                if ($effectiveSupplierId !== null) {
+                    $product->supplier_id = $effectiveSupplierId;
                 }
 
                 $parseNumber = function ($val) {
@@ -156,22 +307,35 @@ class CatalogImportService
                     $product->name = $nombre;
                 }
 
-                // Unidad y Balanza (un, kg, lt, g)
+                // Unidad y Venta fraccionada / balanza (un, kg, lt, g, mt, m2, m3, bolsa, rollo, caja, par)
                 if ($unidad !== null) {
-                    $uNorm = strtolower(trim($unidad));
-                    if (in_array($uNorm, ['kg', 'kilo', 'kilogramo', 'pesable', 'balanza', 'si', 'sí'], true)) {
-                        $product->unit_type = 'kg';
-                        $product->is_sold_by_weight = true;
-                    } elseif (in_array($uNorm, ['lt', 'litro', 'g', 'gr', 'gramo'], true)) {
-                        $product->unit_type = in_array($uNorm, ['lt', 'litro'], true) ? 'lt' : 'g';
-                        $product->is_sold_by_weight = false;
-                    } else {
-                        $product->unit_type = 'un';
-                        $product->is_sold_by_weight = false;
-                    }
+                    [$resolvedUnit, $resolvedFractional] = $this->resolveUnitType($unidad);
+                    $product->unit_type = $resolvedUnit;
+                    $product->is_sold_by_weight = $resolvedFractional;
                 } elseif ($isNew) {
                     $product->unit_type = 'un';
                     $product->is_sold_by_weight = false;
+                }
+
+                if ($hasExtendedCatalogCols) {
+                    if ($codProveedor !== null) {
+                        $product->supplier_sku = mb_substr($codProveedor, 0, 64);
+                    }
+                    if ($medida !== null) {
+                        $product->technical_spec = mb_substr($medida, 0, 120);
+                    }
+                    if ($ubicacion !== null) {
+                        $product->storage_location = mb_substr($ubicacion, 0, 120);
+                    }
+                    if ($presentacionCompra !== null) {
+                        $product->purchase_package_name = mb_substr($presentacionCompra, 0, 40);
+                    }
+                    if ($factorConversion !== null) {
+                        $parsedFactor = $parseNumber($factorConversion);
+                        if ($parsedFactor !== null && $parsedFactor > 0) {
+                            $product->conversion_factor = round($parsedFactor, 3);
+                        }
+                    }
                 }
 
                 // Código de barras: si viene en el Excel lo usamos; si es producto nuevo por unidad y está vacío, generamos EAN-13 interno
@@ -189,8 +353,13 @@ class CatalogImportService
                     $product->cost_price = 0.0;
                 }
 
-                if ($precio !== null) {
-                    $product->selling_price = $parseNumber($precio) ?? 0.0;
+                $parsedPrecio = $precio !== null ? $parseNumber($precio) : null;
+                if ($parsedPrecio !== null && $parsedPrecio > 0) {
+                    $product->selling_price = $parsedPrecio;
+                } elseif ($defaultMarginPercent !== null && (float) $product->cost_price > 0) {
+                    $product->selling_price = round(((float) $product->cost_price) * (1 + ($defaultMarginPercent / 100.0)), 2);
+                } elseif ($parsedPrecio !== null) {
+                    $product->selling_price = $parsedPrecio;
                 } elseif ($isNew) {
                     $product->selling_price = 0.0;
                 }

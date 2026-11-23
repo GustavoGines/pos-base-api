@@ -25,14 +25,17 @@ class ImportCatalogJob implements ShouldQueue
 
     public string $jobKey;
 
+    public array $options = [];
+
     /**
      * Create a new job instance.
      */
-    public function __construct(string $filePath, ?int $userId = null, ?string $jobKey = null)
+    public function __construct(string $filePath, ?int $userId = null, ?string $jobKey = null, array $options = [])
     {
         $this->filePath = $filePath;
         $this->userId = $userId;
         $this->jobKey = $jobKey ?? 'catalog_import_'.($userId ?? 'system').'_'.time();
+        $this->options = $options;
     }
 
     /**
@@ -47,7 +50,7 @@ class ImportCatalogJob implements ShouldQueue
         ], 3600);
 
         try {
-            $result = $importService->import($this->filePath);
+            $result = $importService->import($this->filePath, $this->options);
 
             Cache::put("catalog_import_{$this->jobKey}", [
                 'status' => 'completed',

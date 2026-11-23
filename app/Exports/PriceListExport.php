@@ -49,7 +49,7 @@ class PriceListExport extends DefaultValueBinder implements FromQuery, ShouldAut
 
     public function headings(): array
     {
-        return [
+        $base = [
             'codigo_interno',
             'codigo_barras',
             'nombre',
@@ -64,6 +64,18 @@ class PriceListExport extends DefaultValueBinder implements FromQuery, ShouldAut
             'vencimiento_dias',
             'activo',
         ];
+
+        if (Product::hasExtendedCatalogColumns()) {
+            return array_merge($base, [
+                'cod_proveedor',
+                'medida',
+                'ubicacion',
+                'presentacion_compra',
+                'factor_conversion',
+            ]);
+        }
+
+        return $base;
     }
 
     public function map($product): array
@@ -76,11 +88,14 @@ class PriceListExport extends DefaultValueBinder implements FromQuery, ShouldAut
             ? $product->calculateComboAvailableStock()
             : (float) $product->stock;
 
-        $unit = $product->is_sold_by_weight
-            ? 'kg'
-            : ($product->unit_type ?: 'un');
+        $rawUnit = strtolower(trim((string) ($product->unit_type ?? '')));
+        if ($rawUnit !== '' && $rawUnit !== 'un') {
+            $unit = $rawUnit;
+        } else {
+            $unit = $product->is_sold_by_weight ? 'kg' : 'un';
+        }
 
-        return [
+        $row = [
             (string) ($product->internal_code ?? ''),
             (string) ($product->barcode ?? ''),
             $product->name,
@@ -95,11 +110,21 @@ class PriceListExport extends DefaultValueBinder implements FromQuery, ShouldAut
             $product->vencimiento_dias !== null ? (int) $product->vencimiento_dias : '',
             $product->active ? 'SI' : 'NO',
         ];
+
+        if (Product::hasExtendedCatalogColumns()) {
+            $row[] = (string) ($product->supplier_sku ?? '');
+            $row[] = (string) ($product->technical_spec ?? '');
+            $row[] = (string) ($product->storage_location ?? '');
+            $row[] = (string) ($product->purchase_package_name ?? '');
+            $row[] = $product->conversion_factor !== null ? (float) $product->conversion_factor : '';
+        }
+
+        return $row;
     }
 
     public function bindValue(Cell $cell, $value)
     {
-        if (in_array($cell->getColumn(), ['A', 'B'], true) && $cell->getRow() > 1 && $value !== null && $value !== '') {
+        if (in_array($cell->getColumn(), ['A', 'B', 'N'], true) && $cell->getRow() > 1 && $value !== null && $value !== '') {
             $cell->setValueExplicit((string) $value, DataType::TYPE_STRING);
 
             return true;
@@ -110,7 +135,7 @@ class PriceListExport extends DefaultValueBinder implements FromQuery, ShouldAut
 
     public function columnFormats(): array
     {
-        return [
+        $formats = [
             'A' => NumberFormat::FORMAT_TEXT,
             'B' => NumberFormat::FORMAT_TEXT,
             'G' => NumberFormat::FORMAT_NUMBER_00,
@@ -118,6 +143,13 @@ class PriceListExport extends DefaultValueBinder implements FromQuery, ShouldAut
             'I' => NumberFormat::FORMAT_NUMBER_00,
             'J' => NumberFormat::FORMAT_NUMBER_00,
         ];
+
+        if (Product::hasExtendedCatalogColumns()) {
+            $formats['N'] = NumberFormat::FORMAT_TEXT;
+            $formats['R'] = NumberFormat::FORMAT_NUMBER_00;
+        }
+
+        return $formats;
     }
 
     public function styles(Worksheet $sheet)

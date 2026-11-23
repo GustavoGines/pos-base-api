@@ -353,6 +353,11 @@ class CatalogController extends Controller
     public function import(ImportCatalogRequest $request, CatalogImportService $importService)
     {
         try {
+            $options = [
+                'default_supplier_id' => $request->input('default_supplier_id'),
+                'default_margin_percent' => $request->input('default_margin_percent'),
+            ];
+
             if ($request->boolean('async')) {
                 $file = $request->file('file');
                 $filename = 'import_'.uniqid().'.'.$file->getClientOriginalExtension();
@@ -360,7 +365,7 @@ class CatalogController extends Controller
                 $fullPath = storage_path('app/'.$storedPath);
                 $jobKey = 'import_'.uniqid();
 
-                ImportCatalogJob::dispatch($fullPath, auth()->id(), $jobKey);
+                ImportCatalogJob::dispatch($fullPath, auth()->id(), $jobKey, $options);
 
                 return response()->json([
                     'message' => 'Importación iniciada en segundo plano.',
@@ -370,7 +375,7 @@ class CatalogController extends Controller
             }
 
             $path = $request->file('file')->getRealPath();
-            $result = $importService->import($path);
+            $result = $importService->import($path, $options);
 
             return response()->json([
                 'message' => 'Importación completada',

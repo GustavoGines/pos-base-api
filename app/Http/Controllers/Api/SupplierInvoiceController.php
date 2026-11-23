@@ -1027,6 +1027,9 @@ class SupplierInvoiceController extends Controller
                     if ($newPrice !== null && (float) $newPrice > 0) {
                         $product->selling_price = (float) $newPrice;
                     }
+                    if ($product->supplier_id === null && ! empty($invoice->supplier_id)) {
+                        $product->supplier_id = $invoice->supplier_id;
+                    }
                 }
                 $product->load('children');
                 $product->cost_price = $product->calculateComboCostPrice();
@@ -1049,6 +1052,9 @@ class SupplierInvoiceController extends Controller
                     $newPrice = $itemData['new_selling_price'] ?? $itemData['new_sale_price'] ?? null;
                     if ($newPrice !== null && (float) $newPrice > 0) {
                         $product->selling_price = (float) $newPrice;
+                    }
+                    if ($product->supplier_id === null && ! empty($invoice->supplier_id)) {
+                        $product->supplier_id = $invoice->supplier_id;
                     }
                     $product->save();
 
@@ -1121,6 +1127,9 @@ class SupplierInvoiceController extends Controller
                     $newPrice = $itemData['new_selling_price'] ?? $itemData['new_sale_price'] ?? null;
                     if ($newPrice !== null && (float) $newPrice > 0) {
                         $product->selling_price = (float) $newPrice;
+                    }
+                    if ($product->supplier_id === null && ! empty($invoice->supplier_id)) {
+                        $product->supplier_id = $invoice->supplier_id;
                     }
                     if (! empty($itemData['expiration_date'])) {
                         $product->expiration_date = $itemData['expiration_date'];

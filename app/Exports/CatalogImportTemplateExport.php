@@ -34,6 +34,11 @@ class CatalogImportTemplateExport extends DefaultValueBinder implements FromArra
             'unidad',
             'vencimiento_dias',
             'activo',
+            'cod_proveedor',
+            'medida',
+            'ubicacion',
+            'presentacion_compra',
+            'factor_conversion',
         ];
     }
 
@@ -54,13 +59,18 @@ class CatalogImportTemplateExport extends DefaultValueBinder implements FromArra
                 'un',
                 90,
                 'SI',
+                'PROV-001',
+                '1/2"',
+                'Pasillo 1 - Estante A',
+                'Caja',
+                12,
             ],
         ];
     }
 
     public function bindValue(Cell $cell, $value)
     {
-        if (in_array($cell->getColumn(), ['A', 'B'], true) && $cell->getRow() > 1 && $value !== null && $value !== '') {
+        if (in_array($cell->getColumn(), ['A', 'B', 'N'], true) && $cell->getRow() > 1 && $value !== null && $value !== '') {
             $cell->setValueExplicit((string) $value, DataType::TYPE_STRING);
 
             return true;
@@ -74,10 +84,12 @@ class CatalogImportTemplateExport extends DefaultValueBinder implements FromArra
         return [
             'A' => NumberFormat::FORMAT_TEXT,
             'B' => NumberFormat::FORMAT_TEXT,
+            'N' => NumberFormat::FORMAT_TEXT,
             'G' => NumberFormat::FORMAT_NUMBER_00,
             'H' => NumberFormat::FORMAT_NUMBER_00,
             'I' => NumberFormat::FORMAT_NUMBER_00,
             'J' => NumberFormat::FORMAT_NUMBER_00,
+            'R' => NumberFormat::FORMAT_NUMBER_00,
         ];
     }
 
