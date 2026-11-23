@@ -31,6 +31,13 @@ class StoreProductRequest extends FormRequest
                 'stock' => $this->filled('stock') ? $this->input('stock') : 0,
             ]);
         }
+
+        foreach (['supplier_sku', 'storage_location', 'technical_spec', 'purchase_package_name'] as $strField) {
+            if ($this->has($strField)) {
+                $trimmed = is_string($this->input($strField)) ? trim($this->input($strField)) : null;
+                $this->merge([$strField => ($trimmed === '' ? null : $trimmed)]);
+            }
+        }
     }
 
     public function rules(): array
@@ -47,6 +54,11 @@ class StoreProductRequest extends FormRequest
                 'string',
                 Rule::unique('products')->whereNull('deleted_at'),
             ],
+            'supplier_sku' => 'nullable|string|max:64',
+            'storage_location' => 'nullable|string|max:120',
+            'technical_spec' => 'nullable|string|max:120',
+            'purchase_package_name' => 'nullable|string|max:40',
+            'conversion_factor' => 'nullable|numeric|min:0.001|max:100000',
             'cost_price' => 'nullable|numeric|min:0',
             'selling_price' => [
                 'numeric',
@@ -66,8 +78,23 @@ class StoreProductRequest extends FormRequest
             'active' => 'boolean',
             'needs_catalog_review' => 'boolean',
             'is_sold_by_weight' => 'boolean',
-            'unit_type' => 'sometimes|in:un,kg,lt,g',
+            'unit_type' => 'sometimes|string|max:20|in:un,kg,lt,g,mt,m2,m3,bolsa,rollo,caja,par',
             'calc_config' => 'nullable|array',
+            'calc_config.type' => 'nullable|string|in:wood,roof,paint',
+            'calc_config.inch_preset' => 'nullable|string|max:32',
+            'calc_config.nominal_width_m' => 'nullable|numeric|min:0.001|max:50',
+            'calc_config.useful_width_m' => 'nullable|numeric|min:0.001|max:50',
+            'calc_config.length_m' => 'nullable|numeric|min:0.05|max:50',
+            'calc_config.pricing_mode' => 'nullable|string|in:per_board,per_pack,per_linear_meter,per_m2,per_sheet,per_unit',
+            'calc_config.m2_billing_basis' => 'nullable|string|in:nominal,useful',
+            'calc_config.boards_per_pack' => 'nullable|integer|min:1|max:500',
+            'calc_config.round_to_full_pack' => 'nullable|boolean',
+            'calc_config.longitudinal_overlap_m' => 'nullable|numeric|min:0|max:5',
+            'calc_config.yield_m2_per_liter' => 'nullable|numeric|min:0.05|max:500',
+            'calc_config.yield_mode' => 'nullable|string|in:per_coat,final_total',
+            'calc_config.container_liters' => 'nullable|numeric|min:0.05|max:1000',
+            'calc_config.default_coats' => 'nullable|integer|min:1|max:20',
+            'calc_config.default_waste_pct' => 'nullable|numeric|min:0|max:100',
             'vencimiento_dias' => 'nullable|integer|min:1|max:3650',
             'expiration_date' => 'nullable|date',
             'expiry_alert_days' => 'nullable|integer|min:1|max:365',
@@ -112,5 +139,24 @@ class StoreProductRequest extends FormRequest
             'combo_ingredients.*.id.exists' => 'Uno de los productos seleccionados para el combo no existe.',
             'combo_ingredients.*.quantity.min' => 'La cantidad de cada producto del combo debe ser mayor a 0.',
         ];
+    }
+
+    public function withValidator(\Illuminate\Validation\Validator $validator): void
+    {
+        $validator->after(function (\Illuminate\Validation\Validator $validator) {
+            $rawConfig = $this->input('calc_config');
+            if (
+                is_array($rawConfig)
+                && isset($rawConfig['nominal_width_m'], $rawConfig['useful_width_m'])
+                && is_numeric($rawConfig['nominal_width_m'])
+                && is_numeric($rawConfig['useful_width_m'])
+                && (float) $rawConfig['useful_width_m'] > (float) $rawConfig['nominal_width_m'] + 1e-6
+            ) {
+                $validator->errors()->add(
+                    'calc_config.useful_width_m',
+                    'El ancho útil no puede superar al ancho nominal.'
+                );
+            }
+        });
     }
 }

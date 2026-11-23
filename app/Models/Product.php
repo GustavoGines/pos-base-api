@@ -9,19 +9,21 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Schema;
 
 class Product extends Model
 {
     use HasFactory, SoftDeletes;
 
     protected $fillable = [
-        'name', 'barcode', 'internal_code', 'cost_price', 'selling_price', 'iva_rate',
+        'name', 'barcode', 'internal_code', 'supplier_sku', 'cost_price', 'selling_price', 'iva_rate',
         'price_wholesale', 'price_card',  // [hardware_store] Listas de Precio
         'stock', 'min_stock', 'active', 'needs_catalog_review', 'is_combo', 'is_service', 'is_sold_by_weight', 'sales_count', 'vencimiento_dias',
         'expiration_date', 'expiry_alert_days', 'expiry_alert_snoozed_until', 'expiry_alert_last_stage',
         'track_batches', 'lot_deduction_policy', 'allow_sell_expired',
         'has_production_recipe', 'recipe_yield_quantity',
-        'unit_type', 'calc_config', 'category_id', 'brand_id', 'supplier_id', 'image_path',
+        'unit_type', 'purchase_package_name', 'conversion_factor', 'calc_config',
+        'category_id', 'brand_id', 'supplier_id', 'storage_location', 'technical_spec', 'image_path',
     ];
 
     protected $appends = ['image_url'];
@@ -36,6 +38,7 @@ class Product extends Model
         'allow_sell_expired' => 'boolean',
         'has_production_recipe' => 'boolean',
         'recipe_yield_quantity' => 'decimal:3',
+        'conversion_factor' => 'decimal:3',
         'cost_price' => 'decimal:2',
         'selling_price' => 'decimal:2',
         'iva_rate' => 'decimal:2',
@@ -52,6 +55,19 @@ class Product extends Model
         'calc_config' => 'array',
     ];
 
+    public static function hasExtendedCatalogColumns(): bool
+    {
+        try {
+            return Schema::hasColumn('products', 'supplier_sku')
+                && Schema::hasColumn('products', 'storage_location')
+                && Schema::hasColumn('products', 'technical_spec')
+                && Schema::hasColumn('products', 'purchase_package_name')
+                && Schema::hasColumn('products', 'conversion_factor');
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
     protected static function booted(): void
     {
         static::saving(function (Product $product) {
@@ -67,6 +83,19 @@ class Product extends Model
                     $product->attributes['has_production_recipe'],
                     $product->attributes['recipe_yield_quantity']
                 );
+            }
+            if (! self::hasExtendedCatalogColumns()) {
+                unset(
+                    $product->attributes['supplier_sku'],
+                    $product->attributes['storage_location'],
+                    $product->attributes['technical_spec'],
+                    $product->attributes['purchase_package_name'],
+                    $product->attributes['conversion_factor']
+                );
+                if (isset($product->attributes['unit_type'])
+                    && ! in_array($product->attributes['unit_type'], ['un', 'kg', 'lt', 'g'], true)) {
+                    $product->attributes['unit_type'] = ! empty($product->attributes['is_sold_by_weight']) ? 'kg' : 'un';
+                }
             }
         });
     }
@@ -167,20 +196,75 @@ class Product extends Model
      */
     public function scopeMatchingSearch(Builder $query, ?string $search, array $columns = ['products.name', 'products.barcode', 'products.internal_code']): Builder
     {
+        if ($columns === ['products.name', 'products.barcode', 'products.internal_code'] && self::hasExtendedCatalogColumns()) {
+            $columns = [
+                'products.name',
+                'products.barcode',
+                'products.internal_code',
+                'products.supplier_sku',
+                'products.technical_spec',
+            ];
+        }
+
         $terms = preg_split('/\s+/u', trim((string) $search), -1, PREG_SPLIT_NO_EMPTY) ?: [];
         $terms = array_slice($terms, 0, 6); // Tope de seguridad: máx 6 palabras
 
         foreach ($terms as $term) {
-            $like = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $term).'%';
-            $query->where(function (Builder $q) use ($columns, $like) {
+            $variants = self::expandSpanishSearchVariants($term);
+            $query->where(function (Builder $q) use ($columns, $variants) {
                 $grammar = $q->getQuery()->getGrammar();
-                foreach ($columns as $column) {
-                    $q->orWhereRaw($grammar->wrap($column)." LIKE ? ESCAPE '!'", [$like]);
+                foreach ($variants as $variant) {
+                    $like = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $variant).'%';
+                    foreach ($columns as $column) {
+                        $q->orWhereRaw($grammar->wrap($column)." LIKE ? ESCAPE '!'", [$like]);
+                    }
                 }
             });
         }
 
         return $query;
+    }
+
+    /**
+     * Expande variantes singulares básicas para búsquedas en español (p. ej. "machimbres" → "machimbre",
+     * "perfiles" → "perfil", "luces" → "luz"), preservando siempre el término original literal.
+     *
+     * @return array<int, string>
+     */
+    private static function expandSpanishSearchVariants(string $term): array
+    {
+        $variants = [$term];
+        $len = mb_strlen($term, 'UTF-8');
+        if ($len < 4) {
+            return $variants;
+        }
+
+        $lower = mb_strtolower($term, 'UTF-8');
+        if (str_ends_with($lower, 's')) {
+            $minus1 = mb_substr($term, 0, $len - 1, 'UTF-8');
+            if ($minus1 !== '' && ! in_array($minus1, $variants, true)) {
+                $variants[] = $minus1;
+            }
+        }
+
+        if ($len >= 5 && str_ends_with($lower, 'es')) {
+            $beforeEs = mb_substr($lower, $len - 3, 1, 'UTF-8');
+            if (in_array($beforeEs, ['d', 'l', 'n', 'r', 's'], true)) {
+                $minus2 = mb_substr($term, 0, $len - 2, 'UTF-8');
+                if (mb_strlen($minus2, 'UTF-8') >= 3 && ! in_array($minus2, $variants, true)) {
+                    $variants[] = $minus2;
+                }
+            }
+        }
+
+        if ($len >= 5 && str_ends_with($lower, 'ces')) {
+            $minus3Z = mb_substr($term, 0, $len - 3, 'UTF-8').'z';
+            if (! in_array($minus3Z, $variants, true)) {
+                $variants[] = $minus3Z;
+            }
+        }
+
+        return $variants;
     }
 
     /**

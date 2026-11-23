@@ -96,12 +96,14 @@ class ProductController extends Controller
 
         $allowedSorts = [
             'id', 'name', 'selling_price', 'cost_price', 'stock',
-            'barcode', 'internal_code', 'category_id', 'brand_id', 'supplier_id',
+            'barcode', 'internal_code', 'supplier_sku', 'storage_location', 'technical_spec', 'unit_type',
+            'category_id', 'brand_id', 'supplier_id',
             'is_sold_by_weight', 'active', 'sales_count', 'vencimiento_dias',
             'expiration_date', 'needs_catalog_review',
         ];
         $sortBy = $request->query('sort_by');
         $sortDir = $request->query('sort_direction') === 'desc' ? 'desc' : 'asc';
+        $hasExtendedCols = Product::hasExtendedCatalogColumns();
 
         if ($sortBy && in_array($sortBy, $allowedSorts)) {
             $orderNullsLast = static function ($builder, string $expression, string $direction): void {
@@ -137,6 +139,14 @@ class ProductController extends Controller
                 $query->orderByRaw("CASE WHEN products.barcode IS NULL OR products.barcode = '' THEN 1 ELSE 0 END ASC")
                     ->orderBy('products.barcode', $sortDir)
                     ->orderBy('products.name', 'asc');
+            } elseif (in_array($sortBy, ['supplier_sku', 'storage_location', 'technical_spec'], true)) {
+                if ($hasExtendedCols) {
+                    $query->orderByRaw("CASE WHEN products.{$sortBy} IS NULL OR products.{$sortBy} = '' THEN 1 ELSE 0 END ASC")
+                        ->orderBy("products.{$sortBy}", $sortDir)
+                        ->orderBy('products.name', 'asc');
+                } else {
+                    $query->orderBy('products.name', 'asc');
+                }
             } elseif ($sortBy === 'needs_catalog_review') {
                 $query->where('products.needs_catalog_review', true)
                     ->orderBy('products.id', $sortDir);
@@ -179,6 +189,14 @@ class ProductController extends Controller
 
         if (! isset($validated['iva_rate']) || $validated['iva_rate'] === null) {
             $validated['iva_rate'] = 21.00;
+        }
+
+        if (array_key_exists('calc_config', $validated)) {
+            if (! Schema::hasColumn('products', 'calc_config')) {
+                unset($validated['calc_config']);
+            } else {
+                $validated['calc_config'] = $this->sanitizeCalcConfig($validated['calc_config']);
+            }
         }
 
         $product = DB::transaction(function () use ($request, $validated) {
@@ -299,6 +317,14 @@ class ProductController extends Controller
             if ($wasTrackingBatches && $willTrackBatches && ! $willBeCombo) {
                 // La fecha más próxima a vencer del producto se materializa desde sus lotes activos
                 unset($validated['expiration_date']);
+            }
+
+            if (array_key_exists('calc_config', $validated)) {
+                if (! Schema::hasColumn('products', 'calc_config')) {
+                    unset($validated['calc_config']);
+                } else {
+                    $validated['calc_config'] = $this->sanitizeCalcConfig($validated['calc_config']);
+                }
             }
 
             $product->update($validated);
@@ -796,6 +822,25 @@ class ProductController extends Controller
             ], 422);
         }
 
+        $sanitizedConfig = $this->sanitizeCalcConfig($rawConfig);
+
+        $product->update([
+            'calc_config' => $sanitizedConfig,
+        ]);
+
+        return response()->json([
+            'message' => 'Configuración de calculadora actualizada correctamente.',
+            'calc_config' => $product->calc_config,
+            'product' => $product->load($this->productRelations()),
+        ]);
+    }
+
+    private function sanitizeCalcConfig(mixed $rawConfig): ?array
+    {
+        if (! is_array($rawConfig)) {
+            return null;
+        }
+
         $allowedKeys = [
             'type',
             'inch_preset',
@@ -814,22 +859,8 @@ class ProductController extends Controller
             'default_waste_pct',
         ];
 
-        $sanitizedConfig = is_array($rawConfig)
-            ? array_intersect_key($rawConfig, array_flip($allowedKeys))
-            : null;
+        $sanitized = array_intersect_key($rawConfig, array_flip($allowedKeys));
 
-        if (is_array($sanitizedConfig) && empty($sanitizedConfig)) {
-            $sanitizedConfig = null;
-        }
-
-        $product->update([
-            'calc_config' => $sanitizedConfig,
-        ]);
-
-        return response()->json([
-            'message' => 'Configuración de calculadora actualizada correctamente.',
-            'calc_config' => $product->calc_config,
-            'product' => $product->load($this->productRelations()),
-        ]);
+        return empty($sanitized) ? null : $sanitized;
     }
 }

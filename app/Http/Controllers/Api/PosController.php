@@ -26,15 +26,23 @@ class PosController extends Controller
         }
 
         $plu = is_numeric($query) ? str_pad($query, 5, '0', STR_PAD_LEFT) : $query;
+        $hasExtended = Product::hasExtendedCatalogColumns();
+        $searchCols = $hasExtended
+            ? ['name', 'supplier_sku', 'technical_spec']
+            : ['name'];
 
         $products = Product::where('active', true)
-            ->where(function ($q) use ($query, $plu) {
+            ->where(function ($q) use ($query, $plu, $hasExtended, $searchCols) {
                 $q->where('barcode', $query)
                     ->orWhere('internal_code', $query)
                     ->orWhere('internal_code', $plu)
-                    ->orWhere(function ($n) use ($query) {
-                        $n->matchingSearch($query, ['name']);
+                    ->orWhere(function ($n) use ($query, $searchCols) {
+                        $n->matchingSearch($query, $searchCols);
                     });
+
+                if ($hasExtended) {
+                    $q->orWhere('supplier_sku', $query);
+                }
 
                 if (is_numeric($query)) {
                     $q->orWhere('id', $query);

@@ -101,4 +101,21 @@ class ProductSearchTest extends TestCase
         $this->assertCount(1, $porBarcode);
         $this->assertSame('Monitor Xiaomi A27i', $porBarcode[0]['name']);
     }
+
+    public function test_busqueda_tolera_plurales_en_espanol_en_catalogo_y_pos(): void
+    {
+        $this->crear('Machimbre Pino 1/2 x 4 x 3.00m', 'HW101', '7791001');
+        $this->crear('Chapa Acanalada C27', 'HW201', '7791002');
+        $this->crear('Perfil C Galvanizado 100x50', 'HW301', '7791003');
+        $this->crear('Luz LED Emergencia 18W', 'HW401', '7791004');
+
+        $this->assertSame(['Machimbre Pino 1/2 x 4 x 3.00m'], $this->nombresCatalogo('machimbres'));
+        $this->assertSame(['Chapa Acanalada C27'], $this->nombresCatalogo('chapas c27'));
+        $this->assertSame(['Perfil C Galvanizado 100x50'], $this->nombresCatalogo('perfiles galvanizado'));
+        $this->assertSame(['Luz LED Emergencia 18W'], $this->nombresCatalogo('luces led'));
+
+        $posMachimbres = collect($this->getJson('/api/pos/products/search?query=machimbres')->assertOk()->json())
+            ->pluck('name')->values()->all();
+        $this->assertSame(['Machimbre Pino 1/2 x 4 x 3.00m'], $posMachimbres);
+    }
 }
