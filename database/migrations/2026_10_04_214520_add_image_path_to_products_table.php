@@ -11,10 +11,12 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('products', function (Blueprint $table) {
-            $table->string('image_path', 255)->nullable()->after('unit_type')
-                ->comment('Ruta relativa en storage/app/public/products/');
-        });
+        if (Schema::hasTable('products') && ! Schema::hasColumn('products', 'image_path')) {
+            Schema::table('products', function (Blueprint $table) {
+                $table->string('image_path', 255)->nullable()->after('unit_type')
+                    ->comment('Ruta relativa en storage/app/public/products/');
+            });
+        }
     }
 
     /**
@@ -22,8 +24,10 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('products', function (Blueprint $table) {
-            $table->dropColumn('image_path');
-        });
+        if (Schema::hasTable('products') && Schema::hasColumn('products', 'image_path')) {
+            Schema::table('products', function (Blueprint $table) {
+                $table->dropColumn('image_path');
+            });
+        }
     }
 };

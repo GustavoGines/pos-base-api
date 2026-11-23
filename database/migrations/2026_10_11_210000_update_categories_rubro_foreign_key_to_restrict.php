@@ -11,13 +11,26 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('categories', function (Blueprint $table) {
-            $table->dropForeign(['rubro_id']);
-            $table->foreign('rubro_id')
-                ->references('id')
-                ->on('rubros')
-                ->restrictOnDelete();
-        });
+        if (! Schema::hasTable('categories') || ! Schema::hasColumn('categories', 'rubro_id')) {
+            return;
+        }
+
+        try {
+            Schema::table('categories', function (Blueprint $table) {
+                $table->dropForeign(['rubro_id']);
+            });
+        } catch (\Throwable) {
+        }
+
+        try {
+            Schema::table('categories', function (Blueprint $table) {
+                $table->foreign('rubro_id')
+                    ->references('id')
+                    ->on('rubros')
+                    ->restrictOnDelete();
+            });
+        } catch (\Throwable) {
+        }
     }
 
     /**
@@ -25,12 +38,25 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('categories', function (Blueprint $table) {
-            $table->dropForeign(['rubro_id']);
-            $table->foreign('rubro_id')
-                ->references('id')
-                ->on('rubros')
-                ->nullOnDelete();
-        });
+        if (! Schema::hasTable('categories') || ! Schema::hasColumn('categories', 'rubro_id')) {
+            return;
+        }
+
+        try {
+            Schema::table('categories', function (Blueprint $table) {
+                $table->dropForeign(['rubro_id']);
+            });
+        } catch (\Throwable) {
+        }
+
+        try {
+            Schema::table('categories', function (Blueprint $table) {
+                $table->foreign('rubro_id')
+                    ->references('id')
+                    ->on('rubros')
+                    ->nullOnDelete();
+            });
+        } catch (\Throwable) {
+        }
     }
 };
