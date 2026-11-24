@@ -161,4 +161,75 @@ class BusinessSetting extends Model
 
         return in_array($target, static::getSecondaryBusinessTypes(), true);
     }
+
+    /**
+     * Indica si el control por lotes/vencimientos está habilitado globalmente
+     * por licencia activa (o por perfil nativo si aún no hay diccionario sembrado).
+     */
+    public static function isBatchExpirationEnabledGlobally(): bool
+    {
+        $primary = strtolower(trim((string) (
+            static::where('key', 'license_business_type')->value('value')
+            ?? static::where('key', 'business_type')->value('value')
+            ?? 'retail'
+        )));
+        $secondary = static::getSecondaryBusinessTypes();
+
+        $rawDict = static::where('key', 'license_features_dict')->value('value');
+        if (is_string($rawDict) && trim($rawDict) !== '') {
+            $features = json_decode($rawDict, true);
+            if (is_array($features)) {
+                $hasProd = ($features['production'] ?? false) === true || ($features['production'] ?? false) === 1;
+                if (array_key_exists('batch_expiration', $features)) {
+                    return ($features['batch_expiration'] === true || $features['batch_expiration'] === 1) || $hasProd;
+                }
+
+                return static::hasNativeBatchExpiration($primary, $secondary) || $hasProd;
+            }
+        }
+
+        return static::hasNativeBatchExpiration($primary, $secondary);
+    }
+
+    /**
+     * Determina si un producto específico debe operar con control de lotes/vencimientos,
+     * aislando los rubros no perecederos en comercios Polirrubro mixtos y desactivando
+     * bloqueos legados cuando la licencia (ej. Ferretería pura) no incluye lotes.
+     */
+    public static function canUseBatchExpirationForProduct(\App\Models\Product $product): bool
+    {
+        if (! static::isBatchExpirationEnabledGlobally()) {
+            return false;
+        }
+
+        $primary = strtolower(trim((string) (
+            static::where('key', 'license_business_type')->value('value')
+            ?? static::where('key', 'business_type')->value('value')
+            ?? 'retail'
+        )));
+        $secondary = static::getSecondaryBusinessTypes();
+        $storeHasNativeBatches = static::hasNativeBatchExpiration($primary, $secondary);
+
+        if (! $storeHasNativeBatches) {
+            return true;
+        }
+
+        $rubro = $product->relationLoaded('category')
+            ? $product->category?->rubro
+            : $product->category()->with('rubro')->first()?->rubro;
+
+        if ($rubro !== null) {
+            $rubroVertical = Rubro::hasExtendedRubroColumns()
+                ? strtolower(trim((string) ($rubro->vertical_type ?? '')))
+                : '';
+            if ($rubroVertical === '') {
+                $rubroVertical = (string) (Rubro::inferVerticalTypeFromName($rubro->name) ?? '');
+            }
+            if ($rubroVertical !== '' && ! in_array($rubroVertical, ['retail', 'butcher'], true)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
 }

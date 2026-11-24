@@ -16,9 +16,20 @@ class DeliveryNoteController extends Controller
         protected StockService $stockService
     ) {}
 
+    private function deliveryNoteRelations(): array
+    {
+        return [
+            'sale.customer',
+            'sale.user:id,name',
+            'sale.items',
+            'sale.payments.paymentMethod',
+            'items.product.category.rubro',
+        ];
+    }
+
     public function index(Request $request)
     {
-        $query = DeliveryNote::with(['sale.customer', 'items.product']);
+        $query = DeliveryNote::with($this->deliveryNoteRelations());
 
         if ($request->filled('status')) {
             $query->where('status', $request->status);
@@ -59,7 +70,7 @@ class DeliveryNoteController extends Controller
             // La lectura de existencia previa se realiza sin FOR UPDATE para prevenir gap locks en MySQL/InnoDB.
             $existingNote = DeliveryNote::where('sale_id', $sale->id)->first();
             if ($existingNote) {
-                return response()->json($existingNote->load(['items.product', 'sale.payments.paymentMethod', 'sale.customer']), 200);
+                return response()->json($existingNote->load($this->deliveryNoteRelations()), 200);
             }
 
             $deliverableItems = $sale->items->filter(
@@ -88,7 +99,7 @@ class DeliveryNoteController extends Controller
                 ]);
             }
 
-            return response()->json($note->load(['items.product', 'sale.payments.paymentMethod', 'sale.customer']), 201);
+            return response()->json($note->load($this->deliveryNoteRelations()), 201);
         }, 3);
     }
 
@@ -171,7 +182,7 @@ class DeliveryNoteController extends Controller
                 SyncProductStockToPlatformsJob::dispatchForProducts($lockedProducts->keys());
             }
 
-            return response()->json($note->load('items.product'));
+            return response()->json($note->load($this->deliveryNoteRelations()));
         });
     }
 }

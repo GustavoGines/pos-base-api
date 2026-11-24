@@ -37,6 +37,47 @@ class Rubro extends Model
         return Schema::hasTable('rubros') && Schema::hasColumn('rubros', 'vertical_type');
     }
 
+    public static function inferVerticalTypeFromName(?string $rawName): ?string
+    {
+        $name = mb_strtolower(trim((string) $rawName), 'UTF-8');
+        if ($name === '') {
+            return null;
+        }
+
+        foreach (['carnic', 'poller', 'verdul', 'fiambr', 'pescad', 'frut'] as $kw) {
+            if (str_contains($name, $kw)) {
+                return 'butcher';
+            }
+        }
+        foreach (['ropa', 'indument', 'calzad', 'zapat', 'lencer', 'textil', 'boutique'] as $kw) {
+            if (str_contains($name, $kw)) {
+                return 'apparel';
+            }
+        }
+        foreach (['ferret', 'mader', 'pintur', 'corral', 'sanitar', 'electric', 'construc', 'buloner', 'herramient'] as $kw) {
+            if (str_contains($name, $kw)) {
+                return 'hardware_store';
+            }
+        }
+        foreach (['celular', 'tecnolog', 'comput', 'electro', 'repuest', 'moto', 'accesori', 'taller'] as $kw) {
+            if (str_contains($name, $kw)) {
+                return 'tech';
+            }
+        }
+        foreach (['bazar', 'librer', 'jugueter', 'regaler', 'cotill', 'forraj', 'escolar'] as $kw) {
+            if (str_contains($name, $kw)) {
+                return 'general';
+            }
+        }
+        foreach (['kiosc', 'almac', 'bebid', 'golosin', 'supermerc', 'pastel', 'panad', 'confiter', 'gastron', 'cocin', 'rotiser', 'lacteo', 'limpiez', 'perfum', 'farmac', 'dietet'] as $kw) {
+            if (str_contains($name, $kw)) {
+                return 'retail';
+            }
+        }
+
+        return null;
+    }
+
     protected static function booted(): void
     {
         static::saving(function (Rubro $rubro) {

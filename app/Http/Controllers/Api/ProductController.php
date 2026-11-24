@@ -308,8 +308,26 @@ class ProductController extends Controller
             $oldStock = (float) $product->stock;
             $oldCost = (float) $product->cost_price;
             $willBeCombo = array_key_exists('is_combo', $validated) ? (bool) $validated['is_combo'] : (bool) $product->is_combo;
-            $wasTrackingBatches = $hasLotSchema && (bool) $product->track_batches;
-            $willTrackBatches = $hasLotSchema && (array_key_exists('track_batches', $validated) ? (bool) $validated['track_batches'] : $wasTrackingBatches);
+
+            $productForBatchScope = clone $product;
+            if (array_key_exists('category_id', $validated) && $validated['category_id'] != $product->category_id) {
+                $productForBatchScope->category_id = $validated['category_id'];
+                $productForBatchScope->unsetRelation('category');
+            }
+            $batchesEffective = $hasLotSchema && BusinessSetting::canUseBatchExpirationForProduct($productForBatchScope);
+            if (! $batchesEffective) {
+                unset(
+                    $validated['track_batches'],
+                    $validated['expiration_date'],
+                    $validated['vencimiento_dias'],
+                    $validated['expiry_alert_days'],
+                    $validated['lot_deduction_policy'],
+                    $validated['allow_sell_expired'],
+                );
+            }
+
+            $wasTrackingBatches = $batchesEffective && (bool) $product->track_batches;
+            $willTrackBatches = $batchesEffective && (array_key_exists('track_batches', $validated) ? (bool) $validated['track_batches'] : $wasTrackingBatches);
 
             // Si usamos add_stock, si es combo (stock virtual) o si controla stock por lotes, no pisamos stock absoluto directo
             if (! empty($validated['add_stock']) || $willBeCombo || ($wasTrackingBatches && $willTrackBatches)) {

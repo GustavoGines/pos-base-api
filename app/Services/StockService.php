@@ -23,6 +23,23 @@ class StockService
     {
         return $this->batchStockService ??= app(BatchStockService::class);
     }
+
+    protected function shouldTrackBatchesFor(Product $product): bool
+    {
+        return BatchStockService::hasLotTrackingSchema()
+            && (bool) $product->track_batches
+            && BusinessSetting::canUseBatchExpirationForProduct($product);
+    }
+
+    protected function hasSaleBatchAllocations(Sale $sale, Product $product): bool
+    {
+        return BatchStockService::hasLotTrackingSchema()
+            && \App\Models\SaleItemBatchAllocation::where('sale_id', $sale->id)
+                ->where('product_id', $product->id)
+                ->whereColumn('quantity', '>', 'restored_quantity')
+                ->exists();
+    }
+
     /**
      * Pre-carga y bloquea todos los productos (padres e hijos) en una sola query para evitar N+1 y Deadlocks.
      */
@@ -47,7 +64,7 @@ class StockService
 
         // Bloqueo Pesimista REAL: Delegamos a la DB el orden (orderBy) para evitar Deadlocks Circulares
         return Product::whereIn('id', $allIds)
-            ->with('children')
+            ->with(['children.category.rubro', 'category.rubro'])
             ->orderBy('id', 'asc')
             ->lockForUpdate()
             ->get()
@@ -96,7 +113,7 @@ class StockService
                             if (! $childProduct->is_service) {
                                 $totalChildDeduct = $comboQty * $ingQty;
                                 $noteText = 'Venta '.StockMovement::CHECKOUT_NOTE_TOKEN."{$sale->id} (Hijo de Combo Rápido: {$comboLabel})";
-                                if (BatchStockService::hasLotTrackingSchema() && $childProduct->track_batches) {
+                                if ($this->shouldTrackBatchesFor($childProduct)) {
                                     $res = $this->batchService()->deductStockFEFO($childProduct, $totalChildDeduct, [
                                         'sale_id' => $sale->id,
                                         'sale_item_id' => $matchingSaleItem?->id,
@@ -230,7 +247,8 @@ class StockService
                 $canonicalChild = $products[$child->id] ?? $child;
                 $note = ($isAdjustment ? 'Ajuste Recall ' : 'Venta ').StockMovement::CHECKOUT_NOTE_TOKEN."{$sale->id} (Hijo de: {$product->name})";
 
-                if (BatchStockService::hasLotTrackingSchema() && $canonicalChild->track_batches) {
+                if (($qtyDeducted > 0 && $this->shouldTrackBatchesFor($canonicalChild))
+                    || ($qtyDeducted < 0 && ($this->shouldTrackBatchesFor($canonicalChild) || $this->hasSaleBatchAllocations($sale, $canonicalChild)))) {
                     $usedBatchChild = true;
                     if ($qtyDeducted > 0) {
                         $res = $this->batchService()->deductStockFEFO($canonicalChild, $qtyDeducted, [
@@ -275,7 +293,8 @@ class StockService
             }
         } else {
             // Update the canonical product (which $product already is, as it comes from $products)
-            if (BatchStockService::hasLotTrackingSchema() && $product->track_batches) {
+            if (($qty > 0 && $this->shouldTrackBatchesFor($product))
+                || ($qty < 0 && ($this->shouldTrackBatchesFor($product) || $this->hasSaleBatchAllocations($sale, $product)))) {
                 if ($qty > 0) {
                     $res = $this->batchService()->deductStockFEFO($product, $qty, [
                         'sale_id' => $sale->id,
@@ -471,7 +490,7 @@ class StockService
                 if (! $childProduct || $qtyToRestore <= 0 || $childProduct->is_service) {
                     continue;
                 }
-                if (BatchStockService::hasLotTrackingSchema() && $childProduct->track_batches) {
+                if ($this->shouldTrackBatchesFor($childProduct) || $this->hasSaleBatchAllocations($sale, $childProduct)) {
                     $this->batchService()->restoreFromSaleAllocations($sale, $childProduct, $qtyToRestore, [
                         'user_id' => $context->userId,
                         'authorized_by_admin_id' => $context->authorizedByAdminId,
@@ -628,7 +647,7 @@ class StockService
             foreach ($product->children as $child) {
                 $qtyRestored = $qtyToRestore * (float) $child->pivot->quantity;
                 $canonicalChild = $products[$child->id] ?? $child;
-                if (BatchStockService::hasLotTrackingSchema() && $canonicalChild->track_batches) {
+                if ($this->shouldTrackBatchesFor($canonicalChild) || $this->hasSaleBatchAllocations($sale, $canonicalChild)) {
                     $this->batchService()->restoreFromSaleAllocations($sale, $canonicalChild, $qtyRestored, [
                         'user_id' => $context->userId,
                         'authorized_by_admin_id' => $context->authorizedByAdminId,
@@ -645,7 +664,7 @@ class StockService
                 $restoredIds[] = $canonicalChild->id;
             }
         } else {
-            if (BatchStockService::hasLotTrackingSchema() && $product->track_batches) {
+            if ($this->shouldTrackBatchesFor($product) || $this->hasSaleBatchAllocations($sale, $product)) {
                 $this->batchService()->restoreFromSaleAllocations($sale, $product, $qtyToRestore, [
                     'user_id' => $context->userId,
                     'authorized_by_admin_id' => $context->authorizedByAdminId,
@@ -678,7 +697,7 @@ class StockService
             foreach ($product->children as $child) {
                 $qtyDeducted = $qtyDelivered * (float) $child->pivot->quantity;
                 $canonicalChild = $products[$child->id] ?? $child;
-                if (BatchStockService::hasLotTrackingSchema() && $canonicalChild->track_batches) {
+                if ($this->shouldTrackBatchesFor($canonicalChild)) {
                     $this->batchService()->deductStockFEFO($canonicalChild, $qtyDeducted, [
                         'sale_id' => $note->sale_id,
                         'user_id' => $userId,
@@ -702,7 +721,7 @@ class StockService
             return;
         }
 
-        if (BatchStockService::hasLotTrackingSchema() && $product->track_batches) {
+        if ($this->shouldTrackBatchesFor($product)) {
             $this->batchService()->deductStockFEFO($product, $qtyDelivered, [
                 'sale_id' => $note->sale_id,
                 'user_id' => $userId,
