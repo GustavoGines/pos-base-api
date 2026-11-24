@@ -34,6 +34,7 @@ class ReportTest extends TestCase
         BusinessSetting::updateOrCreate(
             ['key' => 'license_features_dict'],
             ['value' => json_encode([
+                'advanced_reports' => true,
                 'current_accounts' => true,
                 'expenses' => true,
                 'multi_rubro' => true,

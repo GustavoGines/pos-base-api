@@ -142,6 +142,11 @@ class Fase1CommercialEnhancementsTest extends TestCase
             'unit_cost_price' => 2000.00,
         ]);
 
+        \App\Models\BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['logistics' => true])]
+        );
+
         // Generar remito desde Historial de Ventas para una venta mixta (catálogo + ítem temporal)
         // debe filtrar el ítem temporal y no fallar con SQL 23000 por product_id = null
         $remitoFromSaleResp = $this->withHeaders($this->authHeaders())
