@@ -29,6 +29,11 @@ class DeliveryNoteTest extends TestCase
         $this->admin = User::factory()->create(['role' => 'admin']);
         $this->actingAsAdmin($this->admin);
 
+        \App\Models\BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['logistics' => true])]
+        );
+
         $this->register = CashRegister::create(['name' => 'Caja 1']);
         $this->shift = CashShift::create([
             'cash_register_id' => $this->register->id,

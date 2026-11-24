@@ -334,6 +334,11 @@ class Fase3AuditRegressionTest extends TestCase
 
     public function test_f3_caja_01_and_fn_f3_02_multi_register_cash_movements_respect_explicit_cash_shift_id(): void
     {
+        \App\Models\BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['expenses' => true, 'multi_caja' => true])]
+        );
+
         $reg1 = CashRegister::create(['name' => 'Caja 1', 'is_active' => true]);
         $reg2 = CashRegister::create(['name' => 'Caja 2', 'is_active' => true]);
 
@@ -982,6 +987,11 @@ class Fase3AuditRegressionTest extends TestCase
      */
     public function test_bloque4_rep01_to_rep11_legacy_cash_movements_shift_collections_refund_exclusion_and_vat_sales(): void
     {
+        \App\Models\BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['expenses' => true, 'current_accounts' => true])]
+        );
+
         $register = CashRegister::create(['name' => 'Caja Principal', 'is_active' => true]);
         $shift = CashShift::create([
             'user_id' => $this->admin->id,

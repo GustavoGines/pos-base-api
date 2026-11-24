@@ -418,6 +418,11 @@ class ProfessionalServicesAndCustomerHistoryTest extends TestCase
             ->assertJsonPath('summary.iva_105', 1050)
             ->assertJsonPath('summary.net_fiscal_total', 23150);
 
+        BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['advanced_reports' => true])]
+        );
+
         $excelResp = $this->actingAsAdmin($this->adminUser)
             ->get("/api/reports/vat-sales/export?start_date={$today}&end_date={$today}");
         $excelResp->assertOk();
