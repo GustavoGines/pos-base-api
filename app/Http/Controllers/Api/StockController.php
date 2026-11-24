@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\AdjustStockRequest;
 use App\Jobs\SyncProductStockToPlatformsJob;
+use App\Models\BusinessSetting;
 use App\Models\Product;
 use App\Models\ProductBatch;
 use App\Models\StockMovement;
@@ -48,7 +49,10 @@ class StockController extends Controller
                             || ! empty($validated['expiration_date'])
                         );
 
-                    if (BatchStockService::hasLotTrackingSchema() && ! $lockedProduct->is_service && ($lockedProduct->track_batches || $hasExplicitLotInput)) {
+                    if (BatchStockService::hasLotTrackingSchema()
+                        && ! $lockedProduct->is_service
+                        && BusinessSetting::canUseBatchExpirationForProduct($lockedProduct)
+                        && ($lockedProduct->track_batches || $hasExplicitLotInput)) {
                         if (! $lockedProduct->track_batches) {
                             $lockedProduct->track_batches = true;
                             $lockedProduct->save();

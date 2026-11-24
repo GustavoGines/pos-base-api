@@ -4,8 +4,13 @@ namespace Tests\Feature;
 
 use App\Exports\PriceListExport;
 use App\Models\BusinessSetting;
+use App\Models\CashRegister;
+use App\Models\CashShift;
 use App\Models\Category;
+use App\Models\PaymentMethod;
 use App\Models\Product;
+use App\Models\ProductBatch;
+use App\Models\ProductRecipeItem;
 use App\Models\Rubro;
 use App\Models\User;
 use App\Services\Catalog\CatalogImportService;
@@ -326,5 +331,290 @@ class MultiVerticalSupportTest extends TestCase
 
         $this->assertSame('kg', $costillaRow[10]);
         $this->assertSame('un', $lapachoRow[10]);
+    }
+
+    public function test_hardware_store_without_batch_addon_ignores_legacy_expired_batch_lock_and_preserves_history(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin', 'pin' => Hash::make('1234')]);
+        $this->actingAsAdmin($admin);
+
+        $register = CashRegister::create(['name' => 'Caja Ferretería', 'is_active' => true]);
+        $shift = CashShift::create([
+            'cash_register_id' => $register->id,
+            'user_id' => $admin->id,
+            'opened_at' => now(),
+            'opening_balance' => 0,
+            'status' => 'open',
+        ]);
+        $cash = PaymentMethod::create([
+            'name' => 'Efectivo',
+            'code' => 'cash',
+            'surcharge_type' => 'none',
+            'surcharge_value' => 0,
+            'is_cash' => true,
+            'is_active' => true,
+        ]);
+
+        BusinessSetting::updateOrCreate(['key' => 'license_business_type'], ['value' => 'hardware_store']);
+        BusinessSetting::updateOrCreate(['key' => 'license_secondary_business_types'], ['value' => '[]']);
+        BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['batch_expiration' => false, 'production' => false, 'logistics' => true])]
+        );
+
+        $ingredient = Product::create([
+            'name' => 'Dulce de Leche',
+            'internal_code' => '82000',
+            'cost_price' => 1000,
+            'selling_price' => 2500,
+            'stock' => 20,
+            'active' => true,
+        ]);
+
+        $legacyProduct = Product::create([
+            'name' => 'Alfajores de Maicena x12',
+            'internal_code' => '82001',
+            'cost_price' => 3200,
+            'selling_price' => 8500,
+            'stock' => 15,
+            'active' => true,
+            'track_batches' => true,
+            'expiration_date' => now()->subDays(5)->format('Y-m-d'),
+            'has_production_recipe' => true,
+        ]);
+
+        $expiredBatch = ProductBatch::create([
+            'product_id' => $legacyProduct->id,
+            'batch_code' => 'LEGACY-EXP-01',
+            'source_type' => ProductBatch::SOURCE_OPENING,
+            'initial_quantity' => 15,
+            'remaining_quantity' => 15,
+            'expiration_date' => now()->subDays(5)->format('Y-m-d'),
+            'status' => ProductBatch::STATUS_ACTIVE,
+        ]);
+
+        ProductRecipeItem::create([
+            'parent_product_id' => $legacyProduct->id,
+            'ingredient_product_id' => $ingredient->id,
+            'quantity' => 0.5,
+            'waste_pct' => 0,
+        ]);
+
+        $this->assertFalse(BusinessSetting::canUseBatchExpirationForProduct($legacyProduct));
+
+        // 1. Vender en POS pasa 201 sin exigir PIN de lote vencido ni tocar el lote legado
+        $saleRes = $this->postJson('/api/pos/sales', [
+            'cash_shift_id' => $shift->id,
+            'total' => 17000,
+            'total_surcharge' => 0,
+            'items' => [[
+                'product_id' => $legacyProduct->id,
+                'quantity' => 2,
+                'unit_price' => 8500,
+                'subtotal' => 17000,
+            ]],
+            'payments' => [[
+                'payment_method_id' => $cash->id,
+                'base_amount' => 17000,
+                'surcharge_amount' => 0,
+                'total_amount' => 17000,
+            ]],
+        ])->assertCreated();
+
+        $this->assertEquals(13.0, (float) $legacyProduct->fresh()->stock);
+        $this->assertEquals(15.0, (float) $expiredBatch->fresh()->remaining_quantity);
+
+        // 2. Anular venta restituye products.stock exacto (13 -> 15)
+        $this->postJson('/api/sales/'.$saleRes->json('sale.id').'/void', [
+            'reason' => 'Prueba anulación sin lotes',
+            'cash_shift_id' => $shift->id,
+        ])->assertOk();
+        $this->assertEquals(15.0, (float) $legacyProduct->fresh()->stock);
+
+        // 3. Editar ficha en hardware_store actualiza stock/precio y preserva track_batches, batch y receta
+        $this->putJson("/api/catalog/products/{$legacyProduct->id}", [
+            'name' => 'Alfajores de Maicena x12',
+            'cost_price' => 3500,
+            'selling_price' => 9200,
+            'stock' => 22,
+            'track_batches' => false,
+            'expiration_date' => null,
+        ])->assertOk();
+
+        $fresh = $legacyProduct->fresh();
+        $this->assertEquals(22.0, (float) $fresh->stock);
+        $this->assertTrue((bool) $fresh->track_batches);
+        $this->assertSame($expiredBatch->expiration_date->format('Y-m-d'), $fresh->expiration_date->format('Y-m-d'));
+        $this->assertDatabaseHas('product_batches', ['id' => $expiredBatch->id]);
+        $this->assertDatabaseHas('product_recipe_items', ['parent_product_id' => $legacyProduct->id]);
+
+        // 4. Ajustar stock en Ferretería ajusta stock directo sin tocar lotes históricos
+        $this->postJson("/api/catalog/products/{$legacyProduct->id}/adjust-stock", [
+            'type' => 'in',
+            'quantity' => 3,
+            'notes' => 'Ajuste en Ferretería',
+        ])->assertOk();
+
+        $this->assertEquals(25.0, (float) $legacyProduct->fresh()->stock);
+        $this->assertEquals(15.0, (float) $expiredBatch->fresh()->remaining_quantity);
+    }
+
+    public function test_pintureria_with_explicit_batch_addon_and_polirrubro_product_scope_work_correctly(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin', 'pin' => Hash::make('1234')]);
+        $this->actingAsAdmin($admin);
+
+        // A. Pinturería (hardware_store) CON addon batch_expiration explícito => respeta guardia de lote vencido
+        BusinessSetting::updateOrCreate(['key' => 'license_business_type'], ['value' => 'hardware_store']);
+        BusinessSetting::updateOrCreate(['key' => 'license_secondary_business_types'], ['value' => '[]']);
+        BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['batch_expiration' => true, 'production' => false])]
+        );
+
+        $pintura = Product::create([
+            'name' => 'Esmalte Sintético 4L',
+            'internal_code' => '83001',
+            'cost_price' => 12000,
+            'selling_price' => 19500,
+            'stock' => 10,
+            'active' => true,
+            'track_batches' => true,
+        ]);
+        ProductBatch::create([
+            'product_id' => $pintura->id,
+            'batch_code' => 'PINT-EXP-1',
+            'source_type' => ProductBatch::SOURCE_OPENING,
+            'initial_quantity' => 10,
+            'remaining_quantity' => 10,
+            'expiration_date' => now()->subDay()->format('Y-m-d'),
+            'status' => ProductBatch::STATUS_ACTIVE,
+        ]);
+        $this->assertTrue(BusinessSetting::canUseBatchExpirationForProduct($pintura));
+
+        // B. Polirrubro Mixto (retail + hardware_store) => Almacén SÍ usa lotes, Ferretería NO
+        BusinessSetting::updateOrCreate(['key' => 'license_business_type'], ['value' => 'retail']);
+        BusinessSetting::updateOrCreate(['key' => 'license_secondary_business_types'], ['value' => '["hardware_store"]']);
+        BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['batch_expiration' => true, 'production' => false, 'multi_rubro' => true])]
+        );
+
+        $rubroRetail = Rubro::create(['name' => 'Almacén y Pastelería', 'vertical_type' => 'retail', 'is_system' => false]);
+        $rubroHw = Rubro::create(['name' => 'Ferretería y Maderas', 'vertical_type' => 'hardware_store', 'is_system' => false]);
+        $catRetail = Category::create(['name' => 'Lácteos', 'rubro_id' => $rubroRetail->id]);
+        $catHw = Category::create(['name' => 'Herramientas', 'rubro_id' => $rubroHw->id]);
+
+        $yogur = Product::create([
+            'name' => 'Yogur Entero',
+            'internal_code' => '83002',
+            'category_id' => $catRetail->id,
+            'cost_price' => 800,
+            'selling_price' => 1400,
+            'stock' => 5,
+            'track_batches' => true,
+        ]);
+        $martillo = Product::create([
+            'name' => 'Martillo Galponero',
+            'internal_code' => '83003',
+            'category_id' => $catHw->id,
+            'cost_price' => 5000,
+            'selling_price' => 8900,
+            'stock' => 5,
+            'track_batches' => true,
+        ]);
+
+        $this->assertTrue(BusinessSetting::canUseBatchExpirationForProduct($yogur));
+        $this->assertFalse(BusinessSetting::canUseBatchExpirationForProduct($martillo));
+    }
+
+    public function test_delivery_notes_expose_unit_type_technical_spec_calc_config_category_rubro_and_sale_items(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin', 'pin' => Hash::make('1234')]);
+        $this->actingAsAdmin($admin);
+
+        BusinessSetting::updateOrCreate(['key' => 'license_business_type'], ['value' => 'hardware_store']);
+        BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['logistics' => true, 'batch_expiration' => false])]
+        );
+
+        $register = CashRegister::create(['name' => 'Caja Corralón', 'is_active' => true]);
+        $shift = CashShift::create([
+            'cash_register_id' => $register->id,
+            'user_id' => $admin->id,
+            'opened_at' => now(),
+            'opening_balance' => 0,
+            'status' => 'open',
+        ]);
+        $cash = PaymentMethod::create([
+            'name' => 'Efectivo',
+            'code' => 'cash',
+            'surcharge_type' => 'none',
+            'surcharge_value' => 0,
+            'is_cash' => true,
+            'is_active' => true,
+        ]);
+
+        $rubroHw = Rubro::create(['name' => 'Corralón', 'vertical_type' => 'hardware_store', 'is_system' => false]);
+        $catAridos = Category::create(['name' => 'Áridos', 'rubro_id' => $rubroHw->id]);
+
+        $arena = Product::create([
+            'name' => 'Arena Fina del Río',
+            'internal_code' => '84001',
+            'category_id' => $catAridos->id,
+            'unit_type' => 'm3',
+            'is_sold_by_weight' => true,
+            'technical_spec' => 'Lavada x m3',
+            'calc_config' => ['type' => 'wood', 'inch_preset' => '4', 'length_m' => 3.0],
+            'cost_price' => 15000,
+            'selling_price' => 24000,
+            'stock' => 20,
+            'active' => true,
+        ]);
+
+        $saleRes = $this->postJson('/api/pos/sales', [
+            'cash_shift_id' => $shift->id,
+            'total' => 84000,
+            'total_surcharge' => 0,
+            'requires_dispatch' => true,
+            'fulfillment_status' => 'pending',
+            'items' => [[
+                'product_id' => $arena->id,
+                'quantity' => 3.5,
+                'unit_price' => 24000,
+                'subtotal' => 84000,
+                'custom_details' => 'Volcar frente a obra',
+            ]],
+            'payments' => [[
+                'payment_method_id' => $cash->id,
+                'base_amount' => 84000,
+                'surcharge_amount' => 0,
+                'total_amount' => 84000,
+            ]],
+        ])->assertCreated();
+
+        $noteId = $saleRes->json('sale.delivery_note.id');
+        $this->assertNotNull($noteId);
+        $saleRes->assertJsonPath('sale.delivery_note.items.0.product.unit_type', 'm3');
+        $saleRes->assertJsonPath('sale.delivery_note.items.0.product.category.rubro.vertical_type', 'hardware_store');
+
+        $indexRes = $this->getJson('/api/delivery-notes')->assertOk();
+        $noteData = collect($indexRes->json('data'))->firstWhere('id', $noteId);
+        $this->assertNotNull($noteData);
+        $this->assertSame('m3', $noteData['items'][0]['product']['unit_type']);
+        $this->assertSame('Lavada x m3', $noteData['items'][0]['product']['technical_spec']);
+        $this->assertSame('hardware_store', $noteData['items'][0]['product']['category']['rubro']['vertical_type']);
+        $this->assertSame('Volcar frente a obra', $noteData['sale']['items'][0]['custom_details']);
+
+        $itemId = $noteData['items'][0]['id'];
+        $deliverRes = $this->putJson("/api/delivery-notes/{$noteId}/deliver", [
+            'items' => [['id' => $itemId, 'delivered_now' => 1.5]],
+        ])->assertOk();
+
+        $deliverRes->assertJsonPath('status', 'partial');
+        $deliverRes->assertJsonPath('items.0.product.unit_type', 'm3');
+        $deliverRes->assertJsonPath('items.0.product.category.rubro.vertical_type', 'hardware_store');
+        $deliverRes->assertJsonPath('sale.items.0.custom_details', 'Volcar frente a obra');
     }
 }

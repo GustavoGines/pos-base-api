@@ -162,7 +162,7 @@ class PosController extends Controller
 
         return response()->json([
             'message' => 'Venta registrada correctamente',
-            'sale' => $sale->load('items.product', 'user:id,name', 'cashier:id,name', 'customer', 'payments.paymentMethod:id,name,code,is_cash', 'deliveryNote.items.product'),
+            'sale' => $sale->load('items.product', 'user:id,name', 'cashier:id,name', 'customer', 'payments.paymentMethod:id,name,code,is_cash', 'deliveryNote.items.product.category.rubro'),
         ], 201);
     }
 
