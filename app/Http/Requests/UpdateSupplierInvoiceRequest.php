@@ -103,6 +103,7 @@ class UpdateSupplierInvoiceRequest extends FormRequest
             'items.*.batch_id' => \App\Services\BatchStockService::hasLotTrackingSchema()
                 ? 'nullable|integer|exists:product_batches,id'
                 : 'nullable|integer',
+            'items.*.link_supplier' => 'nullable|boolean',
         ];
     }
 
