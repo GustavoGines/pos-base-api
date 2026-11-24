@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Exceptions\LicenseSignatureException;
 use App\Models\BusinessSetting;
+use App\Models\Rubro;
 use Carbon\Carbon;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Cache;
@@ -29,13 +30,16 @@ class LicenseSyncService
     }
 
     /**
-     * Alinea el Rubro principal del sistema con el tipo de negocio de la licencia.
-     * Un fallo aquí jamás debe interrumpir la sincronización de licencia y flags.
+     * Alinea el Rubro principal del sistema (y rubros secundarios si es polirrubro mixto)
+     * con el tipo de negocio de la licencia. Un fallo aquí jamás debe interrumpir
+     * la sincronización de licencia y flags.
+     *
+     * @param  array<int, string>  $secondaryTypes
      */
-    private function syncSystemRubro(?string $businessType): void
+    private function syncSystemRubro(?string $businessType, array $secondaryTypes = []): void
     {
         try {
-            app(SystemRubroSyncService::class)->sync($businessType);
+            app(SystemRubroSyncService::class)->sync($businessType, $secondaryTypes);
         } catch (\Throwable $e) {
             Log::error('Error al sincronizar el rubro principal con el tipo de negocio: '.$e->getMessage());
         }
@@ -185,6 +189,16 @@ class LicenseSyncService
         $planMode = (string) ($data['plan_mode'] ?? $data['plan_type'] ?? 'saas');
         $isLifetime = $planMode === 'lifetime' ? '1' : '0';
         $businessType = (string) ($data['business_type'] ?? 'retail');
+        $rawSecondary = is_array($data['secondary_business_types'] ?? null)
+            ? $data['secondary_business_types']
+            : [];
+        $secondaryTypes = array_values(array_unique(array_filter(
+            $rawSecondary,
+            fn ($t) => is_string($t)
+                && in_array($t, Rubro::VALID_VERTICAL_TYPES, true)
+                && $t !== $businessType
+        )));
+        $effectiveVerticals = array_values(array_unique(array_merge([$businessType], $secondaryTypes)));
 
         $rawFeatures = is_array($data['features'] ?? null) ? $data['features'] : [];
         $features = $rawFeatures;
@@ -206,7 +220,7 @@ class LicenseSyncService
             $features['ecommerce_sync'] = $features['ecommerce_sync'] ?? true;
             $features['quotes'] = $features['quotes'] ?? true;
 
-            $isHardwareStore = $businessType === 'hardware_store';
+            $isHardwareStore = in_array('hardware_store', $effectiveVerticals, true);
             if ($isHardwareStore) {
                 $features['logistics'] = $features['logistics'] ?? true;
             } else {
@@ -224,8 +238,7 @@ class LicenseSyncService
         }
 
         // Opción 1A: normalización uniforme de `production` (explícito) y `batch_expiration`
-        // (nativo en Retail o cuando `production` está activo; apagado en hardware_store salvo override).
-        $isHardwareStore = $businessType === 'hardware_store';
+        // (nativo en Retail y Carnicería o cuando `production` está activo; apagado en otros rubros salvo override).
         $hasProduction = isset($rawFeatures['production'])
             && ($rawFeatures['production'] === true || $rawFeatures['production'] === 1);
         $features['production'] = $hasProduction;
@@ -235,7 +248,7 @@ class LicenseSyncService
                 || $rawFeatures['batch_expiration'] === 1
             ) || $hasProduction;
         } else {
-            $features['batch_expiration'] = (! $isHardwareStore) || $hasProduction;
+            $features['batch_expiration'] = BusinessSetting::hasNativeBatchExpiration($businessType, $secondaryTypes) || $hasProduction;
         }
 
         $featuresJson = json_encode($features);
@@ -249,7 +262,8 @@ class LicenseSyncService
         $this->setSetting('license_plan_mode', $planMode);
         $this->setSetting('license_is_lifetime', $isLifetime);
         $this->setSetting('license_business_type', $businessType);
-        $this->syncSystemRubro($businessType);
+        $this->setSetting('license_secondary_business_types', json_encode($secondaryTypes));
+        $this->syncSystemRubro($businessType, $secondaryTypes);
 
         // L-08: Fecha de expiración real enviada por el servidor
         $this->setSetting('license_expires_at', $data['expires_at'] ?? $data['expiration_date'] ?? null);

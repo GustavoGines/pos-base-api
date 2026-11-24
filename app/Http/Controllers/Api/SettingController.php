@@ -94,7 +94,13 @@ class SettingController extends Controller
             // Proteger claves críticas de licencia y sistema contra modificación no autorizada vía update general
             if (
                 str_starts_with($key, 'license_') ||
-                in_array($key, ['app_plan', 'installation_id', 'last_license_check'], true)
+                in_array($key, [
+                    'app_plan',
+                    'installation_id',
+                    'last_license_check',
+                    'business_type',
+                    'secondary_business_types',
+                ], true)
             ) {
                 continue;
             }

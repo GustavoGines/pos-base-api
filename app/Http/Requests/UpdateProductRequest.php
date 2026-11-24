@@ -115,7 +115,7 @@ class UpdateProductRequest extends FormRequest
             'active' => 'boolean',
             'needs_catalog_review' => 'boolean',
             'is_sold_by_weight' => 'boolean',
-            'unit_type' => 'sometimes|string|max:20|in:un,kg,lt,g,mt,m2,m3,bolsa,rollo,caja,par',
+            'unit_type' => 'sometimes|string|max:20|in:un,kg,lt,g,mt,m2,m3,bolsa,rollo,caja,par,docena',
             'calc_config' => 'nullable|array',
             'calc_config.type' => 'nullable|string|in:wood,roof,paint',
             'calc_config.inch_preset' => 'nullable|string|max:32',
