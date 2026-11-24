@@ -2,6 +2,7 @@
 
 namespace App\Exports;
 
+use App\Models\BusinessSetting;
 use App\Models\Product;
 use Maatwebsite\Excel\Concerns\FromQuery;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
@@ -33,7 +34,7 @@ class PriceListExport extends DefaultValueBinder implements FromQuery, ShouldAut
     public function query()
     {
         $query = Product::query()
-            ->with(['category', 'brand', 'supplier', 'children'])
+            ->with(['category.rubro', 'brand', 'supplier', 'children'])
             ->orderBy('name');
 
         if ($this->categoryId) {
@@ -91,8 +92,30 @@ class PriceListExport extends DefaultValueBinder implements FromQuery, ShouldAut
         $rawUnit = strtolower(trim((string) ($product->unit_type ?? '')));
         if ($rawUnit !== '' && $rawUnit !== 'un') {
             $unit = $rawUnit;
+        } elseif (! $product->is_sold_by_weight) {
+            $unit = 'un';
         } else {
-            $unit = $product->is_sold_by_weight ? 'kg' : 'un';
+            $hasCalcConfig = is_array($product->calc_config) && count($product->calc_config) > 0;
+            $rubro = $product->category?->rubro;
+            $rubroVertical = strtolower(trim((string) ($rubro->vertical_type ?? '')));
+            $rubroName = strtolower(trim((string) ($rubro->name ?? '')));
+            $isHardwareRubro = $rubroVertical === 'hardware_store'
+                || (bool) preg_match('/ferret|mader|corral/', $rubroName);
+            $isScaleRubro = in_array($rubroVertical, ['retail', 'butcher'], true)
+                || (bool) preg_match('/verdul|carnic|fiambr|poller|supermerc|kiosc|almac|minimerc|panad/', $rubroName);
+
+            $primaryVertical = strtolower(trim((string) (
+                BusinessSetting::where('key', 'license_business_type')->value('value')
+                ?? BusinessSetting::where('key', 'business_type')->value('value')
+                ?? 'retail'
+            )));
+            $secondaryVerticals = BusinessSetting::getSecondaryBusinessTypes();
+            $storeIsPureNonScaleHardware = BusinessSetting::hasVerticalCapability('hardware_store')
+                && ! BusinessSetting::hasNativeBatchExpiration($primaryVertical, $secondaryVerticals);
+
+            $unit = ($hasCalcConfig || $isHardwareRubro || ($storeIsPureNonScaleHardware && ! $isScaleRubro))
+                ? 'un'
+                : 'kg';
         }
 
         $row = [

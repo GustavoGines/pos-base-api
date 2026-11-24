@@ -30,24 +30,37 @@ class SystemRubroSyncService
     public const BUSINESS_TYPE_NAMES = [
         'hardware_store' => 'Ferretería',
         'retail' => 'Comercio General',
+        'butcher' => 'Carnicería y Frescos',
+        'apparel' => 'Indumentaria y Calzado',
+        'tech' => 'Tecnología y Repuestos',
+        'general' => 'Bazar y Regalería',
     ];
 
-    public function sync(?string $businessType): void
+    /**
+     * @param  array<int, string>  $secondaryTypes
+     */
+    public function sync(?string $businessType, array $secondaryTypes = []): void
     {
         if ($businessType === null || ! isset(self::BUSINESS_TYPE_NAMES[$businessType])) {
             return;
         }
 
         $targetName = self::BUSINESS_TYPE_NAMES[$businessType];
+        $validSecondaries = array_values(array_unique(array_filter(
+            $secondaryTypes,
+            fn ($t) => is_string($t) && isset(self::BUSINESS_TYPE_NAMES[$t]) && $t !== $businessType
+        )));
 
-        DB::transaction(function () use ($businessType, $targetName) {
+        DB::transaction(function () use ($businessType, $targetName, $validSecondaries) {
             $lastSynced = BusinessSetting::where('key', self::SYNCED_KEY)->value('value');
             $rubro = Rubro::where('is_system', true)->lockForUpdate()->first();
 
             if (! $rubro) {
-                $this->createSystemRubro($targetName);
+                $this->createSystemRubro($targetName, $businessType);
             } elseif ($rubro->name !== $targetName && $this->shouldRename($rubro, $lastSynced, $businessType)) {
-                $this->rename($rubro, $targetName);
+                $this->rename($rubro, $targetName, $businessType);
+            } elseif (Rubro::hasExtendedRubroColumns() && $rubro->vertical_type !== $businessType) {
+                $rubro->update(['vertical_type' => $businessType]);
             }
 
             if ($lastSynced !== $businessType) {
@@ -55,6 +68,10 @@ class SystemRubroSyncService
                     ['key' => self::SYNCED_KEY],
                     ['value' => $businessType]
                 );
+            }
+
+            foreach ($validSecondaries as $secType) {
+                $this->ensureSecondaryRubro($secType);
             }
         });
     }
@@ -75,21 +92,28 @@ class SystemRubroSyncService
         return true;
     }
 
-    private function createSystemRubro(string $targetName): void
+    private function createSystemRubro(string $targetName, string $businessType): void
     {
         $existing = Rubro::where('name', $targetName)->first();
 
         if ($existing) {
             // El nombre es único: se promueve el rubro existente en lugar de duplicar.
-            $existing->update(['is_system' => true]);
+            $existing->update([
+                'is_system' => true,
+                'vertical_type' => $businessType,
+            ]);
 
             return;
         }
 
-        Rubro::create(['name' => $targetName, 'is_system' => true]);
+        Rubro::create([
+            'name' => $targetName,
+            'vertical_type' => $businessType,
+            'is_system' => true,
+        ]);
     }
 
-    private function rename(Rubro $rubro, string $targetName): void
+    private function rename(Rubro $rubro, string $targetName, string $businessType): void
     {
         $conflict = Rubro::where('name', $targetName)
             ->where('id', '!=', $rubro->id)
@@ -102,9 +126,38 @@ class SystemRubroSyncService
                 'target_name' => $targetName,
             ]);
 
+            if (Rubro::hasExtendedRubroColumns() && $rubro->vertical_type !== $businessType) {
+                $rubro->update(['vertical_type' => $businessType]);
+            }
+
             return;
         }
 
-        $rubro->update(['name' => $targetName]);
+        $rubro->update([
+            'name' => $targetName,
+            'vertical_type' => $businessType,
+        ]);
+    }
+
+    private function ensureSecondaryRubro(string $secondaryType): void
+    {
+        $targetName = self::BUSINESS_TYPE_NAMES[$secondaryType] ?? null;
+        if ($targetName === null) {
+            return;
+        }
+
+        if (Rubro::where('name', $targetName)->exists()) {
+            return;
+        }
+
+        if (Rubro::hasExtendedRubroColumns() && Rubro::where('vertical_type', $secondaryType)->exists()) {
+            return;
+        }
+
+        Rubro::create([
+            'name' => $targetName,
+            'vertical_type' => $secondaryType,
+            'is_system' => false,
+        ]);
     }
 }

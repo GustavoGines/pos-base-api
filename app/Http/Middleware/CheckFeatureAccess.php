@@ -56,7 +56,8 @@ class CheckFeatureAccess
         $isEnabled = isset($features[$feature]) && ($features[$feature] === true || $features[$feature] === 1);
 
         // Opción 1A: si el diccionario no trae aún `batch_expiration` (pre-heartbeat / tests legados),
-        // habilitarlo para Retail y mantenerlo apagado en Ferretería; activar `production` siempre lo habilita.
+        // habilitarlo para Retail/Carnicería y mantenerlo apagado en Ferretería/Indumentaria/Tech/General;
+        // activar `production` siempre lo habilita.
         if ($feature === 'batch_expiration' && ! $isEnabled) {
             if (! empty($features['production']) && ($features['production'] === true || $features['production'] === 1)) {
                 $isEnabled = true;
@@ -64,7 +65,10 @@ class CheckFeatureAccess
                 $businessType = (string) (DB::table('business_settings')
                     ->where('key', 'license_business_type')
                     ->value('value') ?? 'retail');
-                if ($businessType !== 'hardware_store') {
+                if (\App\Models\BusinessSetting::hasNativeBatchExpiration(
+                    $businessType,
+                    \App\Models\BusinessSetting::getSecondaryBusinessTypes()
+                )) {
                     $isEnabled = true;
                 }
             }
