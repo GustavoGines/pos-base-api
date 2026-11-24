@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\CashMovement;
+use App\Models\Product;
 use App\Models\Supplier;
 use App\Models\SupplierInvoice;
 use Illuminate\Http\Request;
@@ -179,6 +180,177 @@ class SupplierController extends Controller
         return response()->json([
             'supplier' => $supplier,
             'history' => $history->reverse()->values(), // Más recientes primero
+        ], 200);
+    }
+
+    /**
+     * Asistente de compras por proveedor (solo lectura):
+     * - Faltantes / stock bajo de productos del proveedor
+     * - Artículos comprados con mayor frecuencia / historial reciente (incluyendo último costo y cantidad)
+     * - Catálogo asignado al proveedor (útil para la 1ª carga)
+     * - Último comprobante vigente para clonar renglones rápidamente
+     */
+    public function purchaseAssistant(Supplier $supplier)
+    {
+        $productRelations = ['category.rubro', 'brand', 'supplier:id,name'];
+
+        // 1. Estadísticas de compras previas vigentes (sin anulados ni Notas de Crédito)
+        $statsRows = DB::table('supplier_invoice_items as sii')
+            ->join('supplier_invoices as si', 'si.id', '=', 'sii.supplier_invoice_id')
+            ->join('products as p', 'p.id', '=', 'sii.product_id')
+            ->where('si.supplier_id', $supplier->id)
+            ->whereNull('si.deleted_at')
+            ->whereNull('p.deleted_at')
+            ->where('p.active', true)
+            ->where('p.is_service', false)
+            ->where(function ($q) {
+                $q->whereNull('si.type')
+                    ->orWhere('si.type', '!=', 'credit_note');
+            })
+            ->groupBy('sii.product_id')
+            ->select([
+                'sii.product_id',
+                DB::raw('COUNT(DISTINCT si.id) as times_bought'),
+                DB::raw('MAX(si.id) as last_invoice_id'),
+                DB::raw('MAX(si.issue_date) as last_purchased_at'),
+            ])
+            ->orderByDesc('times_bought')
+            ->orderByDesc('last_invoice_id')
+            ->limit(30)
+            ->get();
+
+        $frequentIds = $statsRows->pluck('product_id')->map(fn ($id) => (int) $id)->all();
+        $lastInvoiceIds = $statsRows->pluck('last_invoice_id')->map(fn ($id) => (int) $id)->unique()->all();
+
+        $lastItemStats = [];
+        if (! empty($lastInvoiceIds) && ! empty($frequentIds)) {
+            $itemRows = DB::table('supplier_invoice_items')
+                ->whereIn('supplier_invoice_id', $lastInvoiceIds)
+                ->whereIn('product_id', $frequentIds)
+                ->orderBy('id', 'asc')
+                ->get(['supplier_invoice_id', 'product_id', 'unit_cost', 'quantity']);
+
+            foreach ($itemRows as $ir) {
+                $key = ((int) $ir->supplier_invoice_id).'_'.((int) $ir->product_id);
+                $lastItemStats[$key] = $ir;
+            }
+        }
+
+        $frequentProductsMap = ! empty($frequentIds)
+            ? Product::with($productRelations)->whereIn('id', $frequentIds)->get()->keyBy('id')
+            : collect();
+
+        $frequentProducts = [];
+        foreach ($statsRows as $row) {
+            $pid = (int) $row->product_id;
+            /** @var Product|null $product */
+            $product = $frequentProductsMap->get($pid);
+            if (! $product) {
+                continue;
+            }
+            $lastKey = ((int) $row->last_invoice_id).'_'.$pid;
+            $lastRow = $lastItemStats[$lastKey] ?? null;
+
+            $arr = $product->toArray();
+            $arr['times_bought'] = (int) $row->times_bought;
+            $arr['last_purchased_at'] = $row->last_purchased_at ? (string) $row->last_purchased_at : null;
+            $arr['last_unit_cost'] = $lastRow ? (float) $lastRow->unit_cost : null;
+            $arr['last_quantity'] = $lastRow ? (float) $lastRow->quantity : null;
+            $frequentProducts[] = $arr;
+        }
+
+        // Todos los product_id comprados alguna vez a este proveedor (para detectar faltantes)
+        $purchasedProductIds = DB::table('supplier_invoice_items as sii')
+            ->join('supplier_invoices as si', 'si.id', '=', 'sii.supplier_invoice_id')
+            ->where('si.supplier_id', $supplier->id)
+            ->whereNull('si.deleted_at')
+            ->where(function ($q) {
+                $q->whereNull('si.type')
+                    ->orWhere('si.type', '!=', 'credit_note');
+            })
+            ->distinct()
+            ->pluck('sii.product_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        // 2. Productos con stock 0 o debajo de su mínimo
+        $lowStockProducts = Product::with($productRelations)
+            ->where('active', true)
+            ->where('is_service', false)
+            ->where(function ($q) use ($supplier, $purchasedProductIds) {
+                $q->where('supplier_id', $supplier->id);
+                if (! empty($purchasedProductIds)) {
+                    $q->orWhereIn('id', $purchasedProductIds);
+                }
+            })
+            ->where(function ($q) {
+                $q->where('stock', '<=', 0)
+                    ->orWhere(function ($mq) {
+                        $mq->whereNotNull('min_stock')
+                            ->where('min_stock', '>', 0)
+                            ->whereColumn('stock', '<=', 'min_stock');
+                    });
+            })
+            ->orderByRaw('(stock - COALESCE(min_stock, 0)) ASC')
+            ->orderBy('name', 'asc')
+            ->limit(30)
+            ->get()
+            ->map(fn (Product $p) => $p->toArray())
+            ->values()
+            ->all();
+
+        // 3. Catálogo vinculado directamente al proveedor
+        $catalogProducts = Product::with($productRelations)
+            ->where('active', true)
+            ->where('is_service', false)
+            ->where('supplier_id', $supplier->id)
+            ->orderBy('name', 'asc')
+            ->limit(40)
+            ->get()
+            ->map(fn (Product $p) => $p->toArray())
+            ->values()
+            ->all();
+
+        // 4. Última factura/remito de compra vigente para clonar renglones en 1 clic
+        $lastInv = SupplierInvoice::where('supplier_id', $supplier->id)
+            ->whereNull('deleted_at')
+            ->where(function ($q) {
+                $q->whereNull('type')
+                    ->orWhere('type', '!=', 'credit_note');
+            })
+            ->with(['items.product' => fn ($q) => $q->with($productRelations)])
+            ->orderBy('issue_date', 'desc')
+            ->orderBy('id', 'desc')
+            ->first();
+
+        $lastInvoicePayload = null;
+        if ($lastInv) {
+            $lastItems = $lastInv->items
+                ->filter(fn ($it) => $it->product !== null && ! $it->product->trashed() && ! $it->product->is_service)
+                ->map(fn ($it) => [
+                    'product_id' => $it->product_id,
+                    'quantity' => (float) $it->quantity,
+                    'unit_cost' => (float) $it->unit_cost,
+                    'product' => $it->product->toArray(),
+                ])
+                ->values()
+                ->all();
+
+            if (! empty($lastItems)) {
+                $lastInvoicePayload = [
+                    'id' => $lastInv->id,
+                    'invoice_number' => $lastInv->formatted_number ?: ($lastInv->invoice_number ?: ('#'.$lastInv->id)),
+                    'issue_date' => $lastInv->issue_date?->toIso8601String(),
+                    'items' => $lastItems,
+                ];
+            }
+        }
+
+        return response()->json([
+            'low_stock_products' => $lowStockProducts,
+            'frequent_products' => $frequentProducts,
+            'catalog_products' => $catalogProducts,
+            'last_invoice' => $lastInvoicePayload,
         ], 200);
     }
 }

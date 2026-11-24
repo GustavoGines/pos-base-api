@@ -231,6 +231,8 @@ Route::middleware(['session.validate', 'license.active'])->group(function () {
             ->middleware('permission.or.pin:'.Permissions::VIEW_SUPPLIERS);
         Route::get('/suppliers/{supplier}/current-account', [SupplierController::class, 'currentAccount'])
             ->middleware('permission.or.pin:'.Permissions::VIEW_SUPPLIERS);
+        Route::get('/suppliers/{supplier}/purchase-assistant', [SupplierController::class, 'purchaseAssistant'])
+            ->middleware('permission.or.pin:'.Permissions::VIEW_SUPPLIERS);
 
         Route::post('/suppliers', [SupplierController::class, 'store'])
             ->middleware('permission.or.pin:'.Permissions::MANAGE_CATALOG);
