@@ -58,6 +58,7 @@ class BusinessSetting extends Model
         'license_manage_url',
         'license_is_lifetime',
         'license_business_type',
+        'license_secondary_business_types',
         'afip_enabled',
         'mp_qr_enabled',
         'mp_point_device_id',
@@ -100,5 +101,64 @@ class BusinessSetting extends Model
             ['key' => $key],
             ['value' => Crypt::encryptString($value)]
         );
+    }
+
+    /**
+     * Indica si el rubro principal o alguno de los secundarios tiene control nativo
+     * de vencimientos/lotes (Minimercado 'retail' y Carnicería/Frescos 'butcher').
+     *
+     * @param  array<int, string>  $secondaryTypes
+     */
+    public static function hasNativeBatchExpiration(?string $businessType, array $secondaryTypes = []): bool
+    {
+        $primary = strtolower(trim((string) ($businessType ?? 'retail')));
+        $effective = array_merge([$primary], array_map(
+            fn ($t) => strtolower(trim((string) $t)),
+            $secondaryTypes
+        ));
+
+        return in_array('retail', $effective, true) || in_array('butcher', $effective, true);
+    }
+
+    /**
+     * Lee los rubros secundarios almacenados localmente como array de strings normalizados.
+     *
+     * @return array<int, string>
+     */
+    public static function getSecondaryBusinessTypes(): array
+    {
+        $raw = static::where('key', 'license_secondary_business_types')->value('value');
+        if (! is_string($raw) || trim($raw) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($raw, true);
+        if (! is_array($decoded)) {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter(
+            array_map(fn ($v) => strtolower(trim((string) $v)), $decoded),
+            fn ($v) => $v !== ''
+        )));
+    }
+
+    /**
+     * Verifica si el comercio posee la capacidad de un rubro dado (como principal o secundario).
+     */
+    public static function hasVerticalCapability(string $targetVertical): bool
+    {
+        $target = strtolower(trim($targetVertical));
+        $primary = strtolower(trim((string) (
+            static::where('key', 'license_business_type')->value('value')
+            ?? static::where('key', 'business_type')->value('value')
+            ?? 'retail'
+        )));
+
+        if ($primary === $target) {
+            return true;
+        }
+
+        return in_array($target, static::getSecondaryBusinessTypes(), true);
     }
 }

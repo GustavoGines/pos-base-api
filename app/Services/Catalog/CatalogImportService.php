@@ -58,6 +58,9 @@ class CatalogImportService
         'cajas' => ['caja', false],
         'par' => ['par', false],
         'pares' => ['par', false],
+        'docena' => ['docena', false],
+        'docenas' => ['docena', false],
+        'doc' => ['docena', false],
         'un' => ['un', false],
         'u' => ['un', false],
         'unidad' => ['un', false],
@@ -153,7 +156,28 @@ class CatalogImportService
                 'medida_especificacion',
                 'medida_/_especificacion',
                 'medida_/_especificación',
+                'talle_color',
+                'talle_/_color',
+                'modelo',
+                'compatibilidad',
+                'modelo_especificacion',
+                'variante',
+                'presentacion_medida',
+                'corte',
             ]);
+            if ($medida === null) {
+                $talle = $getVal(['talle', 'talla', 'size']);
+                $color = $getVal(['color', 'colores']);
+                if ($talle !== null || $color !== null) {
+                    $tallePart = ($talle !== null && $talle !== '')
+                        ? (preg_match('/^(talle|calz)/iu', $talle) ? $talle : "Talle {$talle}")
+                        : null;
+                    $parts = array_filter([$tallePart, $color], fn ($v) => $v !== null && $v !== '');
+                    if (! empty($parts)) {
+                        $medida = implode(' - ', $parts);
+                    }
+                }
+            }
             $ubicacion = $getVal([
                 'ubicacion',
                 'ubicación',
@@ -161,6 +185,13 @@ class CatalogImportService
                 'estantería',
                 'gondola',
                 'góndola',
+                'perchero',
+                'vitrina',
+                'camara',
+                'cámara',
+                'deposito',
+                'depósito',
+                'batea',
                 'storage_location',
             ]);
             $presentacionCompra = $getVal([

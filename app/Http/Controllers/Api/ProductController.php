@@ -10,6 +10,7 @@ use App\Models\BusinessSetting;
 use App\Models\Product;
 use App\Models\ProductBatch;
 use App\Models\ProductPriceTier;
+use App\Models\Rubro;
 use App\Services\BarcodeService;
 use App\Services\BatchStockService;
 use App\Services\InventoryAlertService;
@@ -772,11 +773,24 @@ class ProductController extends Controller
      */
     public function updateCalcConfig(Request $request, Product $product)
     {
-        $businessType = BusinessSetting::where('key', 'license_business_type')->value('value')
-            ?? BusinessSetting::where('key', 'business_type')->value('value');
-        if (strtolower(trim((string) $businessType)) !== 'hardware_store') {
+        $product->loadMissing('category.rubro');
+        $productRubro = $product->category?->rubro;
+        $productRubroVertical = strtolower(trim((string) ($productRubro->vertical_type ?? '')));
+        $productRubroName = strtolower(trim((string) ($productRubro->name ?? '')));
+        $productInHardwareRubro = $productRubroVertical === 'hardware_store'
+            || (bool) preg_match('/ferret|mader|corral/i', $productRubroName);
+        $hasExistingCalcConfig = is_array($product->calc_config) && count($product->calc_config) > 0;
+        $hasAnyHardwareRubro = Rubro::hasExtendedRubroColumns()
+            && Rubro::where('vertical_type', 'hardware_store')->exists();
+
+        if (
+            ! BusinessSetting::hasVerticalCapability('hardware_store')
+            && ! $hasExistingCalcConfig
+            && ! $productInHardwareRubro
+            && ! $hasAnyHardwareRubro
+        ) {
             return response()->json([
-                'message' => 'La calculadora ferretera solo está habilitada para comercios de rubro Ferretería.',
+                'message' => 'La calculadora ferretera solo está habilitada para comercios o rubros de Ferretería / Maderera.',
                 'error_code' => 'HARDWARE_STORE_ONLY',
             ], 403);
         }

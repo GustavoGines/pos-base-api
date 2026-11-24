@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\BusinessSetting;
 use Illuminate\Support\Facades\DB;
 
 class InventoryAlertService
@@ -171,7 +172,10 @@ class InventoryAlertService
             ->where('key', 'license_business_type')
             ->value('value') ?? 'retail');
 
-        return $businessType !== 'hardware_store';
+        return BusinessSetting::hasNativeBatchExpiration(
+            $businessType,
+            BusinessSetting::getSecondaryBusinessTypes()
+        );
     }
 
     /**

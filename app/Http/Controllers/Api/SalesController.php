@@ -10,14 +10,57 @@ use App\Http\Requests\VoidSaleRequest;
 use App\Models\BusinessSetting;
 use App\Models\CashRegister;
 use App\Models\CashShift;
+use App\Models\Product;
 use App\Models\Sale;
 use App\Services\DiscountAuthorizationService;
 use App\Services\SaleService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 
 class SalesController extends Controller
 {
+    /**
+     * Columnas seguras de `product` para respuestas de ventas / remitos / tickets en espera.
+     */
+    private function productSaleSelectColumns(bool $includeExtendedFields = true): string
+    {
+        $cols = $includeExtendedFields
+            ? ['id', 'name', 'internal_code', 'stock', 'is_sold_by_weight', 'is_service', 'selling_price']
+            : ['id', 'name', 'internal_code', 'is_sold_by_weight'];
+
+        if (Schema::hasColumn('products', 'unit_type')) {
+            $cols[] = 'unit_type';
+        }
+        if (Product::hasExtendedCatalogColumns()) {
+            $cols[] = 'technical_spec';
+        }
+        if ($includeExtendedFields && Schema::hasColumn('products', 'calc_config')) {
+            $cols[] = 'calc_config';
+        }
+
+        return implode(',', $cols);
+    }
+
+    private function pendingProductSelectColumns(): string
+    {
+        $cols = [
+            'id', 'name', 'barcode', 'internal_code', 'stock',
+            'is_sold_by_weight', 'selling_price', 'cost_price',
+            'price_wholesale', 'price_card',
+        ];
+        if (Schema::hasColumn('products', 'unit_type')) {
+            $cols[] = 'unit_type';
+        }
+        if (Product::hasExtendedCatalogColumns()) {
+            $cols[] = 'technical_spec';
+        }
+        if (Schema::hasColumn('products', 'calc_config')) {
+            $cols[] = 'calc_config';
+        }
+
+        return implode(',', $cols);
+    }
     /**
      * GET /api/sales
      * Devuelve las ventas del turno de caja activo (o las del día si se especifica un shift_id).
@@ -29,8 +72,11 @@ class SalesController extends Controller
         $period = $request->query('period', 'shift');
         $userId = $request->query('user_id');
 
+        $productCols = $this->productSaleSelectColumns();
+        $deliveryProductCols = $this->productSaleSelectColumns(false);
+
         $query = Sale::with([
-            'items.product:id,name,internal_code,stock,is_sold_by_weight,is_service,selling_price',
+            "items.product:{$productCols}",
             'items.product.offers',
             'user:id,name',
             'cashier:id,name',
@@ -38,7 +84,7 @@ class SalesController extends Controller
             'cashShift.cashRegister:id,name',
             'payments.paymentMethod:id,name,code,is_cash',
             'electronicInvoice',
-            'deliveryNote.items.product:id,name,internal_code,is_sold_by_weight',
+            "deliveryNote.items.product:{$deliveryProductCols}",
         ])
             ->where('status', '!=', 'pending')
             ->latest();
@@ -102,8 +148,11 @@ class SalesController extends Controller
      */
     public function show(Sale $sale)
     {
+        $productCols = $this->productSaleSelectColumns();
+        $deliveryProductCols = $this->productSaleSelectColumns(false);
+
         $sale->load([
-            'items.product:id,name,internal_code,is_sold_by_weight,is_service,selling_price',
+            "items.product:{$productCols}",
             'items.product.offers',
             'user:id,name',
             'cashier:id,name',
@@ -111,7 +160,7 @@ class SalesController extends Controller
             'customer:id,name,document_type,document_number,tax_condition,fiscal_address,delivery_address,applies_iibb_perception,iibb_perception_rate',
             'payments.paymentMethod:id,name,code,is_cash',
             'electronicInvoice',
-            'deliveryNote.items.product:id,name,internal_code,is_sold_by_weight',
+            "deliveryNote.items.product:{$deliveryProductCols}",
         ]);
 
         return response()->json($sale);
@@ -123,8 +172,10 @@ class SalesController extends Controller
      */
     public function pending(Request $request)
     {
+        $pendingProductCols = $this->pendingProductSelectColumns();
+
         $query = Sale::with([
-            'items.product:id,name,barcode,internal_code,stock,is_sold_by_weight,selling_price,cost_price,price_wholesale,price_card',
+            "items.product:{$pendingProductCols}",
             'user:id,name',
             'cashier:id,name',
             'cashShift.cashRegister:id,name',

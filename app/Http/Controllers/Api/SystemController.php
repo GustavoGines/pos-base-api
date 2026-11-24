@@ -491,6 +491,7 @@ class SystemController extends Controller
                     'license_integrity_hash',
                     'license_is_lifetime',
                     'license_business_type',
+                    'license_secondary_business_types',
                 ];
                 foreach ($localLicenseFields as $field) {
                     $localLicense[$field] = BusinessSetting::where('key', $field)->value('value');

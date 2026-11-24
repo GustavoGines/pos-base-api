@@ -25,6 +25,8 @@ class UpdateRubroRequest extends FormRequest
                 'max:255',
                 Rule::unique('rubros', 'name')->ignore($rubroId),
             ],
+            'description' => ['nullable', 'string', 'max:255'],
+            'vertical_type' => ['nullable', 'string', Rule::in(Rubro::VALID_VERTICAL_TYPES)],
         ];
     }
 }
