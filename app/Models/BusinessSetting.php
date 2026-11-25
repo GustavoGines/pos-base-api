@@ -65,6 +65,8 @@ class BusinessSetting extends Model
         'theme',
         'is_iibb_perception_agent',
         'default_iibb_perception_rate',
+        'iibb_calculation_base',
+        'iibb_subject_tax_conditions',
         'tax_condition',
         'iibb',
         'activity_start_date',
@@ -74,6 +76,78 @@ class BusinessSetting extends Model
         'pos_popularity_reset_at',
         'bank_transfer_accounts',
     ];
+
+    public const IIBB_BASE_NET_WITHOUT_VAT = 'net_without_vat';
+
+    public const IIBB_BASE_GROSS_WITH_VAT = 'gross_with_vat';
+
+    public const ALLOWED_IIBB_SUBJECT_CONDITIONS = [
+        'responsable_inscripto',
+        'monotributo',
+        'exento',
+    ];
+
+    public static function sanitizeIibbCalculationBase(mixed $raw): string
+    {
+        $normalized = strtolower(trim((string) ($raw ?? '')));
+
+        return $normalized === self::IIBB_BASE_GROSS_WITH_VAT
+            ? self::IIBB_BASE_GROSS_WITH_VAT
+            : self::IIBB_BASE_NET_WITHOUT_VAT;
+    }
+
+    /**
+     * Normaliza las condiciones frente al IVA sujetas por defecto a Percepción IIBB.
+     * Consumidor Final queda siempre excluido por normativa fiscal.
+     *
+     * @return array<int, string>
+     */
+    public static function sanitizeIibbSubjectTaxConditions(mixed $raw): array
+    {
+        if (is_string($raw)) {
+            $trimmed = trim($raw);
+            if ($trimmed === '') {
+                return [];
+            }
+            $decoded = json_decode($trimmed, true);
+            $items = is_array($decoded) ? $decoded : explode(',', $trimmed);
+        } elseif (is_array($raw)) {
+            $items = $raw;
+        } else {
+            return ['responsable_inscripto'];
+        }
+
+        $sanitized = [];
+        foreach ($items as $item) {
+            $norm = strtolower(trim((string) $item));
+            $norm = str_replace(['-', ' '], '_', $norm);
+            if (in_array($norm, self::ALLOWED_IIBB_SUBJECT_CONDITIONS, true) && ! in_array($norm, $sanitized, true)) {
+                $sanitized[] = $norm;
+            }
+        }
+
+        return $sanitized;
+    }
+
+    public static function getIibbCalculationBase(): string
+    {
+        $raw = static::where('key', 'iibb_calculation_base')->value('value');
+
+        return self::sanitizeIibbCalculationBase($raw);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public static function getIibbSubjectTaxConditions(): array
+    {
+        $record = static::where('key', 'iibb_subject_tax_conditions')->first();
+        if ($record === null || $record->value === null) {
+            return ['responsable_inscripto'];
+        }
+
+        return self::sanitizeIibbSubjectTaxConditions($record->value);
+    }
 
     public static function getSecret(string $key, ?string $default = null): ?string
     {
