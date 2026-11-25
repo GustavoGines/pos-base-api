@@ -592,14 +592,17 @@ class SystemController extends Controller
                     \App\Services\BatchStockService::flushSchemaCache();
                 }
 
-                // Restaurar licencia local si existía
+                // Restaurar licencia local si existía (eliminando claves cuyo valor previo era null y limpiando legado license_plan)
                 if (! empty(array_filter($localLicense, fn ($v) => $v !== null && $v !== ''))) {
                     foreach ($localLicense as $key => $value) {
                         if ($value !== null) {
                             BusinessSetting::updateOrCreate(['key' => $key], ['value' => $value]);
+                        } else {
+                            BusinessSetting::where('key', $key)->delete();
                         }
                     }
                 }
+                BusinessSetting::where('key', 'license_plan')->delete();
 
                 // Preservar el session_token del usuario actual para no desconectar su sesión activa
                 if ($currentUserId !== null && ! empty($currentSessionToken)) {

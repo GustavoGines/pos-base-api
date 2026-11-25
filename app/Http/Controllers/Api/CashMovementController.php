@@ -29,6 +29,29 @@ class CashMovementController extends Controller
     }
 
     /**
+     * Verifica si la licencia actual incluye el módulo de Gastos Operativos (`expenses`).
+     * Cuando `expenses` es falso pero `suppliers` está activo (Add-on en Plan Básico),
+     * solo se permiten movimientos vinculados a un proveedor (`supplier_id`).
+     */
+    protected function hasExpensesFeature(): bool
+    {
+        $appPlan = strtolower(trim((string) (DB::table('business_settings')->where('key', 'app_plan')->value('value') ?? '')));
+        if (in_array($appPlan, ['pro', 'premium'], true)) {
+            return true;
+        }
+
+        $featuresJson = DB::table('business_settings')->where('key', 'license_features_dict')->value('value');
+        if (! empty($featuresJson)) {
+            $decoded = json_decode($featuresJson, true);
+            if (is_array($decoded) && isset($decoded['expenses']) && ($decoded['expenses'] === true || $decoded['expenses'] === 1)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Resuelve el turno de caja objetivo soportando entornos Multi-Caja (F3-CAJA-01 / FN-F3-02)
      * con fallback retrocompatible a v1.8.5 cuando no se envían identificadores explícitos.
      */
@@ -149,6 +172,14 @@ class CashMovementController extends Controller
     public function store(StoreCashMovementRequest $request)
     {
         $validated = $request->validated();
+
+        if (! $this->hasExpensesFeature() && empty($validated['supplier_id'])) {
+            return response()->json([
+                'message' => "La licencia activa no incluye el módulo requerido: 'expenses'. Actualice su plan.",
+                'error_code' => 'FEATURE_NOT_LICENSED',
+                'required' => 'expenses',
+            ], 403);
+        }
 
         $requiresPhysicalCash = collect($validated['payments'] ?? [])->contains(
             fn ($p) => ($p['payment_method'] ?? 'cash') === 'cash'
@@ -354,6 +385,15 @@ class CashMovementController extends Controller
     public function destroy(Request $request, $id)
     {
         $movement = CashMovement::findOrFail($id);
+
+        if (! $this->hasExpensesFeature() && empty($movement->supplier_id)) {
+            return response()->json([
+                'message' => "La licencia activa no incluye el módulo requerido: 'expenses'. Actualice su plan.",
+                'error_code' => 'FEATURE_NOT_LICENSED',
+                'required' => 'expenses',
+            ], 403);
+        }
+
         $user = $request->user() ?? $request->attributes->get('authenticated_user');
 
         // Candado de Seguridad 2: No permitir anular manualmente devoluciones automáticas de ventas anuladas

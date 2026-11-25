@@ -13,6 +13,7 @@ use App\Models\BulkPriceHistoryItem;
 use App\Models\Product;
 use App\Services\Catalog\CatalogExportService;
 use App\Services\Catalog\CatalogImportService;
+use App\Services\ReportCacheService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -172,6 +173,38 @@ class CatalogController extends Controller
         ]);
     }
 
+    private function _recalculateParentCombosCost(array $childProductIds): void
+    {
+        $uniqueChildIds = array_values(array_unique(array_filter(array_map('intval', $childProductIds))));
+        if (empty($uniqueChildIds)) {
+            return;
+        }
+
+        $parentComboIds = DB::table('product_combos')
+            ->whereIn('child_product_id', $uniqueChildIds)
+            ->pluck('parent_product_id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        if (empty($parentComboIds)) {
+            return;
+        }
+
+        $combos = Product::with('children')
+            ->whereIn('id', $parentComboIds)
+            ->orderBy('id', 'asc')
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($combos as $combo) {
+            $combo->update([
+                'cost_price' => $combo->calculateComboCostPrice(),
+            ]);
+        }
+    }
+
     public function bulkPriceUpdate(BulkPriceUpdateRequest $request)
     {
         $validated = $request->validated();
@@ -184,74 +217,119 @@ class CatalogController extends Controller
             ], 403);
         }
 
-        $query = $this->_buildBulkPriceQuery($validated);
+        $roundingRule = $request->input('rounding_rule', 'none');
+        $targetField = $request->input('target_field', 'selling_price');
+        $updatesSelling = $targetField === 'selling_price' || $targetField === 'cost_and_selling_price';
+        $updatesCost = $targetField === 'cost_price' || $targetField === 'cost_and_selling_price';
 
-        $products = $query->select('id', 'cost_price', 'selling_price')->get();
-        if ($products->isEmpty()) {
+        $count = DB::transaction(function () use ($validated, $roundingRule, $targetField, $updatesSelling, $updatesCost) {
+            $products = $this->_buildBulkPriceQuery($validated)
+                ->select('id', 'cost_price', 'selling_price')
+                ->orderBy('id', 'asc')
+                ->lockForUpdate()
+                ->get();
+
+            if ($products->isEmpty()) {
+                return 0;
+            }
+
+            $history = BulkPriceHistory::create([
+                'user_id' => auth()->id() ?? 1,
+                'percentage' => $validated['percentage'],
+                'rounding_rule' => $roundingRule,
+                'target_field' => $targetField,
+                'filters' => collect($validated)->except(['percentage', 'rounding_rule', 'target_field'])->toArray(),
+                'affected_count' => $products->count(),
+            ]);
+
+            $historyItems = [];
+            $multiplier = 1 + ($validated['percentage'] / 100);
+
+            foreach ($products as $p) {
+                $oldCost = round((float) ($p->cost_price ?? 0), 2);
+                $oldSelling = round((float) ($p->selling_price ?? 0), 2);
+                $newCostPrice = $oldCost;
+                $newSellingPrice = $oldSelling;
+
+                if ($updatesCost) {
+                    $newCostPrice = round($oldCost * $multiplier, 2);
+                }
+                if ($updatesSelling) {
+                    $raw = $oldSelling * $multiplier;
+                    $newSellingPrice = match ($roundingRule) {
+                        'nearest_10' => round($raw / 10) * 10,
+                        'nearest_50' => round($raw / 50) * 50,
+                        'nearest_100' => round($raw / 100) * 100,
+                        'ends_99' => floor($raw) + 0.99,
+                        default => round($raw, 2),
+                    };
+                }
+
+                $historyItems[] = [
+                    'bulk_price_history_id' => $history->id,
+                    'product_id' => $p->id,
+                    'old_cost_price' => $oldCost,
+                    'old_selling_price' => $oldSelling,
+                    'new_cost_price' => $newCostPrice,
+                    'new_selling_price' => $newSellingPrice,
+                ];
+            }
+
+            foreach (array_chunk($historyItems, 500) as $chunk) {
+                BulkPriceHistoryItem::insert($chunk);
+
+                $ids = [];
+                $sellingCases = [];
+                $sellingBindings = [];
+                $costCases = [];
+                $costBindings = [];
+
+                foreach ($chunk as $row) {
+                    $ids[] = (int) $row['product_id'];
+                    if ($updatesSelling) {
+                        $sellingCases[] = 'WHEN ? THEN ?';
+                        $sellingBindings[] = (int) $row['product_id'];
+                        $sellingBindings[] = $row['new_selling_price'];
+                    }
+                    if ($updatesCost) {
+                        $costCases[] = 'WHEN ? THEN ?';
+                        $costBindings[] = (int) $row['product_id'];
+                        $costBindings[] = $row['new_cost_price'];
+                    }
+                }
+
+                $setClauses = [];
+                $params = [];
+                if ($updatesSelling && ! empty($sellingCases)) {
+                    $setClauses[] = 'selling_price = CASE id '.implode(' ', $sellingCases).' ELSE selling_price END';
+                    $params = array_merge($params, $sellingBindings);
+                }
+                if ($updatesCost && ! empty($costCases)) {
+                    $setClauses[] = 'cost_price = CASE id '.implode(' ', $costCases).' ELSE cost_price END';
+                    $params = array_merge($params, $costBindings);
+                }
+
+                if (! empty($setClauses) && ! empty($ids)) {
+                    $setClauses[] = 'updated_at = ?';
+                    $params[] = now()->toDateTimeString();
+                    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+                    $params = array_merge($params, $ids);
+                    DB::statement('UPDATE products SET '.implode(', ', $setClauses)." WHERE id IN ({$placeholders})", $params);
+                }
+            }
+
+            if ($updatesCost) {
+                $this->_recalculateParentCombosCost($products->pluck('id')->all());
+            }
+
+            return $products->count();
+        });
+
+        if ($count === 0) {
             return response()->json(['message' => 'No hay productos que coincidan con estos filtros.', 'updated_count' => 0]);
         }
 
-        $roundingRule = $request->input('rounding_rule', 'none');
-        $targetField = $request->input('target_field', 'selling_price');
-
-        // Create History Header
-        $history = BulkPriceHistory::create([
-            'user_id' => auth()->id() ?? 1,
-            'percentage' => $validated['percentage'],
-            'rounding_rule' => $roundingRule,
-            'target_field' => $targetField,
-            'filters' => collect($validated)->except(['percentage', 'rounding_rule', 'target_field'])->toArray(),
-            'affected_count' => $products->count(),
-        ]);
-
-        $historyItems = [];
-        $multiplier = 1 + ($validated['percentage'] / 100);
-        foreach ($products as $p) {
-            $oldCost = (float) ($p->cost_price ?? 0);
-            $oldSelling = (float) ($p->selling_price ?? 0);
-            $newCostPrice = $oldCost;
-            $newSellingPrice = $oldSelling;
-
-            if ($targetField === 'cost_price' || $targetField === 'cost_and_selling_price') {
-                $newCostPrice = round($oldCost * $multiplier, 2);
-            }
-            if ($targetField === 'selling_price' || $targetField === 'cost_and_selling_price') {
-                $raw = $oldSelling * $multiplier;
-                $newSellingPrice = match ($roundingRule) {
-                    'nearest_10' => round($raw / 10) * 10,
-                    'nearest_50' => round($raw / 50) * 50,
-                    'nearest_100' => round($raw / 100) * 100,
-                    'ends_99' => floor($raw) + 0.99,
-                    default => round($raw, 2),
-                };
-            }
-
-            $historyItems[] = [
-                'bulk_price_history_id' => $history->id,
-                'product_id' => $p->id,
-                'old_cost_price' => $oldCost,
-                'old_selling_price' => $oldSelling,
-                'new_cost_price' => $newCostPrice,
-                'new_selling_price' => $newSellingPrice,
-            ];
-        }
-
-        foreach (array_chunk($historyItems, 500) as $chunk) {
-            BulkPriceHistoryItem::insert($chunk);
-        }
-
-        $updateData = [];
-        if ($targetField === 'selling_price' || $targetField === 'cost_and_selling_price') {
-            $updateData['selling_price'] = DB::raw($this->_getNewPriceExpression($validated['percentage'], $roundingRule, 'selling_price'));
-        }
-        if ($targetField === 'cost_price' || $targetField === 'cost_and_selling_price') {
-            $updateData['cost_price'] = DB::raw($this->_getNewPriceExpression($validated['percentage'], 'none', 'cost_price'));
-        }
-
-        $count = 0;
-        foreach ($products->pluck('id')->chunk(500) as $chunk) {
-            $count += Product::whereIn('id', $chunk)->update($updateData);
-        }
+        ReportCacheService::flush();
 
         return response()->json([
             'message' => "Se actualizaron exitosamente los precios de {$count} productos.",
@@ -268,20 +346,66 @@ class CatalogController extends Controller
 
     public function bulkPriceRevert($id)
     {
-        $history = BulkPriceHistory::findOrFail($id);
-        if ($history->reverted) {
+        $historyCheck = BulkPriceHistory::findOrFail($id);
+        if ($historyCheck->reverted) {
             return response()->json(['message' => 'El lote ya fue revertido previamente.'], 400);
         }
 
-        $revertSelling = in_array($history->target_field, ['selling_price', 'cost_and_selling_price']);
-        $revertCost = in_array($history->target_field, ['cost_price', 'cost_and_selling_price']);
+        $revertSelling = in_array($historyCheck->target_field, ['selling_price', 'cost_and_selling_price'], true);
+        $revertCost = in_array($historyCheck->target_field, ['cost_price', 'cost_and_selling_price'], true);
 
         if (! $revertSelling && ! $revertCost) {
             return response()->json(['message' => 'Tipo de campo objetivo desconocido.'], 422);
         }
 
-        DB::transaction(function () use ($history, $revertSelling, $revertCost) {
-            $history->items()->chunkById(500, function ($chunk) use ($revertSelling, $revertCost) {
+        $result = DB::transaction(function () use ($id, $revertSelling, $revertCost) {
+            $history = BulkPriceHistory::where('id', $id)->lockForUpdate()->firstOrFail();
+            if ($history->reverted) {
+                return ['already_reverted' => true, 'reverted_count' => 0, 'skipped_count' => 0];
+            }
+
+            $overlappingFields = ['cost_and_selling_price'];
+            if ($revertSelling) {
+                $overlappingFields[] = 'selling_price';
+            }
+            if ($revertCost) {
+                $overlappingFields[] = 'cost_price';
+            }
+
+            $newerTouchedProductIds = DB::table('bulk_price_history_items')
+                ->join('bulk_price_histories', 'bulk_price_histories.id', '=', 'bulk_price_history_items.bulk_price_history_id')
+                ->where('bulk_price_histories.id', '>', $history->id)
+                ->where('bulk_price_histories.reverted', false)
+                ->whereIn('bulk_price_histories.target_field', array_values(array_unique($overlappingFields)))
+                ->pluck('bulk_price_history_items.product_id')
+                ->map(fn ($pid) => (int) $pid)
+                ->flip()
+                ->all();
+
+            $revertedCount = 0;
+            $skippedCount = 0;
+            $revertedProductIds = [];
+
+            $history->items()->chunkById(500, function ($chunk) use (
+                $revertSelling,
+                $revertCost,
+                $newerTouchedProductIds,
+                &$revertedCount,
+                &$skippedCount,
+                &$revertedProductIds
+            ) {
+                $chunkProductIds = $chunk->pluck('product_id')->map(fn ($pid) => (int) $pid)->unique()->sort()->values()->all();
+                if (empty($chunkProductIds)) {
+                    return;
+                }
+
+                $lockedProducts = Product::whereIn('id', $chunkProductIds)
+                    ->select('id', 'cost_price', 'selling_price')
+                    ->orderBy('id', 'asc')
+                    ->lockForUpdate()
+                    ->get()
+                    ->keyBy('id');
+
                 $ids = [];
                 $sellingCases = [];
                 $sellingBindings = [];
@@ -289,17 +413,38 @@ class CatalogController extends Controller
                 $costBindings = [];
 
                 foreach ($chunk as $item) {
-                    $ids[] = $item->product_id;
+                    $pid = (int) $item->product_id;
+                    /** @var Product|null $currentProduct */
+                    $currentProduct = $lockedProducts->get($pid);
+                    if (! $currentProduct) {
+                        continue;
+                    }
+
+                    $touchedByNewerBatch = isset($newerTouchedProductIds[$pid]);
+                    $sellingUnchanged = ! $revertSelling
+                        || abs((float) $currentProduct->selling_price - (float) $item->new_selling_price) <= 0.01;
+                    $costUnchanged = ! $revertCost
+                        || abs((float) $currentProduct->cost_price - (float) $item->new_cost_price) <= 0.01;
+
+                    if ($touchedByNewerBatch || ! $sellingUnchanged || ! $costUnchanged) {
+                        $skippedCount++;
+
+                        continue;
+                    }
+
+                    $ids[] = $pid;
+                    $revertedProductIds[] = $pid;
+                    $revertedCount++;
 
                     if ($revertSelling) {
                         $sellingCases[] = 'WHEN ? THEN ?';
-                        $sellingBindings[] = $item->product_id;
+                        $sellingBindings[] = $pid;
                         $sellingBindings[] = $item->old_selling_price;
                     }
 
                     if ($revertCost) {
                         $costCases[] = 'WHEN ? THEN ?';
-                        $costBindings[] = $item->product_id;
+                        $costBindings[] = $pid;
                         $costBindings[] = $item->old_cost_price;
                     }
                 }
@@ -336,10 +481,50 @@ class CatalogController extends Controller
                 DB::statement($sql, $params);
             });
 
+            if ($revertedCount === 0 && $skippedCount > 0) {
+                return [
+                    'already_reverted' => false,
+                    'reverted_count' => 0,
+                    'skipped_count' => $skippedCount,
+                ];
+            }
+
             $history->update(['reverted' => true, 'reverted_at' => now()]);
+
+            if ($revertCost && ! empty($revertedProductIds)) {
+                $this->_recalculateParentCombosCost($revertedProductIds);
+            }
+
+            return [
+                'already_reverted' => false,
+                'reverted_count' => $revertedCount,
+                'skipped_count' => $skippedCount,
+            ];
         });
 
-        return response()->json(['message' => 'Aumento masivo revertido exitosamente.']);
+        if (! empty($result['already_reverted'])) {
+            return response()->json(['message' => 'El lote ya fue revertido previamente.'], 400);
+        }
+
+        if ($result['reverted_count'] === 0 && $result['skipped_count'] > 0) {
+            return response()->json([
+                'message' => "No se revirtió ningún producto porque los {$result['skipped_count']} productos del lote tuvieron cambios de precio posteriores.",
+                'reverted_count' => 0,
+                'skipped_count' => $result['skipped_count'],
+            ], 422);
+        }
+
+        ReportCacheService::flush();
+
+        $message = $result['skipped_count'] > 0
+            ? "Se revirtieron {$result['reverted_count']} productos y se preservaron {$result['skipped_count']} que tenían cambios de precio posteriores."
+            : 'Aumento masivo revertido exitosamente.';
+
+        return response()->json([
+            'message' => $message,
+            'reverted_count' => $result['reverted_count'],
+            'skipped_count' => $result['skipped_count'],
+        ]);
     }
 
     public function export(Request $request, CatalogExportService $exportService)

@@ -291,7 +291,7 @@ class LicenseSyncService
         // LIC-08: Mantener license_allowed_addons sincronizado para clientes v1.8.5 en producción
         $enabledAddons = array_values(array_keys(array_filter($features, fn ($v) => (bool) $v)));
         $this->setSetting('license_allowed_addons', json_encode($enabledAddons));
-        BusinessSetting::where('key', 'license_addons')->delete();
+        BusinessSetting::whereIn('key', ['license_addons', 'license_plan'])->delete();
 
         return $plan;
     }
@@ -302,6 +302,7 @@ class LicenseSyncService
     private function markLicenseBlocked(): void
     {
         $this->setSetting('app_plan', 'blocked');
+        BusinessSetting::where('key', 'license_plan')->delete();
         $planMode = (string) ($this->getSetting('license_plan_mode', 'saas') ?? 'saas');
         $isLifetime = (string) ($this->getSetting('license_is_lifetime', '0') ?? '0');
         $featuresJson = (string) ($this->getSetting('license_features_dict', '{}') ?? '{}');

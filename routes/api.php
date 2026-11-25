@@ -202,17 +202,22 @@ Route::middleware(['session.validate', 'license.active'])->group(function () {
             ->middleware('permission.or.pin:'.Permissions::VIEW_EXPENSES);
         Route::get('/cash-movements/export', [CashMovementController::class, 'export'])
             ->middleware('permission.or.pin:'.Permissions::VIEW_EXPENSES);
+
+        Route::get('/expense-categories', [ExpenseCategoryController::class, 'index']);
+        Route::apiResource('expense-categories', ExpenseCategoryController::class)
+            ->except(['index'])
+            ->middleware('permission.or.pin:'.Permissions::MANAGE_EXPENSE_CATEGORIES);
+    });
+
+    // Escritura y anulación de movimientos: permitido con `expenses` O con Add-on `suppliers`
+    // (CashMovementController restringe a operaciones con supplier_id cuando expenses == false).
+    Route::middleware(['feature:expenses,suppliers'])->group(function () {
         Route::post('/cash-movements/upload', [CashMovementController::class, 'uploadAttachment'])
             ->middleware('permission.or.pin:'.Permissions::CREATE_EXPENSES);
         Route::post('/cash-movements', [CashMovementController::class, 'store'])
             ->middleware('permission.or.pin:'.Permissions::CREATE_EXPENSES);
         Route::delete('/cash-movements/{cash_movement}', [CashMovementController::class, 'destroy'])
             ->middleware('permission.or.pin:'.Permissions::DELETE_CASH_MOVEMENTS);
-
-        Route::get('/expense-categories', [ExpenseCategoryController::class, 'index']);
-        Route::apiResource('expense-categories', ExpenseCategoryController::class)
-            ->except(['index'])
-            ->middleware('permission.or.pin:'.Permissions::MANAGE_EXPENSE_CATEGORIES);
     });
 
     // ── Módulo Cartera de Cheques ────────────────────────────────────

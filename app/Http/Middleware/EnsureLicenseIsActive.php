@@ -32,6 +32,23 @@ class EnsureLicenseIsActive
 
         // L-09: Detectar manipulación directa en base de datos (ej. UPDATE business_settings SET value='lifetime')
         if (! LicenseSyncService::verifyLocalIntegrity()) {
+            $storedSeal = BusinessSetting::where('key', 'license_integrity_hash')->value('value');
+            $hasLicenseKey = ! empty(BusinessSetting::where('key', 'license_key')->value('value'))
+                || ! empty(BusinessSetting::where('key', 'license_api_key')->value('value'));
+
+            // Respaldo para instalaciones heredadas de v1.8.5 sin sello previo pero con license_key y red disponible
+            if (($storedSeal === null || trim((string) $storedSeal) === '') && $hasLicenseKey) {
+                try {
+                    app(LicenseSyncService::class)->syncHeartbeat(timeoutSeconds: 12, lockWaitSeconds: 5);
+                } catch (\Throwable) {
+                }
+
+                $recoveredPlan = strtolower((string) (BusinessSetting::where('key', 'app_plan')->value('value') ?? ''));
+                if (LicenseSyncService::verifyLocalIntegrity() && $recoveredPlan !== '' && $recoveredPlan !== 'blocked') {
+                    return $next($request);
+                }
+            }
+
             return response()->json([
                 'message' => 'Se detectó una alteración no autorizada en los registros de licencia. Por favor sincronice su licencia con el servidor.',
                 'error_code' => 'LICENSE_INTEGRITY_VIOLATION',
