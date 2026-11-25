@@ -120,6 +120,25 @@ class SettingController extends Controller
                 continue;
             }
 
+            // Sanitización estricta de configuración fiscal de Percepciones IIBB
+            if ($key === 'iibb_calculation_base') {
+                BusinessSetting::updateOrCreate(
+                    ['key' => $key],
+                    ['value' => BusinessSetting::sanitizeIibbCalculationBase($value)]
+                );
+
+                continue;
+            }
+
+            if ($key === 'iibb_subject_tax_conditions') {
+                BusinessSetting::updateOrCreate(
+                    ['key' => $key],
+                    ['value' => json_encode(BusinessSetting::sanitizeIibbSubjectTaxConditions($value))]
+                );
+
+                continue;
+            }
+
             // Si el valor es un array u objeto (ej: custom_price_tiers), serializar a JSON string
             $storedValue = is_array($value) ? json_encode($value) : $value;
 
