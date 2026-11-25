@@ -57,6 +57,11 @@ class BusinessSetting extends Model
         'license_next_payment_at',
         'license_manage_url',
         'license_is_lifetime',
+        'license_is_trial',
+        'license_block_reason',
+        'license_allow_ota_updates',
+        'license_ota_unlocked_until',
+        'license_max_unlocked_version',
         'license_business_type',
         'license_secondary_business_types',
         'afip_enabled',
@@ -92,6 +97,20 @@ class BusinessSetting extends Model
     public const ISSUER_TAX_MONOTRIBUTO = 'Responsable Monotributo';
 
     public const ISSUER_TAX_EXENTO = 'IVA Exento';
+
+    /**
+     * Token OTA irreversible (SHA-256) derivado de la clave de licencia.
+     * Permite consultar /api/check-update sin exponer la clave real en claro.
+     */
+    public static function computeOtaToken(?string $rawLicenseKey): ?string
+    {
+        $trimmed = trim((string) ($rawLicenseKey ?? ''));
+        if ($trimmed === '') {
+            return null;
+        }
+
+        return hash('sha256', 'caja4u-ota-v2:'.$trimmed);
+    }
 
     public static function isLegacyInvalidIssuerTaxCondition(mixed $raw): bool
     {

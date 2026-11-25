@@ -490,6 +490,14 @@ class SystemController extends Controller
                     'license_server_time',
                     'license_integrity_hash',
                     'license_is_lifetime',
+                    'license_is_trial',
+                    'license_block_reason',
+                    'license_max_observed_at',
+                    'license_clock_anchor_sale_id',
+                    'license_clock_anchor_shift_id',
+                    'license_allow_ota_updates',
+                    'license_ota_unlocked_until',
+                    'license_max_unlocked_version',
                     'license_business_type',
                     'license_secondary_business_types',
                 ];
@@ -603,6 +611,15 @@ class SystemController extends Controller
                     }
                 }
                 BusinessSetting::where('key', 'license_plan')->delete();
+                BusinessSetting::updateOrCreate(
+                    ['key' => 'license_clock_anchor_sale_id'],
+                    ['value' => (string) ((int) DB::table('sales')->max('id'))]
+                );
+                BusinessSetting::updateOrCreate(
+                    ['key' => 'license_clock_anchor_shift_id'],
+                    ['value' => (string) ((int) DB::table('cash_shifts')->max('id'))]
+                );
+                \Illuminate\Support\Facades\Cache::forget(\App\Services\LicenseSyncService::DB_ACTIVITY_CACHE_KEY);
 
                 // Preservar el session_token del usuario actual para no desconectar su sesión activa
                 if ($currentUserId !== null && ! empty($currentSessionToken)) {

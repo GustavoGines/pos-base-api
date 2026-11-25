@@ -48,6 +48,8 @@ class SettingController extends Controller
         $settings['pos_popularity_metric'] = $settings['pos_popularity_metric'] ?? 'tickets';
         $settings['pos_demote_out_of_stock'] = $settings['pos_demote_out_of_stock'] ?? '0';
 
+        $settings = $this->sanitizeLicenseExposure($settings);
+
         return response()->json($settings);
     }
 
@@ -172,6 +174,8 @@ class SettingController extends Controller
         $sanitizedSettings = BusinessSetting::whereNotIn('key', BusinessSetting::SENSITIVE_KEYS)
             ->pluck('value', 'key')
             ->toArray();
+
+        $sanitizedSettings = $this->sanitizeLicenseExposure($sanitizedSettings);
 
         return response()->json([
             'message' => 'Configuración actualizada correctamente.',
@@ -586,15 +590,39 @@ class SettingController extends Controller
         try {
             $licenseService->syncManualForce();
 
+            $settings = BusinessSetting::whereNotIn('key', BusinessSetting::SENSITIVE_KEYS)
+                ->pluck('value', 'key')
+                ->toArray();
+
             return response()->json([
                 'message' => 'Permisos de licencia sincronizados correctamente.',
-                'settings' => BusinessSetting::whereNotIn('key', BusinessSetting::SENSITIVE_KEYS)->pluck('value', 'key'),
+                'settings' => $this->sanitizeLicenseExposure($settings),
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'error' => $e->getMessage(),
             ], 400); // 400 Bad Request
         }
+    }
+
+    /**
+     * Enmascara license_key y entrega un token OTA irreversible (SHA-256)
+     * para evitar exponer la clave de licencia real en respuestas JSON públicas.
+     */
+    private function sanitizeLicenseExposure(array $settings): array
+    {
+        $rawLicenseKey = BusinessSetting::where('key', 'license_key')->value('value')
+            ?: BusinessSetting::where('key', 'license_api_key')->value('value');
+
+        $settings['license_ota_token'] = BusinessSetting::computeOtaToken($rawLicenseKey);
+
+        if (array_key_exists('license_key', $settings) || ($rawLicenseKey !== null && trim((string) $rawLicenseKey) !== '')) {
+            $settings['license_key'] = $this->maskToken($rawLicenseKey !== null ? (string) $rawLicenseKey : null);
+        }
+
+        unset($settings['license_api_key']);
+
+        return $settings;
     }
 
     /**

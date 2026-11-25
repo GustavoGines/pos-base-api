@@ -8,12 +8,20 @@ use App\Models\Rubro;
 use Carbon\Carbon;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class LicenseSyncService
 {
+    public const BLOCK_REASON_TRIAL_EXPIRED = 'trial_expired';
+    public const BLOCK_REASON_SUBSCRIPTION_EXPIRED = 'subscription_expired';
+    public const BLOCK_REASON_SUSPENDED = 'suspended';
+    public const BLOCK_REASON_OFFLINE_GRACE = 'offline_grace_expired';
+    public const BLOCK_REASON_CLOCK_TAMPERED = 'clock_tampered';
+    public const DB_ACTIVITY_CACHE_KEY = 'pos_lic_db_hwm';
+
     private function getSetting(string $key, $default = null)
     {
         $setting = BusinessSetting::where('key', $key)->first();
@@ -261,6 +269,19 @@ class LicenseSyncService
         $this->setSetting('app_plan', $plan);
         $this->setSetting('license_plan_mode', $planMode);
         $this->setSetting('license_is_lifetime', $isLifetime);
+        $isTrial = $planMode === 'lifetime'
+            ? '0'
+            : (array_key_exists('is_trial', $data)
+                ? (($data['is_trial'] === true || $data['is_trial'] === 1 || $data['is_trial'] === '1') ? '1' : '0')
+                : ((string) ($this->getSetting('license_is_trial', '0') ?? '0')));
+        $this->setSetting('license_is_trial', $isTrial);
+        BusinessSetting::where('key', 'license_block_reason')->delete();
+        $allowOta = array_key_exists('allow_ota_updates', $data)
+            ? ($data['allow_ota_updates'] ? '1' : '0')
+            : ($isLifetime === '1' ? '0' : '1');
+        $this->setSetting('license_allow_ota_updates', $allowOta);
+        $this->setSetting('license_ota_unlocked_until', $data['ota_unlocked_until'] ?? null);
+        $this->setSetting('license_max_unlocked_version', $data['max_unlocked_version'] ?? null);
         $this->setSetting('license_business_type', $businessType);
         $this->setSetting('license_secondary_business_types', json_encode($secondaryTypes));
         $this->syncSystemRubro($businessType, $secondaryTypes);
@@ -284,6 +305,18 @@ class LicenseSyncService
         $this->setSetting('last_license_check', $referenceTime);
         $this->setSetting('license_last_sync', $referenceTime);
 
+        // Re-anclar High-Water Mark y anclas de actividad tras respuesta válida del servidor
+        // para permitir recuperación limpia si la PC tuvo la fecha adelantada accidentalmente.
+        $serverMoment = Carbon::parse($referenceTime);
+        $localNow = now();
+        $anchoredHwm = abs($localNow->diffInMinutes($serverMoment, false)) <= 120
+            ? $localNow->toIso8601String()
+            : $serverMoment->toIso8601String();
+        $this->setSetting('license_max_observed_at', $anchoredHwm);
+        $this->setSetting('license_clock_anchor_sale_id', (string) ((int) DB::table('sales')->max('id')));
+        $this->setSetting('license_clock_anchor_shift_id', (string) ((int) DB::table('cash_shifts')->max('id')));
+        Cache::forget(self::DB_ACTIVITY_CACHE_KEY);
+
         // L-09: Guardar sello de integridad criptográfica local
         $seal = self::computeLocalIntegritySeal($plan, $planMode, $isLifetime, $featuresJson);
         $this->setSetting('license_integrity_hash', $seal);
@@ -299,9 +332,12 @@ class LicenseSyncService
     /**
      * Marca la licencia local como bloqueada y actualiza su sello de integridad.
      */
-    private function markLicenseBlocked(): void
+    private function markLicenseBlocked(?string $reason = null): void
     {
         $this->setSetting('app_plan', 'blocked');
+        if ($reason !== null) {
+            $this->setSetting('license_block_reason', $reason);
+        }
         BusinessSetting::where('key', 'license_plan')->delete();
         $planMode = (string) ($this->getSetting('license_plan_mode', 'saas') ?? 'saas');
         $isLifetime = (string) ($this->getSetting('license_is_lifetime', '0') ?? '0');
@@ -309,6 +345,105 @@ class LicenseSyncService
 
         $seal = self::computeLocalIntegritySeal('blocked', $planMode, $isLifetime, $featuresJson);
         $this->setSetting('license_integrity_hash', $seal);
+    }
+
+    /**
+     * Evalúa si el reloj del sistema fue atrasado respecto al High-Water Mark o actividad reciente.
+     * Usa caché de 120s para evitar consultas MAX() repetidas en cada cobro.
+     *
+     * @param  array<string, mixed>  $settingsMap
+     */
+    public function evaluateClockRollback(array $settingsMap): bool
+    {
+        $threshold = now()->addMinutes(10);
+
+        $maxObserved = $settingsMap['license_max_observed_at'] ?? null;
+        if (! empty($maxObserved)) {
+            try {
+                if (Carbon::parse((string) $maxObserved)->greaterThan($threshold)) {
+                    return true;
+                }
+            } catch (\Throwable) {
+            }
+        }
+
+        $lastCheck = $settingsMap['last_license_check'] ?? $settingsMap['license_last_sync'] ?? null;
+        if (! empty($lastCheck)) {
+            try {
+                if (Carbon::parse((string) $lastCheck)->greaterThan(now()->addHours(2))) {
+                    return true;
+                }
+            } catch (\Throwable) {
+            }
+        }
+
+        $anchorSaleId = (int) ($settingsMap['license_clock_anchor_sale_id'] ?? 0);
+        $anchorShiftId = (int) ($settingsMap['license_clock_anchor_shift_id'] ?? 0);
+
+        $dbMax = Cache::remember(self::DB_ACTIVITY_CACHE_KEY, 120, function () use ($anchorSaleId, $anchorShiftId): ?string {
+            $maxSale = DB::table('sales')->where('id', '>', $anchorSaleId)->max('created_at');
+            $maxShift = DB::table('cash_shifts')->where('id', '>', $anchorShiftId)->max('opened_at');
+
+            $candidates = array_filter([$maxSale, $maxShift], fn ($v) => ! empty($v));
+            if ($candidates === []) {
+                return null;
+            }
+
+            $latest = null;
+            foreach ($candidates as $raw) {
+                try {
+                    $parsed = Carbon::parse((string) $raw);
+                    if ($latest === null || $parsed->greaterThan($latest)) {
+                        $latest = $parsed;
+                    }
+                } catch (\Throwable) {
+                }
+            }
+
+            return $latest?->toIso8601String();
+        });
+
+        if (! empty($dbMax)) {
+            try {
+                if (Carbon::parse($dbMax)->greaterThan($threshold)) {
+                    return true;
+                }
+            } catch (\Throwable) {
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Registra un bloqueo remoto (401/403/404) diferenciando Demo vencida, SaaS vencido o suspensión.
+     */
+    private function applyRemoteRejectionBlock(array $respJson): string
+    {
+        if (array_key_exists('is_trial', $respJson)) {
+            $this->setSetting(
+                'license_is_trial',
+                ($respJson['is_trial'] === true || $respJson['is_trial'] === 1 || $respJson['is_trial'] === '1') ? '1' : '0'
+            );
+        }
+
+        $remoteStatus = (string) ($respJson['status'] ?? '');
+        $isTrial = ((string) ($this->getSetting('license_is_trial', '0') ?? '0')) === '1';
+
+        if ($remoteStatus === 'expired') {
+            $expiresAt = ! empty($respJson['expires_at']) && is_string($respJson['expires_at'])
+                ? $respJson['expires_at']
+                : now()->subSecond()->toIso8601String();
+            $this->setSetting('license_expires_at', $expiresAt);
+            $reason = $isTrial ? self::BLOCK_REASON_TRIAL_EXPIRED : self::BLOCK_REASON_SUBSCRIPTION_EXPIRED;
+            $this->markLicenseBlocked($reason);
+
+            return $reason;
+        }
+
+        $this->markLicenseBlocked(self::BLOCK_REASON_SUSPENDED);
+
+        return self::BLOCK_REASON_SUSPENDED;
     }
 
     /**
@@ -384,10 +519,7 @@ class LicenseSyncService
                     $this->applyValidatedLicenseData($data);
                 } elseif ($response->status() === 401 || $response->status() === 403 || $response->status() === 404) {
                     // 401/403/404: Licencia suspendida, expirada, revocada o inválida
-                    if (($response->json('status') ?? '') === 'expired') {
-                        $this->setSetting('license_expires_at', now()->subSecond()->toIso8601String());
-                    }
-                    $this->markLicenseBlocked();
+                    $this->applyRemoteRejectionBlock($response->json() ?? []);
                     throw new \Exception('La licencia ha sido suspendida, revocada o es inválida.');
                 } else {
                     // 500 u otros errores del servidor: Tratar como "Falla de Internet"
@@ -409,7 +541,7 @@ class LicenseSyncService
     {
         // L-09: Si la base de datos local fue manipulada (ej. forzando lifetime por SQL), bloquear de inmediato.
         if (! self::verifyLocalIntegrity()) {
-            $this->markLicenseBlocked();
+            $this->markLicenseBlocked(self::BLOCK_REASON_SUSPENDED);
 
             return;
         }
@@ -420,12 +552,32 @@ class LicenseSyncService
             return;
         }
 
+        $settingsMap = BusinessSetting::whereIn('key', [
+            'license_max_observed_at',
+            'last_license_check',
+            'license_last_sync',
+            'license_clock_anchor_sale_id',
+            'license_clock_anchor_shift_id',
+            'license_is_trial',
+            'license_expires_at',
+        ])->pluck('value', 'key')->toArray();
+
+        if ($this->evaluateClockRollback($settingsMap)) {
+            $this->markLicenseBlocked(self::BLOCK_REASON_CLOCK_TAMPERED);
+
+            return;
+        }
+
+        $isTrial = ((string) ($settingsMap['license_is_trial'] ?? '0')) === '1';
+
         // L-08: Si existe fecha de expiración contractual conocida y ya venció, bloquear.
-        $expiresAt = $this->getSetting('license_expires_at');
+        $expiresAt = $settingsMap['license_expires_at'] ?? null;
         if (! empty($expiresAt)) {
             try {
                 if (Carbon::parse($expiresAt)->endOfDay()->isPast()) {
-                    $this->markLicenseBlocked();
+                    $this->markLicenseBlocked(
+                        $isTrial ? self::BLOCK_REASON_TRIAL_EXPIRED : self::BLOCK_REASON_SUBSCRIPTION_EXPIRED
+                    );
 
                     return;
                 }
@@ -434,10 +586,10 @@ class LicenseSyncService
             }
         }
 
-        $lastCheck = $this->getSetting('last_license_check') ?: $this->getSetting('license_last_sync');
+        $lastCheck = $settingsMap['last_license_check'] ?? $settingsMap['license_last_sync'] ?? null;
 
         if (! $lastCheck) {
-            $this->markLicenseBlocked();
+            $this->markLicenseBlocked(self::BLOCK_REASON_OFFLINE_GRACE);
 
             return;
         }
@@ -449,7 +601,7 @@ class LicenseSyncService
 
         if ($hoursSinceLastCheck > 72) {
             // Grace period vencido — solo aplica a planes SaaS
-            $this->markLicenseBlocked();
+            $this->markLicenseBlocked(self::BLOCK_REASON_OFFLINE_GRACE);
         }
     }
 
@@ -466,8 +618,12 @@ class LicenseSyncService
 
         // L-04: Evitar estampida de workers concurrentes hacia Render en cold-start
         $lock = Cache::lock('pos_license_sync_lock', 65);
-        if (! $lock->get()) {
-            return;
+        try {
+            if (! $lock->block(15)) {
+                throw new \Exception('Sincronización de licencia en curso. Reintente en unos segundos.');
+            }
+        } catch (\Illuminate\Contracts\Cache\LockTimeoutException) {
+            throw new \Exception('Sincronización de licencia en curso. Reintente en unos segundos.');
         }
 
         try {
@@ -488,11 +644,13 @@ class LicenseSyncService
                     $this->verifyServerSignature($data, $installationId, $nonce);
                     $this->applyValidatedLicenseData($data);
                 } elseif ($response->status() === 401 || $response->status() === 403 || $response->status() === 404) {
-                    if (($response->json('status') ?? '') === 'expired') {
-                        $this->setSetting('license_expires_at', now()->subSecond()->toIso8601String());
-                    }
-                    $this->markLicenseBlocked();
-                    throw new \Exception('La licencia ha sido suspendida, revocada o es inválida.');
+                    $reason = $this->applyRemoteRejectionBlock($response->json() ?? []);
+                    $msg = match ($reason) {
+                        self::BLOCK_REASON_TRIAL_EXPIRED => 'Tu período de prueba gratuita ha finalizado.',
+                        self::BLOCK_REASON_SUBSCRIPTION_EXPIRED => 'La suscripción mensual ha expirado.',
+                        default => 'La licencia ha sido suspendida, revocada o es inválida.',
+                    };
+                    throw new \Exception($msg);
                 } else {
                     throw new \Exception('El servidor remoto de licencias no respondió correctamente (HTTP '.$response->status().').');
                 }
