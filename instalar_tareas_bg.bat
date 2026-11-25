@@ -33,14 +33,31 @@ schtasks /delete /tn "SistemaPOS_Reverb" /f >nul 2>&1
 schtasks /delete /tn "SistemaPOS_Schedule" /f >nul 2>&1
 schtasks /delete /tn "SistemaPOS_Queue" /f >nul 2>&1
 
+set "EXIT_CODE=0"
+
 schtasks /create /tn "SistemaPOS_Reverb" /tr "\"%PHP_EXE%\" \"%ARTISAN%\" reverb:start --no-interaction" /sc ONLOGON /delay 0000:30 /ru "SYSTEM" /rl HIGHEST /f
-if %errorlevel%==0 (echo [OK] Tarea SistemaPOS_Reverb creada.) else (echo [ERROR] Fallo SistemaPOS_Reverb - Correr como Admin)
+if !errorlevel!==0 (
+    echo [OK] Tarea SistemaPOS_Reverb creada.
+) else (
+    echo [ERROR] Fallo SistemaPOS_Reverb - Correr como Admin
+    set "EXIT_CODE=1"
+)
 
 schtasks /create /tn "SistemaPOS_Schedule" /tr "\"%PHP_EXE%\" \"%ARTISAN%\" schedule:run --no-interaction" /sc MINUTE /mo 1 /ru "SYSTEM" /rl HIGHEST /f
-if %errorlevel%==0 (echo [OK] Tarea SistemaPOS_Schedule creada para correr cada minuto.) else (echo [ERROR] Fallo SistemaPOS_Schedule - Correr como Admin)
+if !errorlevel!==0 (
+    echo [OK] Tarea SistemaPOS_Schedule creada para correr cada minuto.
+) else (
+    echo [ERROR] Fallo SistemaPOS_Schedule - Correr como Admin
+    set "EXIT_CODE=1"
+)
 
 schtasks /create /tn "SistemaPOS_Queue" /tr "\"%PHP_EXE%\" \"%ARTISAN%\" queue:work --tries=3 --timeout=90 --no-interaction" /sc ONLOGON /delay 0000:30 /ru "SYSTEM" /rl HIGHEST /f
-if %errorlevel%==0 (echo [OK] Tarea SistemaPOS_Queue creada.) else (echo [ERROR] Fallo SistemaPOS_Queue - Correr como Admin)
+if !errorlevel!==0 (
+    echo [OK] Tarea SistemaPOS_Queue creada.
+) else (
+    echo [ERROR] Fallo SistemaPOS_Queue - Correr como Admin
+    set "EXIT_CODE=1"
+)
 
 :: Blindar configuracion de las tareas (permitir en notebooks con bateria, sin limite de 72hs y auto-reinicio cada 1 min si MySQL tarda en arrancar)
 powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1); Set-ScheduledTask -TaskName 'SistemaPOS_Reverb' -Settings $s | Out-Null; Set-ScheduledTask -TaskName 'SistemaPOS_Queue' -Settings $s | Out-Null; Set-ScheduledTask -TaskName 'SistemaPOS_Schedule' -Settings $s | Out-Null" >nul 2>&1
@@ -59,6 +76,9 @@ echo Limpiando basura de cache...
 del /q /f "%BACKEND_DIR%\bootstrap\cache\*.tmp" >nul 2>&1
 
 echo Iniciando tareas ahora mismo...
+schtasks /change /tn "SistemaPOS_Reverb" /enable >nul 2>&1
+schtasks /change /tn "SistemaPOS_Schedule" /enable >nul 2>&1
+schtasks /change /tn "SistemaPOS_Queue" /enable >nul 2>&1
 schtasks /run /tn "SistemaPOS_Reverb" >nul 2>&1
 timeout /t 3 /nobreak >nul
 schtasks /run /tn "SistemaPOS_Schedule" >nul 2>&1
@@ -69,3 +89,4 @@ echo Procesos PHP corriendo en segundo plano:
 tasklist /fi "IMAGENAME eq php-win.exe" /fo table
 echo.
 echo Listo. Las tareas se iniciaran de forma 100% invisible en cada inicio de sesion.
+exit /b !EXIT_CODE!

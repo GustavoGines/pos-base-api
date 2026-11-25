@@ -175,9 +175,17 @@ class SettingController extends Controller
             );
         }
 
-        $sanitizedSettings = BusinessSetting::whereNotIn('key', BusinessSetting::SENSITIVE_KEYS)
+        $sanitizedSettings = BusinessSetting::whereIn('key', BusinessSetting::PUBLIC_KEYS)
             ->pluck('value', 'key')
             ->toArray();
+
+        foreach (BusinessSetting::SENSITIVE_KEYS as $sensitiveKey) {
+            unset($sanitizedSettings[$sensitiveKey]);
+        }
+
+        if (! empty($sanitizedSettings['logo_path'])) {
+            $sanitizedSettings['logo_url'] = asset('storage/'.$sanitizedSettings['logo_path']);
+        }
 
         $sanitizedSettings = $this->appendDemoRuntimeFlags($sanitizedSettings);
         $sanitizedSettings = $this->sanitizeLicenseExposure($sanitizedSettings);
@@ -595,13 +603,24 @@ class SettingController extends Controller
         try {
             $licenseService->syncManualForce();
 
-            $settings = BusinessSetting::whereNotIn('key', BusinessSetting::SENSITIVE_KEYS)
+            $settings = BusinessSetting::whereIn('key', BusinessSetting::PUBLIC_KEYS)
                 ->pluck('value', 'key')
                 ->toArray();
 
+            foreach (BusinessSetting::SENSITIVE_KEYS as $sensitiveKey) {
+                unset($settings[$sensitiveKey]);
+            }
+
+            if (! empty($settings['logo_path'])) {
+                $settings['logo_url'] = asset('storage/'.$settings['logo_path']);
+            }
+
+            $settings = $this->appendDemoRuntimeFlags($settings);
+            $settings = $this->sanitizeLicenseExposure($settings);
+
             return response()->json([
                 'message' => 'Permisos de licencia sincronizados correctamente.',
-                'settings' => $this->sanitizeLicenseExposure($settings),
+                'settings' => $settings,
             ]);
         } catch (\Exception $e) {
             return response()->json([

@@ -53,7 +53,9 @@ class TrashController extends Controller
             $like = '%'.$search.'%';
             $query->where(function ($q) use ($like, $model) {
                 if ($model === 'customers') {
-                    $q->where('name', 'like', $like)->orWhere('document_number', 'like', $like);
+                    $q->where('name', 'like', $like)
+                        ->orWhere('document_number', 'like', $like)
+                        ->orWhere('phone', 'like', $like);
                 } elseif ($model === 'products') {
                     $q->where('name', 'like', $like)
                         ->orWhere('barcode', 'like', $like)

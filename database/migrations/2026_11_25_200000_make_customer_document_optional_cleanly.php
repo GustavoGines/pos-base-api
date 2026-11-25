@@ -40,11 +40,18 @@ return new class extends Migration
                 ->update(['document_type' => $inferred]);
         }
 
-        // 4. Cambiar default de document_type a 99 y agregar índices simples de búsqueda
-        Schema::table('customers', function (Blueprint $table) {
+        // 4. Cambiar default de document_type a 99 y agregar índices simples de búsqueda (idempotente)
+        $hasDocIndex = Schema::hasIndex('customers', 'customers_document_number_index');
+        $hasPhoneIndex = Schema::hasIndex('customers', 'customers_phone_index');
+
+        Schema::table('customers', function (Blueprint $table) use ($hasDocIndex, $hasPhoneIndex) {
             $table->unsignedSmallInteger('document_type')->default(99)->change();
-            $table->index('document_number', 'customers_document_number_index');
-            $table->index('phone', 'customers_phone_index');
+            if (! $hasDocIndex) {
+                $table->index('document_number', 'customers_document_number_index');
+            }
+            if (! $hasPhoneIndex) {
+                $table->index('phone', 'customers_phone_index');
+            }
         });
     }
 
@@ -53,9 +60,16 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('customers', function (Blueprint $table) {
-            $table->dropIndex('customers_document_number_index');
-            $table->dropIndex('customers_phone_index');
+        $hasDocIndex = Schema::hasIndex('customers', 'customers_document_number_index');
+        $hasPhoneIndex = Schema::hasIndex('customers', 'customers_phone_index');
+
+        Schema::table('customers', function (Blueprint $table) use ($hasDocIndex, $hasPhoneIndex) {
+            if ($hasDocIndex) {
+                $table->dropIndex('customers_document_number_index');
+            }
+            if ($hasPhoneIndex) {
+                $table->dropIndex('customers_phone_index');
+            }
             $table->unsignedSmallInteger('document_type')->default(96)->change();
         });
     }

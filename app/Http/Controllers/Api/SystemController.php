@@ -478,6 +478,7 @@ class SystemController extends Controller
                 $localLicense = [];
                 $localLicenseFields = [
                     'license_key',
+                    'license_api_key',
                     'license_status',
                     'installation_hash',
                     'installation_id',
@@ -611,6 +612,22 @@ class SystemController extends Controller
                     }
                 }
                 BusinessSetting::where('key', 'license_plan')->delete();
+
+                // B-03: Impedir que un backup generado en modo demo deje atrapado a un comercio real pago
+                // o a una base con comprobantes fiscales autorizados (bloqueo cruzado ARCA + hasFiscalBlock).
+                $effectiveIsTrial = (BusinessSetting::where('key', 'license_is_trial')->value('value') ?? '0') === '1';
+                $hasAuthorizedFiscalData = \Illuminate\Support\Facades\Schema::hasTable('electronic_invoices')
+                    && DB::table('electronic_invoices')->whereNotNull('cae')->where('cae', '!=', '')->exists();
+
+                if (! $effectiveIsTrial || $hasAuthorizedFiscalData) {
+                    BusinessSetting::updateOrCreate(['key' => 'demo_mode_active'], ['value' => '0']);
+                    BusinessSetting::whereIn('key', [
+                        'demo_seeded_at',
+                        'demo_max_seeded_product_id',
+                        'demo_prev_enable_advanced_price_tiers',
+                    ])->delete();
+                }
+
                 BusinessSetting::updateOrCreate(
                     ['key' => 'license_clock_anchor_sale_id'],
                     ['value' => (string) ((int) DB::table('sales')->max('id'))]

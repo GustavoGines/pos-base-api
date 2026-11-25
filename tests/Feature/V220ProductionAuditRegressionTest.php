@@ -336,4 +336,120 @@ class V220ProductionAuditRegressionTest extends TestCase
             @unlink($copiedZip);
         }
     }
+
+    /**
+     * B-03: Restaurar un backup generado en Modo Demo (`demo_mode_active = '1'`) sobre un comercio
+     * con licencia paga (`license_is_trial = '0'`) fuerza `demo_mode_active = '0'` y limpia metadatos demo,
+     * evitando que ARCA quede bloqueado o que el banner ofrezca purgar datos reales.
+     */
+    public function test_b03_restore_backup_sanitizes_demo_mode_when_local_license_is_paid(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        // 1. Generar un backup mientras el sistema tenía demo_mode_active = '1' (en Trial)
+        $trialFeatures = json_encode(['fast_pos' => true, 'arca_afip' => true]);
+        BusinessSetting::updateOrCreate(['key' => 'license_key'], ['value' => 'TRIAL-DEMO-KEY']);
+        BusinessSetting::updateOrCreate(['key' => 'app_plan'], ['value' => 'pro']);
+        BusinessSetting::updateOrCreate(['key' => 'license_plan_mode'], ['value' => 'saas']);
+        BusinessSetting::updateOrCreate(['key' => 'license_is_lifetime'], ['value' => '0']);
+        BusinessSetting::updateOrCreate(['key' => 'license_is_trial'], ['value' => '1']);
+        BusinessSetting::updateOrCreate(['key' => 'last_license_check'], ['value' => now()->toIso8601String()]);
+        BusinessSetting::updateOrCreate(['key' => 'license_features_dict'], ['value' => $trialFeatures]);
+        BusinessSetting::updateOrCreate(['key' => 'license_integrity_hash'], [
+            'value' => LicenseSyncService::computeLocalIntegritySeal('pro', 'saas', '0', $trialFeatures),
+        ]);
+        BusinessSetting::updateOrCreate(['key' => 'demo_mode_active'], ['value' => '1']);
+        BusinessSetting::updateOrCreate(['key' => 'demo_seeded_at'], ['value' => now()->toIso8601String()]);
+        BusinessSetting::updateOrCreate(['key' => 'demo_max_seeded_product_id'], ['value' => '150']);
+        BusinessSetting::updateOrCreate(['key' => 'demo_prev_enable_advanced_price_tiers'], ['value' => '0']);
+
+        $backupResponse = $this->actingAsAdmin($admin)->get('/api/system/backup?include_db=1');
+        $backupResponse->assertOk();
+        $zipPath = $backupResponse->baseResponse->getFile()->getPathname();
+        $copiedZip = storage_path('app/private/backups/test_b03_demo_contaminate.zip');
+        copy($zipPath, $copiedZip);
+
+        try {
+            // 2. El comercio ahora tiene licencia Paga activa (`license_is_trial = '0'`) y NO está en modo demo
+            BusinessSetting::updateOrCreate(['key' => 'license_key'], ['value' => 'PAID-PRO-KEY-2026']);
+            BusinessSetting::updateOrCreate(['key' => 'license_api_key'], ['value' => 'PAID-PRO-KEY-2026']);
+            BusinessSetting::updateOrCreate(['key' => 'license_is_trial'], ['value' => '0']);
+            BusinessSetting::updateOrCreate(['key' => 'demo_mode_active'], ['value' => '0']);
+            BusinessSetting::whereIn('key', [
+                'demo_seeded_at',
+                'demo_max_seeded_product_id',
+                'demo_prev_enable_advanced_price_tiers',
+            ])->delete();
+
+            // 3. Restaurar el backup que contenía demo_mode_active = '1'
+            $uploadedZip = new UploadedFile($copiedZip, 'backup_demo.zip', 'application/zip', null, true);
+            $this->actingAsAdmin($admin)->post('/api/system/restore', [
+                'backup_file' => $uploadedZip,
+            ])->assertOk();
+
+            // 4. La licencia paga no debe quedar atrapada en demo_mode_active = '1'
+            $this->assertSame('0', BusinessSetting::where('key', 'license_is_trial')->value('value'));
+            $this->assertSame('PAID-PRO-KEY-2026', BusinessSetting::where('key', 'license_api_key')->value('value'));
+            $this->assertFalse(BusinessSetting::isDemoModeActive());
+            $this->assertSame('0', BusinessSetting::where('key', 'demo_mode_active')->value('value'));
+            $this->assertNull(BusinessSetting::where('key', 'demo_seeded_at')->value('value'));
+            $this->assertNull(BusinessSetting::where('key', 'demo_max_seeded_product_id')->value('value'));
+            $this->assertNull(BusinessSetting::where('key', 'demo_prev_enable_advanced_price_tiers')->value('value'));
+        } finally {
+            @unlink($copiedZip);
+        }
+    }
+
+    /**
+     * M-03, M-04 y C-02:
+     * - AfipWsfeService::authorizeInvoice bloquea directamente en defensa en profundidad si demo_mode_active = '1'.
+     * - SettingController::update / syncLicense no filtran hashes internos de licencia y exponen demo_mode_active.
+     * - TrashController::index permite buscar clientes eliminados sin DNI por número de teléfono.
+     */
+    public function test_m03_m04_c02_wsfe_demo_guard_settings_public_keys_and_trash_phone_search(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        // C-02: Cliente sin DNI eliminado buscable por teléfono en papelera
+        $customer = \App\Models\Customer::create([
+            'name' => 'Cliente Sin Documento',
+            'document_type' => 99,
+            'document_number' => null,
+            'phone' => '1155667788',
+            'tax_condition' => 'consumidor_final',
+        ]);
+        $customer->delete();
+
+        $this->actingAsAdmin($admin)
+            ->getJson('/api/trash/customers?search=556677')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $customer->id);
+
+        // M-04: PUT /api/settings no filtra license_integrity_hash ni license_clock_anchor_sale_id
+        BusinessSetting::updateOrCreate(['key' => 'license_clock_anchor_sale_id'], ['value' => '42']);
+        $updateRes = $this->actingAsAdmin($admin)->putJson('/api/settings', [
+            'company_name' => 'Comercio Auditado',
+        ]);
+        $updateRes->assertOk()
+            ->assertJsonPath('settings.company_name', 'Comercio Auditado')
+            ->assertJsonPath('settings.demo_mode_active', '0')
+            ->assertJsonMissingPath('settings.license_integrity_hash')
+            ->assertJsonMissingPath('settings.license_clock_anchor_sale_id');
+
+        // M-03: Guardia directa en AfipWsfeService::authorizeInvoice cuando demo_mode_active = '1'
+        BusinessSetting::updateOrCreate(['key' => 'demo_mode_active'], ['value' => '1']);
+        $shift = $this->crearTurnoAbierto(5000.00, $admin);
+        $sale = \App\Models\Sale::create([
+            'user_id' => $admin->id,
+            'cash_shift_id' => $shift->id,
+            'subtotal' => 1000.00,
+            'total' => 1000.00,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Modo Datos de Ejemplo');
+        app(\App\Services\Afip\AfipWsfeService::class)->authorizeInvoice($sale);
+    }
 }

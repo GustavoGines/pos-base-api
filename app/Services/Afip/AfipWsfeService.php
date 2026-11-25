@@ -35,6 +35,7 @@ class AfipWsfeService
         'default_iibb_perception_rate',
         'iibb_calculation_base',
         'iibb_subject_tax_conditions',
+        'demo_mode_active',
     ];
 
     protected AfipWsaaService $wsaaService;
@@ -277,6 +278,13 @@ class AfipWsfeService
     public function authorizeInvoice(Sale $sale, array $options = []): array
     {
         $fiscalSettings = $this->loadFiscalSettingsMap();
+
+        $rawDemo = $fiscalSettings['demo_mode_active'] ?? null;
+        if ($rawDemo === '1' || $rawDemo === 'true' || $rawDemo === true || $rawDemo === 1) {
+            throw new RuntimeException(
+                'Estás en Modo Datos de Ejemplo. Para emitir comprobantes fiscales ante ARCA (en Homologación o Producción), primero debés limpiar los datos de ejemplo y comenzar con tu negocio real.'
+            );
+        }
 
         $rawCuit = $fiscalSettings['afip_cuit'] ?? null;
         $environment = $fiscalSettings['afip_environment'] ?? 'testing';
