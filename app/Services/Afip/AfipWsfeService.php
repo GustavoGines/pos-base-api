@@ -288,6 +288,10 @@ class AfipWsfeService
             default => 'consumidor_final',
         };
         $isConsumidorFinal = $receiverCondKey === 'consumidor_final';
+        if ($isConsumidorFinal && ! $isCreditNote && $existingSalePerception <= 0.0) {
+            $perceptionAmount = 0.0;
+            $perceptionRate = 0.0;
+        }
         $isFiscalCuitSubjectToIibb = ! $isConsumidorFinal
             && in_array($receiverCondKey, $iibbSubjectTaxConditions, true)
             && ($voucherLetter === 'A' || $docType === AfipHelper::DOC_CUIT);
