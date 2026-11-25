@@ -387,25 +387,20 @@ Route::middleware(['session.validate', 'license.active'])->group(function () {
     Route::prefix('reports')->middleware('permission.or.pin:'.Permissions::VIEW_REPORTS)->group(function () {
         Route::post('/pos-popularity/recalibrate', [ReportController::class, 'recalibratePosPopularity']);
         Route::get('/sales-by-category', [ReportController::class, 'profitByCategory']);
+        Route::get('/sales-by-category/export', [ReportController::class, 'exportProfitByCategory']);
+        Route::get('/sales-by-category/pdf', [ReportController::class, 'exportPdfByCategory']);
         Route::get('/sales-by-brand', [ReportController::class, 'profitByBrand']);
+        Route::get('/monthly-balance', [ReportController::class, 'monthlyBalance']);
+        Route::get('/monthly-balance/export', [ReportController::class, 'exportMonthlyBalanceExcel']);
+        Route::get('/monthly-balance/pdf', [ReportController::class, 'exportMonthlyBalancePdf']);
         Route::get('/waste', [ProductBatchController::class, 'wasteReport']);
         Route::get('/vat-sales', [ReportController::class, 'vatSales']);
-
-        Route::middleware(['feature:advanced_reports'])->group(function () {
-            Route::get('/sales-by-category/export', [ReportController::class, 'exportProfitByCategory']);
-            Route::get('/sales-by-category/pdf', [ReportController::class, 'exportPdfByCategory']);
-            Route::get('/monthly-balance/export', [ReportController::class, 'exportMonthlyBalanceExcel']);
-            Route::get('/monthly-balance/pdf', [ReportController::class, 'exportMonthlyBalancePdf']);
-            Route::get('/monthly-balance', [ReportController::class, 'monthlyBalance']);
-            Route::get('/vat-sales/export', [ReportController::class, 'exportVatSalesExcel']);
-            Route::get('/vat-sales/pdf', [ReportController::class, 'exportVatSalesPdf']);
-        });
+        Route::get('/vat-sales/export', [ReportController::class, 'exportVatSalesExcel']);
+        Route::get('/vat-sales/pdf', [ReportController::class, 'exportVatSalesPdf']);
 
         Route::middleware(['feature:multi_rubro'])->group(function () {
-            Route::get('/sales-by-rubro/export', [ReportController::class, 'exportProfitByRubro'])
-                ->middleware('feature:advanced_reports');
-            Route::get('/sales-by-rubro/pdf', [ReportController::class, 'exportPdfByRubro'])
-                ->middleware('feature:advanced_reports');
+            Route::get('/sales-by-rubro/export', [ReportController::class, 'exportProfitByRubro']);
+            Route::get('/sales-by-rubro/pdf', [ReportController::class, 'exportPdfByRubro']);
             Route::get('/sales-by-rubro', [ReportController::class, 'profitByRubro']);
         });
 
@@ -414,10 +409,8 @@ Route::middleware(['session.validate', 'license.active'])->group(function () {
         });
 
         Route::middleware(['feature:suppliers'])->group(function () {
-            Route::get('/vat-purchases/export', [ReportController::class, 'exportVatPurchasesExcel'])
-                ->middleware('feature:advanced_reports');
-            Route::get('/vat-purchases/pdf', [ReportController::class, 'exportVatPurchasesPdf'])
-                ->middleware('feature:advanced_reports');
+            Route::get('/vat-purchases/export', [ReportController::class, 'exportVatPurchasesExcel']);
+            Route::get('/vat-purchases/pdf', [ReportController::class, 'exportVatPurchasesPdf']);
             Route::get('/vat-purchases', [ReportController::class, 'vatPurchases']);
             Route::get('/vat-position', [ReportController::class, 'vatPosition']);
         });

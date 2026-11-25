@@ -1615,4 +1615,75 @@ class IibbPerceptionBackendTest extends TestCase
         $this->assertStringContainsString('<BaseImp>19491.53</BaseImp><Alic>3.00</Alic><Importe>584.75</Importe>', $capturedXml);
         $this->assertStringContainsString('<ImpTotal>23000.00</ImpTotal>', $capturedXml);
     }
+
+    /**
+     * 20. Hallazgo #1: Factura B sobre Consumidor Final fuerza percepción IIBB = $0 y omite <Tributos>
+     *     incluso si el cliente tiene applies_iibb_perception = true o se envían options explícitas.
+     */
+    public function test_factura_b_consumidor_final_forces_zero_tributos_even_with_explicit_perception_option(): void
+    {
+        $capturedXml = null;
+        $this->mockAfipSuccess(cbteNro: 401, cae: '74382910499904', requestInspector: function (HttpClientRequest $req) use (&$capturedXml) {
+            if (str_contains($req->body(), 'FECAESolicitar')) {
+                $capturedXml = $req->body();
+            }
+        });
+
+        BusinessSetting::updateOrCreate(['key' => 'is_iibb_perception_agent'], ['value' => '1']);
+        BusinessSetting::updateOrCreate(['key' => 'default_iibb_perception_rate'], ['value' => '3.00']);
+
+        $shift = $this->createOpenShift();
+        $product = Product::create(['name' => 'Producto Test FB', 'internal_code' => 'FB-01', 'cost_price' => 5000, 'selling_price' => 12100, 'iva_rate' => 21.00, 'stock' => 10, 'active' => true]);
+        $riDirtyCustomer = Customer::create([
+            'name' => 'Cliente Switch Factura B',
+            'document_type' => AfipHelper::DOC_CUIT,
+            'document_number' => '30500010912',
+            'tax_condition' => 'responsable_inscripto',
+            'applies_iibb_perception' => true,
+            'iibb_perception_rate' => 3.00,
+        ]);
+
+        $sale = Sale::create([
+            'total' => 12100.00,
+            'total_surcharge' => 0.00,
+            'payment_status' => 'paid',
+            'amount_due' => 0.00,
+            'status' => 'completed',
+            'invoice_status' => 'none',
+            'cash_shift_id' => $shift->id,
+            'user_id' => $this->adminUser->id,
+            'cashier_id' => $this->adminUser->id,
+            'customer_id' => $riDirtyCustomer->id,
+            'iibb_perception_amount' => 0.00,
+            'iibb_perception_rate' => null,
+        ]);
+        $sale->items()->create([
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
+            'unit_cost_price' => 5000,
+            'unit_price' => 12100,
+            'subtotal' => 12100,
+            'iva_rate' => 21.00,
+            'net_amount' => 10000,
+            'iva_amount' => 2100,
+        ]);
+
+        $invResp = $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/invoice", [
+            'voucher_type' => AfipHelper::VOUCHER_FACTURA_B,
+            'doc_type' => AfipHelper::DOC_DNI,
+            'doc_number' => '33445566',
+            'receiver_tax_condition' => 'consumidor_final',
+            'iibb_perception_amount' => 300.00,
+            'iibb_perception_rate' => 3.00,
+        ]);
+
+        $invResp->assertStatus(200)
+            ->assertJsonPath('invoice.tribute_amount', '0.00')
+            ->assertJsonPath('invoice.total_amount', '12100.00');
+
+        $this->assertNotNull($capturedXml);
+        $this->assertStringContainsString('<CondicionIVAReceptorId>5</CondicionIVAReceptorId>', $capturedXml);
+        $this->assertStringNotContainsString('<Tributos>', $capturedXml);
+    }
 }
