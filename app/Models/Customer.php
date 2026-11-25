@@ -38,6 +38,32 @@ class Customer extends Model
         'iibb_perception_rate' => 'decimal:2',
     ];
 
+    protected static function booted(): void
+    {
+        static::saving(function (Customer $customer): void {
+            if ($customer->document_number !== null) {
+                $trimmed = trim((string) $customer->document_number);
+                $customer->document_number = $trimmed === '' ? null : $trimmed;
+            }
+
+            if ($customer->tax_condition === null || trim((string) $customer->tax_condition) === '') {
+                $customer->tax_condition = 'consumidor_final';
+            }
+
+            $requiresCuit = ($customer->tax_condition !== 'consumidor_final')
+                || (bool) $customer->applies_iibb_perception;
+
+            if ($customer->document_number === null) {
+                if (! $requiresCuit) {
+                    $customer->document_type = 99;
+                }
+            } elseif ($customer->document_type === null || (int) $customer->document_type === 99) {
+                $digits = preg_replace('/\D/', '', (string) $customer->document_number);
+                $customer->document_type = ($requiresCuit || strlen($digits) === 11) ? 80 : 96;
+            }
+        });
+    }
+
     public function transactions(): HasMany
     {
         return $this->hasMany(CustomerTransaction::class);

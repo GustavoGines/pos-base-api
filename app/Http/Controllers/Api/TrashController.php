@@ -110,6 +110,20 @@ class TrashController extends Controller
 
         $item = $this->getModelQuery($model)->findOrFail($id);
 
+        if ($model === 'customers' && $item->document_number !== null && trim((string) $item->document_number) !== '') {
+            $cleanDoc = preg_replace('/[\s.\-]/', '', trim((string) $item->document_number));
+            $duplicateExists = Customer::whereNull('deleted_at')
+                ->where('id', '!=', $item->id)
+                ->whereIn('document_number', array_values(array_unique([$item->document_number, $cleanDoc])))
+                ->exists();
+
+            if ($duplicateExists) {
+                return response()->json([
+                    'message' => "No se puede restaurar este cliente porque ya existe otro cliente activo con el documento {$cleanDoc}.",
+                ], 422);
+            }
+        }
+
         DB::transaction(function () use ($item) {
             $item->restore();
         });

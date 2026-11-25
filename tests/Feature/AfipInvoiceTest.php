@@ -634,4 +634,146 @@ class AfipInvoiceTest extends TestCase
             ->assertJsonPath('data.name', 'Susus Pvpr Sprsuk Sgirupe')
             ->assertJsonPath('data.address', 'Yatay 2059, Paso De Los Libres, Corrientes');
     }
+
+    /**
+     * 10. Cliente registrado sin DNI (document_number = null) puede emitir Factura B < tope
+     *     conservando receiver_name y enviando DocTipo=99 / DocNro=0 (incluso con docType legacy 96),
+     *     pero se bloquea si supera tope, es Factura A o receptor Exento, y coacciona DocTipo si trae doc_number.
+     */
+    public function test_optional_customer_document_afip_rules_and_bidirectional_doc_type_coercion(): void
+    {
+        $sentBodies = [];
+        $lastAuthorized = 98;
+        Http::fake(function (HttpClientRequest $request) use (&$sentBodies, &$lastAuthorized) {
+            $body = $request->body();
+            $sentBodies[] = $body;
+
+            if (str_contains($body, 'FECompUltimoAutorizado')) {
+                return Http::response('<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <FECompUltimoAutorizadoResponse xmlns="http://ar.gov.afip.dif.FEV1/">
+      <FECompUltimoAutorizadoResult>
+        <PtoVta>1</PtoVta>
+        <CbteTipo>6</CbteTipo>
+        <CbteNro>'.$lastAuthorized.'</CbteNro>
+      </FECompUltimoAutorizadoResult>
+    </FECompUltimoAutorizadoResponse>
+  </soap:Body>
+</soap:Envelope>', 200, ['Content-Type' => 'text/xml']);
+            }
+
+            if (str_contains($body, 'FECAESolicitar')) {
+                $nextNro = ++$lastAuthorized;
+
+                return Http::response('<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <FECAESolicitarResponse xmlns="http://ar.gov.afip.dif.FEV1/">
+      <FECAESolicitarResult>
+        <FeCabResp>
+          <Cuit>30712345678</Cuit>
+          <PtoVta>1</PtoVta>
+          <CbteTipo>6</CbteTipo>
+          <Resultado>A</Resultado>
+        </FeCabResp>
+        <FeDetResp>
+          <FECAEDetResponse>
+            <Concepto>1</Concepto>
+            <DocTipo>99</DocTipo>
+            <DocNro>0</DocNro>
+            <CbteDesde>'.$nextNro.'</CbteDesde>
+            <CbteHasta>'.$nextNro.'</CbteHasta>
+            <CbteFch>20261125</CbteFch>
+            <Resultado>A</Resultado>
+            <CAE>74382910492999</CAE>
+            <CAEFchVto>20261205</CAEFchVto>
+          </FECAEDetResponse>
+        </FeDetResp>
+      </FECAESolicitarResult>
+    </FECAESolicitarResponse>
+  </soap:Body>
+</soap:Envelope>', 200, ['Content-Type' => 'text/xml']);
+            }
+
+            return Http::response('', 200);
+        });
+
+        // 10a. Cliente registrado con document_number = null (doc_type 99) en Factura B $5.000 -> OK
+        $custSinDoc = Customer::create([
+            'name' => 'Marcos Fiado',
+            'phone' => '3704112233',
+            'document_number' => null,
+            'document_type' => 99,
+            'tax_condition' => 'consumidor_final',
+            'is_active' => true,
+        ]);
+
+        $saleLow = $this->createTestSale(5000.00, $custSinDoc);
+
+        $resLow = $this->actingAsAdmin($this->adminUser)
+            ->postJson("/api/sales/{$saleLow->id}/invoice", [
+                'voucher_type' => 6,
+            ]);
+
+        $resLow->assertStatus(200)
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('invoice.doc_type', 99)
+            ->assertJsonPath('invoice.doc_number', '0')
+            ->assertJsonPath('invoice.receiver_name', 'Marcos Fiado');
+
+        // 10b. Legacy customer con doc_number = null y doc_type = 96 sin override -> no crashea validateDni('')
+        \Illuminate\Support\Facades\DB::table('customers')
+            ->where('id', $custSinDoc->id)
+            ->update(['document_type' => 96]);
+        $saleLegacy = $this->createTestSale(3500.00, $custSinDoc);
+
+        $this->actingAsAdmin($this->adminUser)
+            ->postJson("/api/sales/{$saleLegacy->id}/invoice", [
+                'voucher_type' => 6,
+            ])
+            ->assertStatus(200)
+            ->assertJsonPath('invoice.doc_type', 99)
+            ->assertJsonPath('invoice.doc_number', '0')
+            ->assertJsonPath('invoice.receiver_name', 'Marcos Fiado');
+
+        // 10c. Resguardo bidireccional: doc_type = 99 con doc_number = '38452190' se corrige a 96 (nunca manda 99+DNI)
+        $saleWithDocAtCheckout = $this->createTestSale(4200.00);
+        $this->actingAsAdmin($this->adminUser)
+            ->postJson("/api/sales/{$saleWithDocAtCheckout->id}/invoice", [
+                'voucher_type' => 6,
+                'doc_type' => 99,
+                'doc_number' => '38452190',
+                'receiver_name' => 'Marcos Fiado',
+            ])
+            ->assertStatus(200)
+            ->assertJsonPath('invoice.doc_type', 96)
+            ->assertJsonPath('invoice.doc_number', '38452190');
+
+        $lastSoap = end($sentBodies);
+        $this->assertStringContainsString('<DocTipo>96</DocTipo>', (string) $lastSoap);
+        $this->assertStringContainsString('<DocNro>38452190</DocNro>', (string) $lastSoap);
+
+        // 10d. Bloqueo cuando supera tope anónimo ($340.000+), en Factura A, o con receptor Exento sin CUIT
+        $saleHigh = $this->createTestSale(350000.00, $custSinDoc);
+
+        $this->actingAsAdmin($this->adminUser)
+            ->postJson("/api/sales/{$saleHigh->id}/invoice", ['voucher_type' => 6])
+            ->assertStatus(422);
+
+        $saleFacturaAFail = $this->createTestSale(5000.00, $custSinDoc);
+        $this->actingAsAdmin($this->adminUser)
+            ->postJson("/api/sales/{$saleFacturaAFail->id}/invoice", ['voucher_type' => 1])
+            ->assertStatus(422);
+
+        $saleExentoFail = $this->createTestSale(5000.00, $custSinDoc);
+        $this->actingAsAdmin($this->adminUser)
+            ->postJson("/api/sales/{$saleExentoFail->id}/invoice", [
+                'voucher_type' => 6,
+                'receiver_tax_condition' => 'exento',
+                'doc_type' => 99,
+                'doc_number' => '',
+            ])
+            ->assertStatus(422);
+    }
 }

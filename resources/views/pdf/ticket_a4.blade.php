@@ -165,8 +165,8 @@
             <table style="width: 100%;">
                 <tr>
                     <td><strong>Cliente:</strong> {{ $sale->customer->name }}</td>
-                    @if($sale->customer->tax_id)
-                        <td><strong>CUIT/DNI:</strong> {{ $sale->customer->tax_id }}</td>
+                    @if(!empty($sale->customer->document_number))
+                        <td><strong>CUIT/DNI:</strong> {{ $sale->customer->document_number }}</td>
                     @endif
                     @if($sale->customer->phone)
                         <td><strong>Tel:</strong> {{ $sale->customer->phone }}</td>

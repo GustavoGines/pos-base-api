@@ -325,6 +325,15 @@ class AfipWsfeService
             $receiverTaxCondition = 'consumidor_final';
         }
 
+        $prelimCondId = AfipHelper::getCondicionIvaReceptorId((string) $receiverTaxCondition, $voucherLetter);
+
+        // Coherencia bidireccional: jamás enviar DocTipo = 99 con un documento cargado
+        if ($docType === AfipHelper::DOC_CONSUMIDOR_FINAL && $docNumber !== '' && $docNumber !== '0') {
+            $docType = strlen($docNumber) === 11
+                ? AfipHelper::DOC_CUIT
+                : AfipHelper::DOC_DNI;
+        }
+
         // Validaciones por tipo de comprobante
         // Clase A (Factura A, Nota de Débito A, Nota de Crédito A): CUIT receptor obligatorio
         if ($voucherLetter === 'A') {
@@ -332,25 +341,43 @@ class AfipWsfeService
             if (! AfipHelper::validateCuit($docNumber)) {
                 throw new InvalidArgumentException("Para emitir comprobantes clase A, el CUIT del receptor es obligatorio y debe ser válido ({$docNumber}).");
             }
-        } elseif ($docType === AfipHelper::DOC_CONSUMIDOR_FINAL) {
-            // Verificar tope de Consumidor Final anónimo
-            $anonymousLimit = (float) ($fiscalSettings['afip_cf_max_limit'] ?? 340000.00);
-            $grossSaleTotal = round((float) $sale->total + (float) $sale->total_surcharge + (float) $sale->shipping_cost, 2);
-            if ($grossSaleTotal >= $anonymousLimit && empty($docNumber)) {
-                throw new InvalidArgumentException(
-                    'El importe total supera el límite de consumidor final anónimo ($'.number_format($anonymousLimit, 2).'). Debe identificar al cliente con DNI o CUIT.'
-                );
-            }
-            if (empty($docNumber)) {
-                $docNumber = '0';
-            }
-        } elseif ($docType === AfipHelper::DOC_CUIT) {
+        } elseif ($prelimCondId !== 5) {
+            // ARCA RG 5616: Receptores Exento (4), Responsable Inscripto (1) o Monotributo (6) requieren CUIT (80)
+            $docType = AfipHelper::DOC_CUIT;
             if (! AfipHelper::validateCuit($docNumber)) {
-                throw new InvalidArgumentException("El CUIT ingresado es inválido según Módulo 11 ({$docNumber}).");
+                throw new InvalidArgumentException("Para receptor con condición fiscal {$receiverTaxCondition} es obligatorio informar un CUIT válido ({$docNumber}).");
             }
-        } elseif ($docType === AfipHelper::DOC_DNI) {
-            if (! AfipHelper::validateDni($docNumber)) {
-                throw new InvalidArgumentException("El DNI ingresado es inválido ({$docNumber}).");
+        } else {
+            // Consumidor Final en Clase B o C: si el documento está vacío o '0', normalizar a DocTipo 99
+            if ($docNumber === '' || $docNumber === '0') {
+                $docType = AfipHelper::DOC_CONSUMIDOR_FINAL;
+                $docNumber = '';
+            }
+
+            if ($docType === AfipHelper::DOC_CONSUMIDOR_FINAL) {
+                // Verificar tope de Consumidor Final anónimo
+                $anonymousLimit = (float) ($fiscalSettings['afip_cf_max_limit'] ?? 340000.00);
+                $grossSaleTotal = round((float) $sale->total + (float) $sale->total_surcharge + (float) $sale->shipping_cost, 2);
+                if ($grossSaleTotal >= $anonymousLimit && empty($docNumber)) {
+                    throw new InvalidArgumentException(
+                        'El importe total supera el límite de consumidor final anónimo ($'.number_format($anonymousLimit, 2).'). Debe identificar al cliente con DNI o CUIT.'
+                    );
+                }
+                if (empty($docNumber)) {
+                    $docNumber = '0';
+                }
+            } elseif ($docType === AfipHelper::DOC_CUIT) {
+                if (! AfipHelper::validateCuit($docNumber)) {
+                    throw new InvalidArgumentException("El CUIT ingresado es inválido según Módulo 11 ({$docNumber}).");
+                }
+            } elseif ($docType === AfipHelper::DOC_CUIL) {
+                if (! AfipHelper::validateCuit($docNumber)) {
+                    throw new InvalidArgumentException("El CUIL ingresado es inválido según Módulo 11 ({$docNumber}).");
+                }
+            } elseif ($docType === AfipHelper::DOC_DNI) {
+                if (! AfipHelper::validateDni($docNumber)) {
+                    throw new InvalidArgumentException("El DNI ingresado es inválido ({$docNumber}).");
+                }
             }
         }
 
