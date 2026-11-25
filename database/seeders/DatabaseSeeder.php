@@ -15,6 +15,7 @@ class DatabaseSeeder extends Seeder
             UserSeeder::class,
             BusinessSettingSeeder::class,
             PaymentMethodSeeder::class,
+            ExpenseCategorySeeder::class,
             // BigCatalogSeeder::class,    // Solo para demos — NO correr en producción
             // HardwareStoreSeeder::class, // Solo para demo de Ferretería
         ]);

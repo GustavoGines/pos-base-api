@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Models\BusinessSetting;
 use App\Models\Customer;
 use App\Models\CustomerTransaction;
 use App\Models\ElectronicInvoice;
@@ -34,6 +35,12 @@ class RetryAfipContingencyCommand extends Command
 
     public function handle(AfipWsfeService $wsfeService): int
     {
+        if (BusinessSetting::isDemoModeActive()) {
+            $this->info('Modo Exploración Demo activo: contingencia ARCA omitida.');
+
+            return self::SUCCESS;
+        }
+
         $pendingSales = Sale::with('electronicInvoice')
             ->where('invoice_status', 'pending')
             ->where('status', '!=', 'voided')

@@ -201,7 +201,7 @@ class SystemController extends Controller
      * Escribe un dump SQL completo (CREATE TABLE + INSERT por lotes) usando solo PDO.
      * Soporta MySQL y SQLite; escapa valores con PDO::quote para máxima portabilidad.
      */
-    private function writeSqlDump(string $targetPath): void
+    public function writeSqlDump(string $targetPath): void
     {
         $pdo = DB::connection()->getPdo();
         $driver = $pdo->getAttribute(\PDO::ATTR_DRIVER_NAME);
@@ -620,6 +620,7 @@ class SystemController extends Controller
                     ['value' => (string) ((int) DB::table('cash_shifts')->max('id'))]
                 );
                 \Illuminate\Support\Facades\Cache::forget(\App\Services\LicenseSyncService::DB_ACTIVITY_CACHE_KEY);
+                \App\Services\ReportCacheService::flush();
 
                 // Preservar el session_token del usuario actual para no desconectar su sesión activa
                 if ($currentUserId !== null && ! empty($currentSessionToken)) {

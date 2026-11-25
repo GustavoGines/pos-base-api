@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\CashShiftController;
 use App\Http\Controllers\Api\CatalogController;
 use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\CustomerController;
+use App\Http\Controllers\Api\DemoEnvironmentController;
 use App\Http\Controllers\Api\EcommerceIntegrationController;
 use App\Http\Controllers\Api\EcommerceWebhookController;
 use App\Http\Controllers\Api\ElectronicInvoiceController;
@@ -134,6 +135,14 @@ Route::middleware(['session.validate', 'license.active'])->group(function () {
         ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
     Route::post('/system/restore', [SystemController::class, 'restoreBackup'])
         ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);
+
+    // ── Modo Exploración con Datos de Ejemplo (Demos 15 días) ──────────
+    Route::prefix('system/demo')->group(function () {
+        Route::get('/status', [DemoEnvironmentController::class, 'status']);
+        Route::post('/seed', [DemoEnvironmentController::class, 'seed'])->middleware('throttle:10,1');
+        Route::post('/dismiss-onboarding', [DemoEnvironmentController::class, 'dismissOnboarding'])->middleware('throttle:10,1');
+        Route::post('/reset', [DemoEnvironmentController::class, 'reset'])->middleware('throttle:10,1');
+    });
     Route::middleware(['feature:ecommerce_sync'])->group(function () {
         Route::apiResource('ecommerce/integrations', EcommerceIntegrationController::class)
             ->middleware('permission.or.pin:'.Permissions::MANAGE_SETTINGS);

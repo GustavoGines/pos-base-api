@@ -80,7 +80,20 @@ class BusinessSetting extends Model
         'pos_demote_out_of_stock',
         'pos_popularity_reset_at',
         'bank_transfer_accounts',
+        'demo_mode_active',
+        'demo_seeded_at',
+        'demo_onboarding_dismissed',
     ];
+
+    /**
+     * Indica si el comercio se encuentra operando en Modo Exploración con datos de ejemplo.
+     */
+    public static function isDemoModeActive(): bool
+    {
+        $raw = static::where('key', 'demo_mode_active')->value('value');
+
+        return $raw === '1' || $raw === 'true' || $raw === true || $raw === 1;
+    }
 
     public const IIBB_BASE_NET_WITHOUT_VAT = 'net_without_vat';
 
