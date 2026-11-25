@@ -260,4 +260,216 @@ class SupplierInvoiceCrudAndAuditTest extends TestCase
             ]);
         $delRes->assertStatus(200);
     }
+
+    public function test_purchase_assistant_returns_low_stock_frequent_catalog_and_last_invoice(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $supA = Supplier::create(['name' => 'Ferretería Industrial Sudamericana', 'balance' => 0]);
+        $supB = Supplier::create(['name' => 'Otro Proveedor', 'balance' => 0]);
+
+        $lowZero = Product::create([
+            'name' => 'Disco Corte 115mm',
+            'internal_code' => 'DC-115',
+            'supplier_id' => $supA->id,
+            'cost_price' => 1200,
+            'selling_price' => 2000,
+            'stock' => 0,
+            'min_stock' => 10,
+            'active' => true,
+            'is_sold_by_weight' => false,
+        ]);
+
+        $lowBelowMin = Product::create([
+            'name' => 'Tornillo Autoperforante',
+            'internal_code' => 'TA-001',
+            'supplier_id' => $supA->id,
+            'purchase_package_name' => 'Caja',
+            'conversion_factor' => 200,
+            'cost_price' => 32,
+            'selling_price' => 55,
+            'stock' => 15,
+            'min_stock' => 30,
+            'active' => true,
+            'is_sold_by_weight' => false,
+        ]);
+
+        $catalogOnly = Product::create([
+            'name' => 'Llave Combinada 13mm',
+            'internal_code' => 'LL-013',
+            'supplier_id' => $supA->id,
+            'cost_price' => 4500,
+            'selling_price' => 7500,
+            'stock' => 50,
+            'min_stock' => 5,
+            'active' => true,
+            'is_sold_by_weight' => false,
+        ]);
+
+        $otherSupplierProd = Product::create([
+            'name' => 'Producto Proveedor B',
+            'internal_code' => 'PB-01',
+            'supplier_id' => $supB->id,
+            'cost_price' => 900,
+            'selling_price' => 1500,
+            'stock' => 0,
+            'min_stock' => 5,
+            'active' => true,
+            'is_sold_by_weight' => false,
+        ]);
+
+        // Crear dos compras vigentes para supA + una Nota de Crédito (excluida de frecuentes/last_invoice)
+        $this->actingAsAdmin($admin)->postJson("/api/suppliers/{$supA->id}/invoices", [
+            'type' => 'invoice',
+            'invoice_number' => 'A-0001-00000010',
+            'amount' => 12000,
+            'issue_date' => '2026-11-10',
+            'items' => [
+                [
+                    'product_id' => $lowBelowMin->id,
+                    'quantity' => 200,
+                    'unit_cost' => 30,
+                    'subtotal' => 6000,
+                ],
+                [
+                    'product_id' => $lowZero->id,
+                    'quantity' => 5,
+                    'unit_cost' => 1200,
+                    'subtotal' => 6000,
+                ],
+            ],
+        ])->assertSuccessful();
+
+        $this->actingAsAdmin($admin)->postJson("/api/suppliers/{$supA->id}/invoices", [
+            'type' => 'delivery_note',
+            'invoice_number' => 'R-0001-00000011',
+            'amount' => 3500,
+            'issue_date' => '2026-11-20',
+            'items' => [
+                [
+                    'product_id' => $lowBelowMin->id,
+                    'quantity' => 100,
+                    'unit_cost' => 35,
+                    'subtotal' => 3500,
+                ],
+            ],
+        ])->assertSuccessful();
+
+        // Nota de crédito no debe aparecer como last_invoice ni contar en times_bought
+        $this->actingAsAdmin($admin)->postJson("/api/suppliers/{$supA->id}/invoices", [
+            'type' => 'credit_note',
+            'invoice_number' => 'NC-0001-00000012',
+            'amount' => 1000,
+            'issue_date' => '2026-11-22',
+            'items' => [
+                [
+                    'product_id' => $lowZero->id,
+                    'quantity' => 1,
+                    'unit_cost' => 1000,
+                    'subtotal' => 1000,
+                ],
+            ],
+        ])->assertSuccessful();
+
+        // Ajustar stocks después de las compras para verificar low_stock
+        $lowZero->refresh()->update(['stock' => 0]);
+        $lowBelowMin->refresh()->update(['stock' => 15]);
+
+        $res = $this->actingAsAdmin($admin)->getJson("/api/suppliers/{$supA->id}/purchase-assistant");
+        $res->assertStatus(200);
+
+        $lowIds = collect($res->json('low_stock_products'))->pluck('id')->all();
+        $this->assertContains($lowZero->id, $lowIds);
+        $this->assertContains($lowBelowMin->id, $lowIds);
+        $this->assertNotContains($catalogOnly->id, $lowIds);
+        $this->assertNotContains($otherSupplierProd->id, $lowIds);
+
+        $frequent = collect($res->json('frequent_products'));
+        $tornilloFreq = $frequent->firstWhere('id', $lowBelowMin->id);
+        $this->assertNotNull($tornilloFreq);
+        $this->assertEquals(2, $tornilloFreq['times_bought']);
+        $this->assertEquals(35.0, (float) $tornilloFreq['last_unit_cost']);
+        $this->assertEquals(100.0, (float) $tornilloFreq['last_quantity']);
+        $this->assertEquals('Caja', $tornilloFreq['purchase_package_name']);
+
+        $catalogIds = collect($res->json('catalog_products'))->pluck('id')->all();
+        $this->assertContains($catalogOnly->id, $catalogIds);
+        $this->assertNotContains($otherSupplierProd->id, $catalogIds);
+
+        $lastInvoice = $res->json('last_invoice');
+        $this->assertNotNull($lastInvoice);
+        $this->assertEquals('R-0001-00000011', $lastInvoice['invoice_number']);
+        $this->assertCount(1, $lastInvoice['items']);
+        $this->assertEquals($lowBelowMin->id, $lastInvoice['items'][0]['product_id']);
+    }
+
+    public function test_controlled_link_supplier_respects_v185_default_and_explicit_overrides(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $supMain = Supplier::create(['name' => 'Proveedor Principal', 'balance' => 0]);
+        $supOther = Supplier::create(['name' => 'Proveedor Secundario', 'balance' => 0]);
+
+        $orphanDefault = Product::create([
+            'name' => 'Huérfano Default',
+            'internal_code' => 'HD-1',
+            'cost_price' => 100,
+            'selling_price' => 200,
+            'stock' => 10,
+            'active' => true,
+            'is_sold_by_weight' => false,
+        ]);
+
+        $orphanOptOut = Product::create([
+            'name' => 'Huérfano Opt-Out',
+            'internal_code' => 'HO-1',
+            'cost_price' => 100,
+            'selling_price' => 200,
+            'stock' => 10,
+            'active' => true,
+            'is_sold_by_weight' => false,
+        ]);
+
+        $ownedKeep = Product::create([
+            'name' => 'De Otro Keep',
+            'internal_code' => 'OK-1',
+            'supplier_id' => $supOther->id,
+            'cost_price' => 100,
+            'selling_price' => 200,
+            'stock' => 10,
+            'active' => true,
+            'is_sold_by_weight' => false,
+        ]);
+
+        $ownedReassign = Product::create([
+            'name' => 'De Otro Reassign',
+            'internal_code' => 'OR-1',
+            'supplier_id' => $supOther->id,
+            'cost_price' => 100,
+            'selling_price' => 200,
+            'stock' => 10,
+            'active' => true,
+            'is_sold_by_weight' => false,
+        ]);
+
+        $res = $this->actingAsAdmin($admin)->postJson("/api/suppliers/{$supMain->id}/invoices", [
+            'type' => 'delivery_note',
+            'amount' => 400,
+            'items' => [
+                // 1) v1.8.5 legacy (omitido) -> vincula huérfano
+                ['product_id' => $orphanDefault->id, 'quantity' => 1, 'unit_cost' => 100, 'subtotal' => 100],
+                // 2) link_supplier: false -> NO vincula huérfano
+                ['product_id' => $orphanOptOut->id, 'quantity' => 1, 'unit_cost' => 100, 'subtotal' => 100, 'link_supplier' => false],
+                // 3) omitido en producto de otro -> NO pisa proveedor existente
+                ['product_id' => $ownedKeep->id, 'quantity' => 1, 'unit_cost' => 100, 'subtotal' => 100],
+                // 4) link_supplier: true en producto de otro -> reasigna explícitamente
+                ['product_id' => $ownedReassign->id, 'quantity' => 1, 'unit_cost' => 100, 'subtotal' => 100, 'link_supplier' => true],
+            ],
+        ]);
+
+        $res->assertSuccessful();
+        $this->assertEquals($supMain->id, $orphanDefault->fresh()->supplier_id);
+        $this->assertNull($orphanOptOut->fresh()->supplier_id);
+        $this->assertEquals($supOther->id, $ownedKeep->fresh()->supplier_id);
+        $this->assertEquals($supMain->id, $ownedReassign->fresh()->supplier_id);
+    }
 }

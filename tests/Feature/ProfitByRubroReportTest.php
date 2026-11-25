@@ -30,7 +30,10 @@ class ProfitByRubroReportTest extends TestCase
     {
         BusinessSetting::updateOrCreate(
             ['key' => 'license_features_dict'],
-            ['value' => json_encode(['multi_rubro' => $enabled])]
+            ['value' => json_encode([
+                'multi_rubro' => $enabled,
+                'advanced_reports' => $enabled,
+            ])]
         );
     }
 

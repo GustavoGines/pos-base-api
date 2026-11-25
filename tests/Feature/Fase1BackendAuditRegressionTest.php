@@ -229,6 +229,11 @@ class Fase1BackendAuditRegressionTest extends TestCase
 
     public function test_b05_multicaja_cash_movement_destroy_allows_deleting_from_older_open_shift(): void
     {
+        \App\Models\BusinessSetting::updateOrCreate(
+            ['key' => 'license_features_dict'],
+            ['value' => json_encode(['expenses' => true, 'multi_caja' => true])]
+        );
+
         $reg1 = CashRegister::create(['name' => 'Caja 1', 'is_active' => true]);
         $reg2 = CashRegister::create(['name' => 'Caja 2', 'is_active' => true]);
 

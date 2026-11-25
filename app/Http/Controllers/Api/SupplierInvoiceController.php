@@ -21,6 +21,19 @@ use Illuminate\Support\Str;
 
 class SupplierInvoiceController extends Controller
 {
+    private function invoiceProductSelectColumns(): string
+    {
+        $cols = 'id,name,internal_code,barcode,unit_type,is_sold_by_weight,selling_price,cost_price,supplier_id,stock,min_stock';
+        if (\App\Services\BatchStockService::hasLotTrackingSchema()) {
+            $cols .= ',track_batches,vencimiento_dias';
+        }
+        if (Product::hasExtendedCatalogColumns()) {
+            $cols .= ',supplier_sku,technical_spec,purchase_package_name,conversion_factor';
+        }
+
+        return $cols;
+    }
+
     /**
      * Listado y auditoría global de comprobantes de proveedores (Facturas, Remitos, Notas de Crédito)
      * con filtros avanzados y desglose Maestro-Detalle.
@@ -43,7 +56,7 @@ class SupplierInvoiceController extends Controller
             'user:id,name',
             'lastEditor:id,name',
             'deletedBy:id,name',
-            'items.product:id,name,internal_code,barcode,unit_type,is_sold_by_weight,selling_price,cost_price',
+            'items.product:'.$this->invoiceProductSelectColumns(),
         ];
         if (Schema::hasTable('supplier_invoice_audits')) {
             $relations[] = 'audits.user:id,name';
@@ -109,7 +122,7 @@ class SupplierInvoiceController extends Controller
             'user:id,name',
             'lastEditor:id,name',
             'deletedBy:id,name',
-            'items.product:id,name,internal_code,barcode,unit_type,is_sold_by_weight,selling_price,cost_price',
+            'items.product:'.$this->invoiceProductSelectColumns(),
         ];
         if (Schema::hasTable('supplier_invoice_audits')) {
             $relations[] = 'audits.user:id,name';
@@ -209,27 +222,40 @@ class SupplierInvoiceController extends Controller
             'deleted_by_name' => $resolvedDeletedByName,
             'deletion_reason' => $inv->deletion_reason,
             'items_count' => $inv->items->count(),
-            'items' => $inv->items->map(fn ($i) => [
-                'id' => $i->id,
-                'product_id' => $i->product_id,
-                'product_name' => $i->product?->name ?? 'Producto #'.$i->product_id,
-                'internal_code' => $i->product?->internal_code ?? '-',
-                'barcode' => $i->product?->barcode,
-                'unit_type' => $i->product?->unit_type ?? 'un',
-                'is_sold_by_weight' => (bool) ($i->product?->is_sold_by_weight ?? false),
-                'current_cost_price' => (float) ($i->product?->cost_price ?? 0),
-                'current_selling_price' => (float) ($i->product?->selling_price ?? 0),
-                'quantity' => (float) $i->quantity,
-                'previous_cost' => $i->previous_cost !== null ? (float) $i->previous_cost : null,
-                'unit_cost' => (float) $i->unit_cost,
-                'new_selling_price' => $i->new_selling_price !== null
-                    ? (float) $i->new_selling_price
-                    : ($i->product?->selling_price !== null ? (float) $i->product->selling_price : null),
-                'subtotal' => (float) $i->subtotal,
-                'batch_id' => $i->batch_id !== null ? (int) $i->batch_id : null,
-                'batch_code' => $i->batch_code,
-                'expiration_date' => $i->expiration_date?->format('Y-m-d'),
-            ])->values()->all(),
+            'items' => $inv->items->map(function ($i) {
+                $p = $i->product;
+
+                return [
+                    'id' => $i->id,
+                    'product_id' => $i->product_id,
+                    'product_name' => $p?->name ?? 'Producto #'.$i->product_id,
+                    'internal_code' => $p?->internal_code ?? '-',
+                    'barcode' => $p?->barcode,
+                    'unit_type' => $p?->unit_type ?? 'un',
+                    'is_sold_by_weight' => (bool) ($p?->is_sold_by_weight ?? false),
+                    'supplier_id' => $p?->supplier_id !== null ? (int) $p->supplier_id : null,
+                    'stock' => $p?->stock !== null ? (float) $p->stock : 0.0,
+                    'min_stock' => $p?->min_stock !== null ? (float) $p->min_stock : null,
+                    'supplier_sku' => $p?->supplier_sku,
+                    'technical_spec' => $p?->technical_spec,
+                    'purchase_package_name' => $p?->purchase_package_name,
+                    'conversion_factor' => $p?->conversion_factor !== null ? (float) $p->conversion_factor : null,
+                    'track_batches' => (bool) ($p?->track_batches ?? false),
+                    'vencimiento_dias' => $p?->vencimiento_dias !== null ? (int) $p->vencimiento_dias : null,
+                    'current_cost_price' => (float) ($p?->cost_price ?? 0),
+                    'current_selling_price' => (float) ($p?->selling_price ?? 0),
+                    'quantity' => (float) $i->quantity,
+                    'previous_cost' => $i->previous_cost !== null ? (float) $i->previous_cost : null,
+                    'unit_cost' => (float) $i->unit_cost,
+                    'new_selling_price' => $i->new_selling_price !== null
+                        ? (float) $i->new_selling_price
+                        : ($p?->selling_price !== null ? (float) $p->selling_price : null),
+                    'subtotal' => (float) $i->subtotal,
+                    'batch_id' => $i->batch_id !== null ? (int) $i->batch_id : null,
+                    'batch_code' => $i->batch_code,
+                    'expiration_date' => $i->expiration_date?->format('Y-m-d'),
+                ];
+            })->values()->all(),
             'audits' => $audits,
         ];
     }
@@ -619,7 +645,7 @@ class SupplierInvoiceController extends Controller
                     'user:id,name',
                     'lastEditor:id,name',
                     'deletedBy:id,name',
-                    'items.product:id,name,internal_code,barcode,unit_type,is_sold_by_weight,selling_price,cost_price',
+                    'items.product:'.$this->invoiceProductSelectColumns(),
                     'audits.user:id,name',
                     'audits.authorizer:id,name',
                 ]);
@@ -859,7 +885,7 @@ class SupplierInvoiceController extends Controller
                 'user:id,name',
                 'lastEditor:id,name',
                 'deletedBy:id,name',
-                'items.product:id,name,internal_code,barcode,unit_type,is_sold_by_weight,selling_price,cost_price',
+                'items.product:'.$this->invoiceProductSelectColumns(),
                 'audits.user:id,name',
                 'audits.authorizer:id,name',
             ]);
@@ -918,6 +944,18 @@ class SupplierInvoiceController extends Controller
             ->keyBy('id');
 
         return [$lockedProducts, $parentComboIds];
+    }
+
+    private function shouldAssignSupplierToProduct(Product $product, ?int $invoiceSupplierId, array $itemData): bool
+    {
+        if (empty($invoiceSupplierId)) {
+            return false;
+        }
+        if (array_key_exists('link_supplier', $itemData) && $itemData['link_supplier'] !== null) {
+            return filter_var($itemData['link_supplier'], FILTER_VALIDATE_BOOLEAN);
+        }
+
+        return $product->supplier_id === null;
     }
 
     private function applyInvoiceItemsAndStock(
@@ -1027,7 +1065,7 @@ class SupplierInvoiceController extends Controller
                     if ($newPrice !== null && (float) $newPrice > 0) {
                         $product->selling_price = (float) $newPrice;
                     }
-                    if ($product->supplier_id === null && ! empty($invoice->supplier_id)) {
+                    if ($this->shouldAssignSupplierToProduct($product, $invoice->supplier_id, $itemData)) {
                         $product->supplier_id = $invoice->supplier_id;
                     }
                 }
@@ -1053,7 +1091,7 @@ class SupplierInvoiceController extends Controller
                     if ($newPrice !== null && (float) $newPrice > 0) {
                         $product->selling_price = (float) $newPrice;
                     }
-                    if ($product->supplier_id === null && ! empty($invoice->supplier_id)) {
+                    if ($this->shouldAssignSupplierToProduct($product, $invoice->supplier_id, $itemData)) {
                         $product->supplier_id = $invoice->supplier_id;
                     }
                     $product->save();
@@ -1128,7 +1166,7 @@ class SupplierInvoiceController extends Controller
                     if ($newPrice !== null && (float) $newPrice > 0) {
                         $product->selling_price = (float) $newPrice;
                     }
-                    if ($product->supplier_id === null && ! empty($invoice->supplier_id)) {
+                    if ($this->shouldAssignSupplierToProduct($product, $invoice->supplier_id, $itemData)) {
                         $product->supplier_id = $invoice->supplier_id;
                     }
                     if (! empty($itemData['expiration_date'])) {

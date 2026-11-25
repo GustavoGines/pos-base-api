@@ -271,17 +271,34 @@ class AfipWsfeService
 
         $isAgentRaw = BusinessSetting::where('key', 'is_iibb_perception_agent')->value('value');
         $isIibbAgent = $isAgentRaw === '1' || $isAgentRaw === 'true' || $isAgentRaw === true || $isAgentRaw === 1;
+        $iibbCalculationBase = BusinessSetting::getIibbCalculationBase();
+        $iibbSubjectTaxConditions = BusinessSetting::getIibbSubjectTaxConditions();
 
         $receiverCondId = AfipHelper::getCondicionIvaReceptorId((string) $receiverTaxCondition, $voucherLetter);
-        $isFiscalCuitSubjectToIibb = $voucherLetter === 'A'
-            || ($voucherLetter === 'C' && $docType === AfipHelper::DOC_CUIT && in_array($receiverCondId, [1, 6], true));
+        $rawCondNormalized = strtolower(trim((string) $receiverTaxCondition));
+        $rawCondNormalized = str_replace(['_', '-'], ' ', $rawCondNormalized);
+        $receiverCondKey = match (true) {
+            str_contains($rawCondNormalized, 'inscripto') => 'responsable_inscripto',
+            str_contains($rawCondNormalized, 'monotributo') => 'monotributo',
+            str_contains($rawCondNormalized, 'exento') => 'exento',
+            str_contains($rawCondNormalized, 'consumidor final') => 'consumidor_final',
+            $receiverCondId === 1 => 'responsable_inscripto',
+            $receiverCondId === 6 => 'monotributo',
+            $receiverCondId === 4 => 'exento',
+            default => 'consumidor_final',
+        };
+        $isConsumidorFinal = $receiverCondKey === 'consumidor_final';
+        $isFiscalCuitSubjectToIibb = ! $isConsumidorFinal
+            && in_array($receiverCondKey, $iibbSubjectTaxConditions, true)
+            && ($voucherLetter === 'A' || $docType === AfipHelper::DOC_CUIT);
         $hasExplicitlyDisabledCustomRate = $customer !== null
             && ! $customer->applies_iibb_perception
             && (float) ($customer->iibb_perception_rate ?? 0.0) > 0.0;
 
         $shouldAutoCalculateRate = false;
         // Auto-cálculo de tasa cuando el comercio es agente IIBB y no hubo override explícito (ni es Nota de Crédito)
-        if (! $hasExplicitPerceptionOption && ! $isCreditNote && $perceptionAmount <= 0.0 && $isIibbAgent) {
+        // Consumidor Final nunca recibe percepción IIBB automática.
+        if (! $hasExplicitPerceptionOption && ! $isCreditNote && $perceptionAmount <= 0.0 && $isIibbAgent && ! $isConsumidorFinal) {
             $defaultIibbRate = (float) (BusinessSetting::where('key', 'default_iibb_perception_rate')->value('value') ?? 0.0);
 
             if (! empty($customer?->applies_iibb_perception)) {
@@ -303,7 +320,7 @@ class AfipWsfeService
             && (
                 $shouldAutoCalculateRate
                 || ($hasExplicitRateOption && ! $hasExplicitAmountOption)
-                || ($isIibbAgent && (! empty($customer?->applies_iibb_perception) || ($isFiscalCuitSubjectToIibb && ! $hasExplicitlyDisabledCustomRate)))
+                || ($isIibbAgent && ! $isConsumidorFinal && (! empty($customer?->applies_iibb_perception) || ($isFiscalCuitSubjectToIibb && ! $hasExplicitlyDisabledCustomRate)))
             );
 
         // Cálculos e invariante matemático
@@ -311,6 +328,7 @@ class AfipWsfeService
         $totalAmount = round((float) $sale->total + $extraAmount, 2);
         $ivaBreakdown = [];
         $ivaXml = '';
+        $tributeBaseImp = 0.00;
 
         if ($voucherLetter === 'C') {
             // REGLA CRÍTICA MONOTRIBUTO (CLASE C: Factura C, Nota de Débito C, Nota de Crédito C):
@@ -324,15 +342,17 @@ class AfipWsfeService
                 $netAmount = $baseSaleAmount;
             }
 
-            if ($shouldComputeAmountFromRate) {
-                $perceptionAmount = round($netAmount * ($perceptionRate / 100), 2);
-            }
-
-            if ($perceptionAmount > 0.0 && $perceptionRate <= 0.0 && $netAmount > 0.0) {
-                $perceptionRate = round(($perceptionAmount / $netAmount) * 100, 2);
-            }
-
+            // En Factura C no hay IVA discriminado: ambas bases (neta y subtotal) coinciden
+            $tributeBaseImp = $netAmount;
             $ivaAmount = 0.00;
+
+            if ($shouldComputeAmountFromRate) {
+                $perceptionAmount = round($tributeBaseImp * ($perceptionRate / 100), 2);
+            }
+
+            if ($perceptionAmount > 0.0 && $perceptionRate <= 0.0 && $tributeBaseImp > 0.0) {
+                $perceptionRate = round(($perceptionAmount / $tributeBaseImp) * 100, 2);
+            }
         } else {
             // FACTURAS A Y B: Desglose por alícuotas
             $items = $sale->items()->get();
@@ -412,12 +432,32 @@ class AfipWsfeService
                 }
             }
 
+            // Base imponible para el nodo <Tributo> según configuración del comercio:
+            // - net_without_vat (default DGR): ImpNeto
+            // - gross_with_vat: Subtotal con IVA incluido (ImpNeto + ImpIVA)
+            $tributeBaseImp = $iibbCalculationBase === BusinessSetting::IIBB_BASE_GROSS_WITH_VAT
+                ? round($netAmount + $ivaAmount, 2)
+                : $netAmount;
+
             if ($shouldComputeAmountFromRate) {
-                $perceptionAmount = round($netAmount * ($perceptionRate / 100), 2);
+                $perceptionAmount = round($tributeBaseImp * ($perceptionRate / 100), 2);
+            } elseif (! $isCreditNote && $perceptionAmount > 0.0 && $perceptionRate > 0.0) {
+                // Guarda de contingencia: si la venta ya traía percepción calculada bajo la otra base
+                // antes de un cambio de configuración global, enviar BaseImp consistente con Importe/Alic.
+                $expectedFromCurrentBase = round($tributeBaseImp * ($perceptionRate / 100), 2);
+                if (abs($perceptionAmount - $expectedFromCurrentBase) > 0.02) {
+                    $alternativeBase = $iibbCalculationBase === BusinessSetting::IIBB_BASE_GROSS_WITH_VAT
+                        ? $netAmount
+                        : round($netAmount + $ivaAmount, 2);
+                    $expectedFromAlternativeBase = round($alternativeBase * ($perceptionRate / 100), 2);
+                    if (abs($perceptionAmount - $expectedFromAlternativeBase) <= 0.02) {
+                        $tributeBaseImp = $alternativeBase;
+                    }
+                }
             }
 
-            if ($perceptionAmount > 0.0 && $perceptionRate <= 0.0 && $netAmount > 0.0) {
-                $perceptionRate = round(($perceptionAmount / $netAmount) * 100, 2);
+            if ($perceptionAmount > 0.0 && $perceptionRate <= 0.0 && $tributeBaseImp > 0.0) {
+                $perceptionRate = round(($perceptionAmount / $tributeBaseImp) * 100, 2);
             }
 
             $ivaBreakdown = array_values($aliquotResults);
@@ -434,6 +474,11 @@ class AfipWsfeService
             $ivaXml .= '</Iva>';
         }
 
+        // Si es Nota de Crédito y se preservó el BaseImp original de la factura anulada, respetarlo
+        if ($isCreditNote && isset($options['iibb_perception_base']) && (float) $options['iibb_perception_base'] > 0.0) {
+            $tributeBaseImp = round((float) $options['iibb_perception_base'], 2);
+        }
+
         // Cumplimiento estricto del invariante matemático de AFIP:
         // ImpTotal = ImpNeto + ImpIVA + ImpTrib (al centavo exacto)
         $totalAmount = round($netAmount + $ivaAmount + $perceptionAmount, 2);
@@ -446,7 +491,7 @@ class AfipWsfeService
                 [
                     'Id' => 2,
                     'Desc' => 'Percepcion de Ingresos Brutos',
-                    'BaseImp' => $netAmount,
+                    'BaseImp' => $tributeBaseImp,
                     'Alic' => $perceptionRate,
                     'Importe' => $perceptionAmount,
                 ],
@@ -456,7 +501,7 @@ class AfipWsfeService
                 '<Tributo>'.
                 '<Id>2</Id>'.
                 '<Desc>Percepcion de Ingresos Brutos</Desc>'.
-                '<BaseImp>'.number_format($netAmount, 2, '.', '').'</BaseImp>'.
+                '<BaseImp>'.number_format($tributeBaseImp, 2, '.', '').'</BaseImp>'.
                 '<Alic>'.number_format($perceptionRate, 2, '.', '').'</Alic>'.
                 '<Importe>'.number_format($perceptionAmount, 2, '.', '').'</Importe>'.
                 '</Tributo>'.
