@@ -150,7 +150,7 @@ class ElectronicInvoiceController extends Controller
                                     'type' => 'charge',
                                     'amount' => $tributeAmount,
                                     'balance_after' => $customerToUpdate->balance,
-                                    'description' => "Percepción IIBB AFIP Factura {$invoice->voucher_letter}-{$invoice->formatted_number} - Ticket #{$lockedSale->id}",
+                                    'description' => "Percepción IIBB ARCA Factura {$invoice->voucher_letter}-{$invoice->formatted_number} - Ticket #{$lockedSale->id}",
                                 ]);
                             }
                         }
@@ -192,7 +192,7 @@ class ElectronicInvoiceController extends Controller
 
                         return response()->json([
                             'success' => false,
-                            'message' => 'Servicio de AFIP no disponible. Venta registrada en contingencia.',
+                            'message' => 'Servicio de ARCA no disponible. Venta registrada en contingencia.',
                             'invoice_status' => 'pending',
                             'error' => $errorMessage,
                         ], 504);

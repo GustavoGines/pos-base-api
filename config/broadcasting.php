@@ -42,8 +42,8 @@ return [
                 'useTLS' => env('REVERB_SCHEME', 'https') === 'https',
             ],
             'client_options' => [
-                'timeout' => 5,
-                'connect_timeout' => 5,
+                'timeout' => 0.5,
+                'connect_timeout' => 0.25,
             ],
         ],
 

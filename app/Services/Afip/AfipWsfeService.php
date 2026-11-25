@@ -6,7 +6,9 @@ namespace App\Services\Afip;
 
 use App\Models\BusinessSetting;
 use App\Models\Sale;
+use GuzzleHttp\Client;
 use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use InvalidArgumentException;
@@ -18,23 +20,102 @@ class AfipWsfeService
 
     public const URL_WSFE_PROD = 'https://servicios1.afip.gov.ar/wsfev1/service.asmx';
 
+    /**
+     * Claves de configuración fiscal leídas en una única consulta por emisión.
+     *
+     * @var array<int, string>
+     */
+    public const FISCAL_SETTING_KEYS = [
+        'afip_cuit',
+        'afip_environment',
+        'afip_pto_vta',
+        'tax_condition',
+        'afip_cf_max_limit',
+        'is_iibb_perception_agent',
+        'default_iibb_perception_rate',
+        'iibb_calculation_base',
+        'iibb_subject_tax_conditions',
+    ];
+
     protected AfipWsaaService $wsaaService;
 
-    public function __construct(?AfipWsaaService $wsaaService = null)
+    protected ?Client $customHttpClient = null;
+
+    protected ?Client $sharedWsfeClient = null;
+
+    protected ?string $sharedWsfeClientSignature = null;
+
+    public function __construct(?AfipWsaaService $wsaaService = null, ?Client $httpClient = null)
     {
         $this->wsaaService = $wsaaService ?? new AfipWsaaService;
+        $this->customHttpClient = $httpClient;
+    }
+
+    /**
+     * Lee todas las claves fiscales de `business_settings` en una sola consulta SQL.
+     *
+     * @return array<string, string|null>
+     */
+    protected function loadFiscalSettingsMap(): array
+    {
+        return BusinessSetting::whereIn('key', self::FISCAL_SETTING_KEYS)
+            ->pluck('value', 'key')
+            ->all();
+    }
+
+    /**
+     * Retorna una instancia reutilizable de GuzzleHttp\Client con TCP/TLS Keep-Alive
+     * entre FECompUltimoAutorizado, FECAESolicitar y FECompConsultar.
+     */
+    protected function getSharedWsfeClient(): Client
+    {
+        if ($this->customHttpClient !== null) {
+            return $this->customHttpClient;
+        }
+
+        $factory = Http::getFacadeRoot();
+        $signature = 'none';
+        if ($factory instanceof HttpFactory) {
+            $inspector = \Closure::bind(function (): string {
+                $stubCount = $this->stubCallbacks ? count($this->stubCallbacks) : 0;
+
+                return spl_object_id($this).':'.$stubCount.':'.($this->recording ? '1' : '0').':'.($this->preventStrayRequests ? '1' : '0');
+            }, $factory, HttpFactory::class);
+            $signature = $inspector();
+        }
+
+        if ($this->sharedWsfeClient === null || $this->sharedWsfeClientSignature !== $signature) {
+            $curlOptions = defined('CURLOPT_TCP_KEEPALIVE') ? [\CURLOPT_TCP_KEEPALIVE => 1] : [];
+            $this->sharedWsfeClient = Http::withOptions([
+                'headers' => ['Connection' => 'keep-alive'],
+                'curl' => $curlOptions,
+            ])->buildClient();
+            $this->sharedWsfeClientSignature = $signature;
+        }
+
+        return $this->sharedWsfeClient;
     }
 
     /**
      * Consulta el último número de comprobante autorizado para un punto de venta y tipo.
+     *
+     * @param  array{token: string, sign: string, expiration_time?: string|null}|null  $ticket
      */
-    public function getLastVoucherNumber(int $pointOfSale, int $voucherType): int
-    {
-        $ticket = $this->wsaaService->getAccessTicket('wsfe');
-        $cuit = BusinessSetting::where('key', 'afip_cuit')->value('value');
-        $cuit = (int) preg_replace('/\D/', '', (string) $cuit);
-
-        $endpoint = $this->getWsfeEndpoint();
+    public function getLastVoucherNumber(
+        int $pointOfSale,
+        int $voucherType,
+        ?array $ticket = null,
+        ?int $cuit = null,
+        ?string $endpoint = null
+    ): int {
+        if ($ticket === null || $cuit === null || $endpoint === null) {
+            $settings = $this->loadFiscalSettingsMap();
+            $rawCuit = $settings['afip_cuit'] ?? null;
+            $env = $settings['afip_environment'] ?? 'testing';
+            $ticket ??= $this->wsaaService->getAccessTicket('wsfe', $rawCuit, $env);
+            $cuit ??= (int) preg_replace('/\D/', '', (string) $rawCuit);
+            $endpoint ??= $this->getWsfeEndpoint($env);
+        }
 
         $soapEnvelope = '<?xml version="1.0" encoding="utf-8"?>'.
             '<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'.
@@ -51,12 +132,16 @@ class AfipWsfeService
             '</soap:Body>'.
             '</soap:Envelope>';
 
-        $response = Http::withHeaders([
-            'Content-Type' => 'text/xml; charset=utf-8',
-            'SOAPAction' => '"http://ar.gov.afip.dif.FEV1/FECompUltimoAutorizado"',
-        ])->timeout(10)->send('POST', $endpoint, [
-            'body' => $soapEnvelope,
-        ]);
+        $response = Http::setClient($this->getSharedWsfeClient())
+            ->withHeaders([
+                'Connection' => 'keep-alive',
+                'Content-Type' => 'text/xml; charset=utf-8',
+                'SOAPAction' => '"http://ar.gov.afip.dif.FEV1/FECompUltimoAutorizado"',
+            ])
+            ->timeout(10)
+            ->send('POST', $endpoint, [
+                'body' => $soapEnvelope,
+            ]);
 
         if (! $response->successful()) {
             throw new RuntimeException("AFIP WSFEv1 Error HTTP {$response->status()}: {$response->body()}");
@@ -86,15 +171,25 @@ class AfipWsfeService
      * Consulta en AFIP WSFEv1 (FECompConsultar) si un comprobante específico ya fue emitido.
      * Útil para recuperar el CAE ante cortes de red o timeouts durante FECAESolicitar.
      *
+     * @param  array{token: string, sign: string, expiration_time?: string|null}|null  $ticket
      * @return array{cae: string, cae_expiration: string, resultado: string, cbte_nro: int, imp_total: float, doc_type: int|null, doc_nro: int|null}|null
      */
-    public function consultVoucher(int $pointOfSale, int $voucherType, int $voucherNumber): ?array
-    {
-        $ticket = $this->wsaaService->getAccessTicket('wsfe');
-        $cuit = BusinessSetting::where('key', 'afip_cuit')->value('value');
-        $cuit = (int) preg_replace('/\D/', '', (string) $cuit);
-
-        $endpoint = $this->getWsfeEndpoint();
+    public function consultVoucher(
+        int $pointOfSale,
+        int $voucherType,
+        int $voucherNumber,
+        ?array $ticket = null,
+        ?int $cuit = null,
+        ?string $endpoint = null
+    ): ?array {
+        if ($ticket === null || $cuit === null || $endpoint === null) {
+            $settings = $this->loadFiscalSettingsMap();
+            $rawCuit = $settings['afip_cuit'] ?? null;
+            $env = $settings['afip_environment'] ?? 'testing';
+            $ticket ??= $this->wsaaService->getAccessTicket('wsfe', $rawCuit, $env);
+            $cuit ??= (int) preg_replace('/\D/', '', (string) $rawCuit);
+            $endpoint ??= $this->getWsfeEndpoint($env);
+        }
 
         $soapEnvelope = '<?xml version="1.0" encoding="utf-8"?>'.
             '<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'.
@@ -114,12 +209,16 @@ class AfipWsfeService
             '</soap:Body>'.
             '</soap:Envelope>';
 
-        $response = Http::withHeaders([
-            'Content-Type' => 'text/xml; charset=utf-8',
-            'SOAPAction' => '"http://ar.gov.afip.dif.FEV1/FECompConsultar"',
-        ])->timeout(10)->send('POST', $endpoint, [
-            'body' => $soapEnvelope,
-        ]);
+        $response = Http::setClient($this->getSharedWsfeClient())
+            ->withHeaders([
+                'Connection' => 'keep-alive',
+                'Content-Type' => 'text/xml; charset=utf-8',
+                'SOAPAction' => '"http://ar.gov.afip.dif.FEV1/FECompConsultar"',
+            ])
+            ->timeout(10)
+            ->send('POST', $endpoint, [
+                'body' => $soapEnvelope,
+            ]);
 
         if (! $response->successful()) {
             throw new RuntimeException("AFIP WSFEv1 Error HTTP {$response->status()}: {$response->body()}");
@@ -177,15 +276,18 @@ class AfipWsfeService
      */
     public function authorizeInvoice(Sale $sale, array $options = []): array
     {
-        $ticket = $this->wsaaService->getAccessTicket('wsfe');
+        $fiscalSettings = $this->loadFiscalSettingsMap();
 
-        $issuerCuit = BusinessSetting::where('key', 'afip_cuit')->value('value');
-        $issuerCuit = (int) preg_replace('/\D/', '', (string) $issuerCuit);
+        $rawCuit = $fiscalSettings['afip_cuit'] ?? null;
+        $environment = $fiscalSettings['afip_environment'] ?? 'testing';
+        $ticket = $this->wsaaService->getAccessTicket('wsfe', $rawCuit, $environment);
+
+        $issuerCuit = (int) preg_replace('/\D/', '', (string) $rawCuit);
         if (empty($issuerCuit)) {
             throw new InvalidArgumentException('El CUIT del emisor no está configurado en Ajustes de Integración.');
         }
 
-        $ptoVta = (int) ($options['point_of_sale'] ?? BusinessSetting::where('key', 'afip_pto_vta')->value('value') ?? 1);
+        $ptoVta = (int) ($options['point_of_sale'] ?? ($fiscalSettings['afip_pto_vta'] ?? null) ?? 1);
         if ($ptoVta <= 0) {
             $ptoVta = 1;
         }
@@ -200,7 +302,7 @@ class AfipWsfeService
         $voucherLetter = AfipHelper::getVoucherLetter($voucherType);
 
         // Validar coherencia entre Condición IVA del Emisor y Clase de Comprobante (A/B vs C)
-        $issuerTaxCondition = BusinessSetting::where('key', 'tax_condition')->value('value');
+        $issuerTaxCondition = $fiscalSettings['tax_condition'] ?? null;
         if (! AfipHelper::isValidVoucherForIssuer($issuerTaxCondition, $voucherType)) {
             throw new InvalidArgumentException(
                 "El tipo de comprobante Clase {$voucherLetter} no es válido para la condición frente al IVA del comercio emisor ({$issuerTaxCondition})."
@@ -232,7 +334,7 @@ class AfipWsfeService
             }
         } elseif ($docType === AfipHelper::DOC_CONSUMIDOR_FINAL) {
             // Verificar tope de Consumidor Final anónimo
-            $anonymousLimit = (float) (BusinessSetting::where('key', 'afip_cf_max_limit')->value('value') ?? 340000.00);
+            $anonymousLimit = (float) ($fiscalSettings['afip_cf_max_limit'] ?? 340000.00);
             $grossSaleTotal = round((float) $sale->total + (float) $sale->total_surcharge + (float) $sale->shipping_cost, 2);
             if ($grossSaleTotal >= $anonymousLimit && empty($docNumber)) {
                 throw new InvalidArgumentException(
@@ -269,10 +371,23 @@ class AfipWsfeService
         $perceptionAmount = round((float) ($options['iibb_perception_amount'] ?? $sale->iibb_perception_amount ?? 0.0), 2);
         $perceptionRate = (float) ($options['iibb_perception_rate'] ?? $sale->iibb_perception_rate ?? 0.0);
 
-        $isAgentRaw = BusinessSetting::where('key', 'is_iibb_perception_agent')->value('value');
-        $isIibbAgent = $isAgentRaw === '1' || $isAgentRaw === 'true' || $isAgentRaw === true || $isAgentRaw === 1;
-        $iibbCalculationBase = BusinessSetting::getIibbCalculationBase();
-        $iibbSubjectTaxConditions = BusinessSetting::getIibbSubjectTaxConditions();
+        $isAgentRaw = $fiscalSettings['is_iibb_perception_agent'] ?? null;
+        $isIibbAgentFlag = $isAgentRaw === '1' || $isAgentRaw === 'true' || $isAgentRaw === true || $isAgentRaw === 1;
+        $isIssuerEligibleForIibb = BusinessSetting::isIssuerEligibleForIibb($issuerTaxCondition) && $voucherLetter !== 'C';
+        $isIibbAgent = $isIibbAgentFlag && $isIssuerEligibleForIibb;
+
+        if (! $isCreditNote && ! $isIibbAgent) {
+            $perceptionAmount = 0.0;
+            $perceptionRate = 0.0;
+            $hasExplicitPerceptionOption = false;
+        }
+        $iibbCalculationBase = BusinessSetting::sanitizeIibbCalculationBase(
+            $fiscalSettings['iibb_calculation_base'] ?? null
+        );
+        $iibbSubjectTaxConditions = array_key_exists('iibb_subject_tax_conditions', $fiscalSettings)
+            && $fiscalSettings['iibb_subject_tax_conditions'] !== null
+            ? BusinessSetting::sanitizeIibbSubjectTaxConditions($fiscalSettings['iibb_subject_tax_conditions'])
+            : ['responsable_inscripto'];
 
         $receiverCondId = AfipHelper::getCondicionIvaReceptorId((string) $receiverTaxCondition, $voucherLetter);
         $rawCondNormalized = strtolower(trim((string) $receiverTaxCondition));
@@ -303,7 +418,7 @@ class AfipWsfeService
         // Auto-cálculo de tasa cuando el comercio es agente IIBB y no hubo override explícito (ni es Nota de Crédito)
         // Consumidor Final nunca recibe percepción IIBB automática.
         if (! $hasExplicitPerceptionOption && ! $isCreditNote && $perceptionAmount <= 0.0 && $isIibbAgent && ! $isConsumidorFinal) {
-            $defaultIibbRate = (float) (BusinessSetting::where('key', 'default_iibb_perception_rate')->value('value') ?? 0.0);
+            $defaultIibbRate = (float) ($fiscalSettings['default_iibb_perception_rate'] ?? 0.0);
 
             if (! empty($customer?->applies_iibb_perception)) {
                 if ($perceptionRate <= 0.0) {
@@ -513,7 +628,7 @@ class AfipWsfeService
         }
 
         $cbteFch = date('Ymd');
-        $endpoint = $this->getWsfeEndpoint();
+        $endpoint = $this->getWsfeEndpoint($environment);
 
         // ── Determinar Concepto AFIP (1: Productos, 2: Servicios, 3: Productos y Servicios) ──
         if (isset($options['concepto']) && in_array((int) $options['concepto'], [1, 2, 3], true)) {
@@ -606,7 +721,7 @@ class AfipWsfeService
                 $pendingCbteNro = (int) (is_array($pendingData) ? ($pendingData['cbte_nro'] ?? 0) : 0);
                 if ($pendingCbteNro > 0) {
                     try {
-                        $recovered = $this->consultVoucher($ptoVta, $voucherType, $pendingCbteNro);
+                        $recovered = $this->consultVoucher($ptoVta, $voucherType, $pendingCbteNro, $ticket, $issuerCuit, $endpoint);
                         if ($recovered !== null) {
                             $docMatches = ($recovered['doc_type'] === null || $recovered['doc_type'] === (int) $docType)
                                 && ($recovered['doc_nro'] === null || (int) $recovered['doc_nro'] === (int) $numericDocNro);
@@ -657,7 +772,7 @@ class AfipWsfeService
             }
 
             // Correlatividad numérica estricta dentro de la sección crítica
-            $lastNumber = $this->getLastVoucherNumber($ptoVta, $voucherType);
+            $lastNumber = $this->getLastVoucherNumber($ptoVta, $voucherType, $ticket, $issuerCuit, $endpoint);
             $cbteNro = $lastNumber + 1;
 
             if ($pendingCacheKey !== null) {
@@ -714,12 +829,16 @@ class AfipWsfeService
                 '</soap:Envelope>';
 
             try {
-                $response = Http::withHeaders([
-                    'Content-Type' => 'text/xml; charset=utf-8',
-                    'SOAPAction' => '"http://ar.gov.afip.dif.FEV1/FECAESolicitar"',
-                ])->timeout(12)->send('POST', $endpoint, [
-                    'body' => $soapEnvelope,
-                ]);
+                $response = Http::setClient($this->getSharedWsfeClient())
+                    ->withHeaders([
+                        'Connection' => 'keep-alive',
+                        'Content-Type' => 'text/xml; charset=utf-8',
+                        'SOAPAction' => '"http://ar.gov.afip.dif.FEV1/FECAESolicitar"',
+                    ])
+                    ->timeout(12)
+                    ->send('POST', $endpoint, [
+                        'body' => $soapEnvelope,
+                    ]);
 
                 if ($response->status() >= 500) {
                     throw new RuntimeException("AFIP WSFEv1 Error HTTP {$response->status()}: {$response->body()}");
@@ -727,7 +846,7 @@ class AfipWsfeService
             } catch (\Throwable $requestException) {
                 // F3-AFIP-01 / COL-06: Reconciliación inmediata ante timeout o error HTTP 5xx en FECAESolicitar
                 try {
-                    $recovered = $this->consultVoucher($ptoVta, $voucherType, $cbteNro);
+                    $recovered = $this->consultVoucher($ptoVta, $voucherType, $cbteNro, $ticket, $issuerCuit, $endpoint);
                     if ($recovered !== null) {
                         $docMatches = ($recovered['doc_type'] === null || $recovered['doc_type'] === (int) $docType)
                             && ($recovered['doc_nro'] === null || (int) $recovered['doc_nro'] === (int) $numericDocNro);
@@ -808,7 +927,7 @@ class AfipWsfeService
             if ($pendingCacheKey !== null) {
                 $cacheStore->forget($pendingCacheKey);
             }
-            $obsMsg = 'Comprobante rechazado por AFIP';
+            $obsMsg = 'Comprobante rechazado por ARCA';
             if (preg_match('/<Observaciones>(.*?)<\/Observaciones>/s', $xml, $obsMatch)) {
                 preg_match_all('/<Msg>(.*?)<\/Msg>/s', $obsMatch[1], $obsMsgs);
                 $obsMsg .= ': '.implode('; ', $obsMsgs[1] ?? []);
@@ -824,7 +943,7 @@ class AfipWsfeService
         $rawVto = $vtoMatch[1] ?? '';
 
         if (empty($cae)) {
-            throw new RuntimeException('La respuesta de AFIP no contiene un CAE válido.');
+            throw new RuntimeException('La respuesta de ARCA no contiene un CAE válido.');
         }
 
         if ($pendingCacheKey !== null) {
@@ -968,9 +1087,9 @@ class AfipWsfeService
     /**
      * Resuelve el endpoint de WSFEv1 según el entorno de ejecución configurado.
      */
-    protected function getWsfeEndpoint(): string
+    protected function getWsfeEndpoint(?string $environment = null): string
     {
-        $environment = BusinessSetting::where('key', 'afip_environment')->value('value') ?? 'testing';
+        $environment ??= (BusinessSetting::where('key', 'afip_environment')->value('value') ?? 'testing');
 
         return $environment === 'production' ? self::URL_WSFE_PROD : self::URL_WSFE_HOMO;
     }

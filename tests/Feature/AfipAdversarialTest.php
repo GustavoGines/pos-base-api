@@ -461,7 +461,7 @@ class AfipAdversarialTest extends TestCase
         $response->assertStatus(504)
             ->assertJsonPath('success', false)
             ->assertJsonPath('invoice_status', 'pending')
-            ->assertJsonPath('message', 'Servicio de AFIP no disponible. Venta registrada en contingencia.');
+            ->assertJsonPath('message', 'Servicio de ARCA no disponible. Venta registrada en contingencia.');
 
         // Verificación estricta en Base de Datos: La venta DEBE quedar en pending (no bloqueada ni borrada)
         $this->assertEquals('pending', $sale->fresh()->invoice_status);

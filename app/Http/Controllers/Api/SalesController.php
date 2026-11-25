@@ -271,7 +271,7 @@ class SalesController extends Controller
 
         if (empty($validated['void_reason'])) {
             $validated['void_reason'] = $validated['reason']
-                ?? ($request->boolean('fiscal_rollback') ? 'Rollback automático por rechazo fiscal AFIP' : null);
+                ?? ($request->boolean('fiscal_rollback') ? 'Rollback automático por rechazo fiscal ARCA' : null);
         }
 
         $context = SaleContextDTO::fromArray(

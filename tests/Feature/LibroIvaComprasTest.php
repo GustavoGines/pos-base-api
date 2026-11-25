@@ -341,7 +341,7 @@ class LibroIvaComprasTest extends TestCase
             ->assertJsonPath('balance.iva_perceptions', 1000)
             ->assertJsonPath('balance.net_balance', 7400)
             ->assertJsonPath('balance.result', 'to_pay')
-            ->assertJsonPath('balance.result_label', 'Saldo Estimado a Pagar a AFIP/ARCA');
+            ->assertJsonPath('balance.result_label', 'Saldo Estimado a Pagar a ARCA');
 
         $disclaimer = $res->json('disclaimer');
         $this->assertStringContainsString('Estimación de gestión interna', $disclaimer);

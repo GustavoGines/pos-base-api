@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreEcommerceIntegrationRequest;
 use App\Http\Requests\UpdateEcommerceIntegrationRequest;
+use App\Jobs\SyncProductStockToPlatformsJob;
 use App\Models\EcommerceIntegration;
 use App\Models\EcommerceSyncLog;
 use App\Services\Ecommerce\CatalogSyncService;
@@ -50,6 +51,7 @@ class EcommerceIntegrationController extends Controller
         }
 
         $integration = EcommerceIntegration::create($validated);
+        SyncProductStockToPlatformsJob::clearActiveIntegrationsCache();
 
         return response()->json([
             'message' => 'Integración creada con éxito.',
@@ -86,6 +88,7 @@ class EcommerceIntegrationController extends Controller
         }
 
         $integration->update($validated);
+        SyncProductStockToPlatformsJob::clearActiveIntegrationsCache();
         $this->ecommerceManager->purge($integration->id);
 
         return response()->json([
@@ -101,6 +104,7 @@ class EcommerceIntegrationController extends Controller
     {
         $this->ecommerceManager->purge($integration->id);
         $integration->delete();
+        SyncProductStockToPlatformsJob::clearActiveIntegrationsCache();
 
         return response()->json([
             'message' => 'Integración eliminada correctamente.',
@@ -141,6 +145,7 @@ class EcommerceIntegrationController extends Controller
         $integration->update([
             'is_active' => ! $integration->is_active,
         ]);
+        SyncProductStockToPlatformsJob::clearActiveIntegrationsCache();
 
         return response()->json([
             'message' => 'Estado de la integración actualizado correctamente.',

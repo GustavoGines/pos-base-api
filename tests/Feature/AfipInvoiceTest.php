@@ -429,7 +429,7 @@ class AfipInvoiceTest extends TestCase
         $response->assertStatus(504)
             ->assertJsonPath('success', false)
             ->assertJsonPath('invoice_status', 'pending')
-            ->assertJsonPath('message', 'Servicio de AFIP no disponible. Venta registrada en contingencia.');
+            ->assertJsonPath('message', 'Servicio de ARCA no disponible. Venta registrada en contingencia.');
 
         $this->assertEquals('pending', $sale->fresh()->invoice_status);
     }

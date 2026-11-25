@@ -135,7 +135,7 @@
         <table class="header-table">
             <tr>
                 <td>
-                    <div class="brand-name">LIBRO IVA COMPRAS — SUBDIARIO FISCAL ARCA / AFIP</div>
+                    <div class="brand-name">LIBRO IVA COMPRAS — SUBDIARIO FISCAL ARCA</div>
                     <div class="brand-subtitle">
                         {{ $companyName ?: 'Comercio Responsable Inscripto' }}
                         @if(!empty($companyCuit)) · CUIT: {{ $companyCuit }} @endif

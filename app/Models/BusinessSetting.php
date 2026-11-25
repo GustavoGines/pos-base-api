@@ -87,6 +87,82 @@ class BusinessSetting extends Model
         'exento',
     ];
 
+    public const ISSUER_TAX_RESPONSABLE_INSCRIPTO = 'IVA Responsable Inscripto';
+
+    public const ISSUER_TAX_MONOTRIBUTO = 'Responsable Monotributo';
+
+    public const ISSUER_TAX_EXENTO = 'IVA Exento';
+
+    public static function isLegacyInvalidIssuerTaxCondition(mixed $raw): bool
+    {
+        if ($raw === null) {
+            return false;
+        }
+        $trimmed = trim((string) $raw);
+        if ($trimmed === '') {
+            return false;
+        }
+
+        $norm = strtolower(str_replace(['_', '-'], ' ', $trimmed));
+        if (str_contains($norm, 'consumidor')) {
+            return true;
+        }
+
+        return ! str_contains($norm, 'inscripto')
+            && ! str_contains($norm, 'monotributo')
+            && ! str_contains($norm, 'exento');
+    }
+
+    public static function normalizeIssuerTaxCondition(mixed $raw): ?string
+    {
+        if ($raw === null) {
+            return null;
+        }
+        $trimmed = trim((string) $raw);
+        if ($trimmed === '') {
+            return null;
+        }
+
+        $norm = strtolower(str_replace(['_', '-'], ' ', $trimmed));
+        if (str_contains($norm, 'monotributo')) {
+            return self::ISSUER_TAX_MONOTRIBUTO;
+        }
+        if (str_contains($norm, 'exento')) {
+            return self::ISSUER_TAX_EXENTO;
+        }
+        if (str_contains($norm, 'inscripto')) {
+            return self::ISSUER_TAX_RESPONSABLE_INSCRIPTO;
+        }
+
+        return null;
+    }
+
+    public static function isIssuerEligibleForIibb(mixed $rawTaxCondition = null): bool
+    {
+        if (func_num_args() === 0) {
+            $rawTaxCondition = static::where('key', 'tax_condition')->value('value');
+        }
+
+        if ($rawTaxCondition === null || trim((string) $rawTaxCondition) === '') {
+            return true;
+        }
+
+        return static::normalizeIssuerTaxCondition($rawTaxCondition) === self::ISSUER_TAX_RESPONSABLE_INSCRIPTO;
+    }
+
+    public static function isEffectiveIibbPerceptionAgent(?string $rawTaxCondition = null): bool
+    {
+        $isAgentRaw = static::where('key', 'is_iibb_perception_agent')->value('value');
+        $isAgent = $isAgentRaw === '1' || $isAgentRaw === 'true' || $isAgentRaw === true || $isAgentRaw === 1;
+        if (! $isAgent) {
+            return false;
+        }
+
+        return func_num_args() > 0
+            ? static::isIssuerEligibleForIibb($rawTaxCondition)
+            : static::isIssuerEligibleForIibb();
+    }
+
     public static function sanitizeIibbCalculationBase(mixed $raw): string
     {
         $normalized = strtolower(trim((string) ($raw ?? '')));

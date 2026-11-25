@@ -139,12 +139,33 @@ class SettingController extends Controller
                 continue;
             }
 
+            if ($key === 'tax_condition' && $value !== null && trim((string) $value) !== '') {
+                $canonicalTaxCondition = BusinessSetting::normalizeIssuerTaxCondition($value);
+                if ($canonicalTaxCondition !== null) {
+                    BusinessSetting::updateOrCreate(
+                        ['key' => $key],
+                        ['value' => $canonicalTaxCondition]
+                    );
+                }
+
+                continue;
+            }
+
             // Si el valor es un array u objeto (ej: custom_price_tiers), serializar a JSON string
             $storedValue = is_array($value) ? json_encode($value) : $value;
 
             BusinessSetting::updateOrCreate(
                 ['key' => $key],
                 ['value' => $storedValue]
+            );
+        }
+
+        // Seguridad fiscal: solo un comercio IVA Responsable Inscripto puede ser Agente de Percepción IIBB
+        $currentTaxCond = BusinessSetting::where('key', 'tax_condition')->value('value');
+        if (! BusinessSetting::isIssuerEligibleForIibb($currentTaxCond)) {
+            BusinessSetting::updateOrCreate(
+                ['key' => 'is_iibb_perception_agent'],
+                ['value' => '0']
             );
         }
 
@@ -460,7 +481,7 @@ class SettingController extends Controller
             );
 
             return response()->json(array_merge([
-                'message' => 'Certificados de AFIP guardados y validados correctamente.',
+                'message' => 'Certificados de ARCA guardados y validados correctamente.',
             ], $result));
         } catch (DomainException $e) {
             [$code, $message] = explode(':', $e->getMessage(), 2);

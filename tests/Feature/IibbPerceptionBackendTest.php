@@ -328,6 +328,9 @@ class IibbPerceptionBackendTest extends TestCase
      */
     public function test_afip_wsfe_generates_tributos_xml_with_strict_schema_order_and_math_invariant(): void
     {
+        BusinessSetting::updateOrCreate(['key' => 'tax_condition'], ['value' => 'IVA Responsable Inscripto']);
+        BusinessSetting::updateOrCreate(['key' => 'is_iibb_perception_agent'], ['value' => '1']);
+
         $interceptedXml = null;
         $this->mockAfipSuccess(cbteNro: 50, cae: '74382910492819', requestInspector: function (HttpClientRequest $req) use (&$interceptedXml) {
             $body = $req->body();
@@ -506,10 +509,13 @@ class IibbPerceptionBackendTest extends TestCase
     }
 
     /**
-     * 7. AfipWsfeService: Factura C (Monotributo) with perception
+     * 7. AfipWsfeService: Factura C (Monotributo / Exento) omite <Iva> y fuerza <Tributos> en $0
      */
     public function test_afip_wsfe_factura_c_supports_perception_and_omits_iva_node(): void
     {
+        BusinessSetting::updateOrCreate(['key' => 'tax_condition'], ['value' => 'Responsable Monotributo']);
+        BusinessSetting::updateOrCreate(['key' => 'is_iibb_perception_agent'], ['value' => '1']);
+
         $interceptedXml = null;
         $this->mockAfipSuccess(cbteNro: 70, cae: '74382910492819', requestInspector: function (HttpClientRequest $req) use (&$interceptedXml) {
             $body = $req->body();
@@ -574,20 +580,18 @@ class IibbPerceptionBackendTest extends TestCase
             ->assertJsonPath('invoice.voucher_letter', 'C')
             ->assertJsonPath('invoice.net_amount', '1000.00')
             ->assertJsonPath('invoice.iva_amount', '0.00')
-            ->assertJsonPath('invoice.tribute_amount', '30.00')
-            ->assertJsonPath('invoice.total_amount', '1030.00');
+            ->assertJsonPath('invoice.tribute_amount', '0.00')
+            ->assertJsonPath('invoice.total_amount', '1000.00');
 
         $this->assertNotNull($interceptedXml);
 
-        // Factura C must NOT have <Iva>
+        // Factura C must NOT have <Iva> nor <Tributos>
         $this->assertStringNotContainsString('<Iva>', $interceptedXml);
+        $this->assertStringNotContainsString('<Tributos>', $interceptedXml);
         $this->assertStringContainsString('<ImpIVA>0.00</ImpIVA>', $interceptedXml);
-
-        // Factura C with perception must have <Tributos>
-        $this->assertStringContainsString('<Tributos>', $interceptedXml);
-        $this->assertStringContainsString('<ImpTrib>30.00</ImpTrib>', $interceptedXml);
+        $this->assertStringContainsString('<ImpTrib>0.00</ImpTrib>', $interceptedXml);
         $this->assertStringContainsString('<ImpNeto>1000.00</ImpNeto>', $interceptedXml);
-        $this->assertStringContainsString('<ImpTotal>1030.00</ImpTotal>', $interceptedXml);
+        $this->assertStringContainsString('<ImpTotal>1000.00</ImpTotal>', $interceptedXml);
     }
 
     /**
@@ -1415,7 +1419,7 @@ class IibbPerceptionBackendTest extends TestCase
     <FECompUltimoAutorizadoResponse xmlns="http://ar.gov.afip.dif.FEV1/">
       <FECompUltimoAutorizadoResult>
         <PtoVta>1</PtoVta>
-        <CbteTipo>11</CbteTipo>
+        <CbteTipo>1</CbteTipo>
         <CbteNro>'.$lastAuthorized.'</CbteNro>
       </FECompUltimoAutorizadoResult>
     </FECompUltimoAutorizadoResponse>
@@ -1430,7 +1434,7 @@ class IibbPerceptionBackendTest extends TestCase
   <soap:Body>
     <FECAESolicitarResponse xmlns="http://ar.gov.afip.dif.FEV1/">
       <FECAESolicitarResult>
-        <FeCabResp><Cuit>'.$this->testCuit.'</Cuit><PtoVta>1</PtoVta><CbteTipo>11</CbteTipo><Resultado>A</Resultado></FeCabResp>
+        <FeCabResp><Cuit>'.$this->testCuit.'</Cuit><PtoVta>1</PtoVta><CbteTipo>1</CbteTipo><Resultado>A</Resultado></FeCabResp>
         <FeDetResp><FECAEDetResponse><Concepto>1</Concepto><DocTipo>80</DocTipo><DocNro>20123456786</DocNro><CbteDesde>'.$issued.'</CbteDesde><CbteHasta>'.$issued.'</CbteHasta><CbteFch>'.date('Ymd').'</CbteFch><Resultado>A</Resultado><CAE>74382910499902</CAE><CAEFchVto>'.date('Ymd', strtotime('+10 days')).'</CAEFchVto></FECAEDetResponse></FeDetResp>
       </FECAESolicitarResult>
     </FECAESolicitarResponse>
@@ -1451,11 +1455,12 @@ class IibbPerceptionBackendTest extends TestCase
             'active' => true,
         ]);
 
+        BusinessSetting::updateOrCreate(['key' => 'tax_condition'], ['value' => 'IVA Responsable Inscripto']);
         BusinessSetting::updateOrCreate(['key' => 'is_iibb_perception_agent'], ['value' => '1']);
         BusinessSetting::updateOrCreate(['key' => 'default_iibb_perception_rate'], ['value' => '3.00']);
         BusinessSetting::updateOrCreate(['key' => 'iibb_calculation_base'], ['value' => BusinessSetting::IIBB_BASE_NET_WITHOUT_VAT]);
 
-        // Caso 1: Solo RI habilitado -> Monotributista en Factura B/C NO percibe automáticamente
+        // Caso 1: Solo RI habilitado -> Monotributista en Factura A NO percibe automáticamente
         BusinessSetting::updateOrCreate(['key' => 'iibb_subject_tax_conditions'], ['value' => json_encode(['responsable_inscripto'])]);
 
         $monoCustomer = Customer::create([
@@ -1481,12 +1486,12 @@ class IibbPerceptionBackendTest extends TestCase
         $saleMono1->items()->create(['product_id' => $product->id, 'product_name' => $product->name, 'quantity' => 1, 'unit_cost_price' => 5000, 'unit_price' => 12100, 'subtotal' => 12100, 'iva_rate' => 21.00, 'net_amount' => 10000, 'iva_amount' => 2100]);
 
         $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$saleMono1->id}/invoice", [
-            'voucher_type' => AfipHelper::VOUCHER_FACTURA_C,
+            'voucher_type' => AfipHelper::VOUCHER_FACTURA_A,
         ])->assertStatus(200)
             ->assertJsonPath('invoice.tribute_amount', '0.00')
             ->assertJsonPath('invoice.total_amount', '12100.00');
 
-        // Caso 2: Al habilitar monotributo y exento en config -> Monotributista percibe automático, Consumidor Final NUNCA
+        // Caso 2: Al habilitar monotributo y exento en config -> Monotributista percibe automático (3% s/ Neto $10.000 = $300), Consumidor Final NUNCA
         BusinessSetting::updateOrCreate(['key' => 'iibb_subject_tax_conditions'], ['value' => json_encode(['responsable_inscripto', 'monotributo', 'exento'])]);
 
         $saleMono2 = Sale::create([
@@ -1504,10 +1509,10 @@ class IibbPerceptionBackendTest extends TestCase
         $saleMono2->items()->create(['product_id' => $product->id, 'product_name' => $product->name, 'quantity' => 1, 'unit_cost_price' => 5000, 'unit_price' => 12100, 'subtotal' => 12100, 'iva_rate' => 21.00, 'net_amount' => 10000, 'iva_amount' => 2100]);
 
         $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$saleMono2->id}/invoice", [
-            'voucher_type' => AfipHelper::VOUCHER_FACTURA_C,
+            'voucher_type' => AfipHelper::VOUCHER_FACTURA_A,
         ])->assertStatus(200)
-            ->assertJsonPath('invoice.tribute_amount', '363.00')
-            ->assertJsonPath('invoice.total_amount', '12463.00');
+            ->assertJsonPath('invoice.tribute_amount', '300.00')
+            ->assertJsonPath('invoice.total_amount', '12400.00');
 
         $cfCustomer = Customer::create([
             'name' => 'Consumidor Final DNI',
@@ -1684,6 +1689,107 @@ class IibbPerceptionBackendTest extends TestCase
 
         $this->assertNotNull($capturedXml);
         $this->assertStringContainsString('<CondicionIVAReceptorId>5</CondicionIVAReceptorId>', $capturedXml);
+        $this->assertStringNotContainsString('<Tributos>', $capturedXml);
+    }
+
+    /**
+     * 21. Seguridad fiscal IIBB v2.2.0:
+     *     - Rechaza 'Consumidor Final' como tax_condition del comercio emisor (422).
+     *     - Monotributo / IVA Exento fuerzan is_iibb_perception_agent = '0' al guardar settings.
+     *     - AfipWsfeService fuerza $0 de percepción si is_iibb_perception_agent = '0' o emisor no RI.
+     */
+    public function test_issuer_tax_condition_restrictions_and_iibb_agent_gate_on_settings_and_invoicing(): void
+    {
+        // A) Consumidor Final rechazado en PUT /api/settings
+        $this->actingAsAdmin($this->adminUser)
+            ->putJson('/api/settings', [
+                'tax_condition' => 'Consumidor Final',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['tax_condition']);
+
+        // B) Monotributo / Exento fuerzan is_iibb_perception_agent = '0' aunque se envíe '1'
+        $this->actingAsAdmin($this->adminUser)
+            ->putJson('/api/settings', [
+                'tax_condition' => 'Responsable Monotributo',
+                'is_iibb_perception_agent' => '1',
+                'default_iibb_perception_rate' => '3.00',
+            ])
+            ->assertStatus(200);
+
+        $this->assertDatabaseHas('business_settings', [
+            'key' => 'tax_condition',
+            'value' => 'Responsable Monotributo',
+        ]);
+        $this->assertDatabaseHas('business_settings', [
+            'key' => 'is_iibb_perception_agent',
+            'value' => '0',
+        ]);
+
+        // C) Facturar como IVA Responsable Inscripto con is_iibb_perception_agent = '0'
+        //    fuerza tribute_amount = 0.00 incluso si el request envía montos/tasas explícitas.
+        $capturedXml = null;
+        $this->mockAfipSuccess(cbteNro: 505, cae: '74382910499955', requestInspector: function (HttpClientRequest $req) use (&$capturedXml) {
+            if (str_contains($req->body(), 'FECAESolicitar')) {
+                $capturedXml = $req->body();
+            }
+        });
+
+        BusinessSetting::updateOrCreate(['key' => 'tax_condition'], ['value' => 'IVA Responsable Inscripto']);
+        BusinessSetting::updateOrCreate(['key' => 'is_iibb_perception_agent'], ['value' => '0']);
+        BusinessSetting::updateOrCreate(['key' => 'default_iibb_perception_rate'], ['value' => '3.00']);
+
+        $shift = $this->createOpenShift();
+        $product = Product::create([
+            'name' => 'Producto Sin Agente',
+            'internal_code' => 'NOAG-01',
+            'cost_price' => 5000,
+            'selling_price' => 12100.00,
+            'iva_rate' => 21.00,
+            'stock' => 10,
+            'active' => true,
+        ]);
+        $riCustomer = Customer::create([
+            'name' => 'Empresa Receptora RI',
+            'document_type' => AfipHelper::DOC_CUIT,
+            'document_number' => '30500010912',
+            'tax_condition' => 'responsable_inscripto',
+            'applies_iibb_perception' => true,
+            'iibb_perception_rate' => 3.00,
+        ]);
+        $sale = Sale::create([
+            'total' => 12100.00,
+            'total_surcharge' => 0.00,
+            'payment_status' => 'paid',
+            'amount_due' => 0.00,
+            'status' => 'completed',
+            'invoice_status' => 'none',
+            'cash_shift_id' => $shift->id,
+            'user_id' => $this->adminUser->id,
+            'cashier_id' => $this->adminUser->id,
+            'customer_id' => $riCustomer->id,
+        ]);
+        $sale->items()->create([
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
+            'unit_cost_price' => 5000,
+            'unit_price' => 12100,
+            'subtotal' => 12100,
+            'iva_rate' => 21.00,
+            'net_amount' => 10000,
+            'iva_amount' => 2100,
+        ]);
+
+        $this->actingAsAdmin($this->adminUser)->postJson("/api/sales/{$sale->id}/invoice", [
+            'voucher_type' => AfipHelper::VOUCHER_FACTURA_A,
+            'iibb_perception_amount' => 300.00,
+            'iibb_perception_rate' => 3.00,
+        ])->assertStatus(200)
+            ->assertJsonPath('invoice.tribute_amount', '0.00')
+            ->assertJsonPath('invoice.total_amount', '12100.00');
+
+        $this->assertNotNull($capturedXml);
         $this->assertStringNotContainsString('<Tributos>', $capturedXml);
     }
 }

@@ -30,7 +30,7 @@ class RetryAfipContingencyCommand extends Command
      *
      * @var string
      */
-    protected $description = 'Reintenta autorizar automáticamente ante AFIP las ventas que quedaron en estado de contingencia (pending).';
+    protected $description = 'Reintenta autorizar automáticamente ante ARCA las ventas que quedaron en estado de contingencia (pending).';
 
     public function handle(AfipWsfeService $wsfeService): int
     {
@@ -111,7 +111,7 @@ class RetryAfipContingencyCommand extends Command
                                     'type' => 'charge',
                                     'amount' => $tributeAmount,
                                     'balance_after' => $customerToUpdate->balance,
-                                    'description' => "Percepción IIBB AFIP Factura {$invoice->voucher_letter}-{$invoice->formatted_number} - Ticket #{$lockedSale->id}",
+                                    'description' => "Percepción IIBB ARCA Factura {$invoice->voucher_letter}-{$invoice->formatted_number} - Ticket #{$lockedSale->id}",
                                 ]);
                             }
                         }

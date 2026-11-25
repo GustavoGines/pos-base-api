@@ -369,6 +369,13 @@ class Fase1BackendAuditRegressionTest extends TestCase
     {
         Queue::fake();
 
+        EcommerceIntegration::create([
+            'platform' => 'tiendanube',
+            'name' => 'Tienda Test',
+            'is_active' => true,
+            'sync_stock_enabled' => true,
+        ]);
+
         $supplier = Supplier::create(['name' => 'Proveedor Borrado']);
         $supplier->delete();
 

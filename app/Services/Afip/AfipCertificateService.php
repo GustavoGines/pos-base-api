@@ -21,7 +21,7 @@ class AfipCertificateService
         }
 
         if (empty($certContent)) {
-            throw new DomainException('MISSING_CERT_OR_KEY:Debe adjuntar el certificado (.crt) emitido por ARCA/AFIP.');
+            throw new DomainException('MISSING_CERT_OR_KEY:Debe adjuntar el certificado (.crt) emitido por ARCA.');
         }
 
         if (empty($keyContent)) {
