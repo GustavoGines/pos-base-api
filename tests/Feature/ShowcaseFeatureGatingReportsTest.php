@@ -60,37 +60,43 @@ class ShowcaseFeatureGatingReportsTest extends TestCase
         );
     }
 
-    public function test_basic_plan_allows_general_sales_and_vat_sales_screen_consultation_only(): void
+    public function test_basic_plan_allows_general_reports_monthly_balance_and_vat_sales_including_exports(): void
     {
         $this->configureBasicLicense();
 
-        $this->getJson('/api/reports/sales-by-category?start_date=2026-11-01&end_date=2026-11-30')
-            ->assertStatus(200);
-        $this->getJson('/api/reports/sales-by-brand?start_date=2026-11-01&end_date=2026-11-30')
-            ->assertStatus(200);
-        $this->getJson('/api/reports/vat-sales?start_date=2026-11-01&end_date=2026-11-30')
-            ->assertStatus(200);
-    }
-
-    public function test_basic_plan_blocks_advanced_reports_exports_and_vat_purchases_position(): void
-    {
-        $this->configureBasicLicense();
-
-        $advancedReportsRoutes = [
+        $allowedEndpoints = [
+            '/api/reports/sales-by-category?start_date=2026-11-01&end_date=2026-11-30',
             '/api/reports/sales-by-category/export?start_date=2026-11-01&end_date=2026-11-30',
             '/api/reports/sales-by-category/pdf?start_date=2026-11-01&end_date=2026-11-30',
+            '/api/reports/sales-by-brand?start_date=2026-11-01&end_date=2026-11-30',
             '/api/reports/monthly-balance?start_month=2026-11&end_month=2026-11',
             '/api/reports/monthly-balance/export?start_month=2026-11&end_month=2026-11',
             '/api/reports/monthly-balance/pdf?start_month=2026-11&end_month=2026-11',
+            '/api/reports/vat-sales?start_date=2026-11-01&end_date=2026-11-30',
             '/api/reports/vat-sales/export?start_date=2026-11-01&end_date=2026-11-30',
             '/api/reports/vat-sales/pdf?start_date=2026-11-01&end_date=2026-11-30',
         ];
 
-        foreach ($advancedReportsRoutes as $uri) {
+        foreach ($allowedEndpoints as $uri) {
+            $this->get($uri)->assertStatus(200);
+        }
+    }
+
+    public function test_basic_plan_blocks_premium_module_reports_and_vat_purchases_position(): void
+    {
+        $this->configureBasicLicense();
+
+        $multiRubroRoutes = [
+            '/api/reports/sales-by-rubro?start_date=2026-11-01&end_date=2026-11-30',
+            '/api/reports/sales-by-rubro/export?start_date=2026-11-01&end_date=2026-11-30',
+            '/api/reports/sales-by-rubro/pdf?start_date=2026-11-01&end_date=2026-11-30',
+        ];
+
+        foreach ($multiRubroRoutes as $uri) {
             $this->getJson($uri)
                 ->assertStatus(403)
                 ->assertJsonPath('error_code', 'FEATURE_NOT_LICENSED')
-                ->assertJsonPath('required', 'advanced_reports');
+                ->assertJsonPath('required', 'multi_rubro');
         }
 
         $supplierGatedRoutes = [
@@ -107,10 +113,16 @@ class ShowcaseFeatureGatingReportsTest extends TestCase
                 ->assertJsonPath('required', 'suppliers');
         }
 
-        $this->getJson('/api/reports/expenses-analysis?start_date=2026-11-01&end_date=2026-11-30')
-            ->assertStatus(403)
-            ->assertJsonPath('error_code', 'FEATURE_NOT_LICENSED')
-            ->assertJsonPath('required', 'expenses');
+        foreach ([
+            '/api/reports/expenses-analysis?start_date=2026-11-01&end_date=2026-11-30',
+            '/api/reports/expenses-analysis/export?start_date=2026-11-01&end_date=2026-11-30',
+            '/api/reports/expenses-analysis/pdf?start_date=2026-11-01&end_date=2026-11-30',
+        ] as $uri) {
+            $this->getJson($uri)
+                ->assertStatus(403)
+                ->assertJsonPath('error_code', 'FEATURE_NOT_LICENSED')
+                ->assertJsonPath('required', 'expenses');
+        }
 
         $this->getJson('/api/reports/internal-consumption?start_date=2026-11-01&end_date=2026-11-30')
             ->assertStatus(403)
