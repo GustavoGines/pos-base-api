@@ -346,4 +346,116 @@ class CustomerPaymentTest extends TestCase
         $this->assertEquals('paid', $ticket1->fresh()->payment_status);
         $this->assertEquals('paid', $ticket2->fresh()->payment_status);
     }
+
+    // ── CC-08: DNI/Documento 100% Opcional, Resguardos de Partial Update y Coherencia ──
+
+    public function test_c_c08_optional_document_crud_partial_update_phone_search_and_cc_payment(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $this->actingAsAdmin($admin);
+
+        // 1. Múltiples clientes sin DNI (omitido, null, "", "   ") -> 201 sin colisión, NULL en BD y doc_type=99
+        $payloads = [
+            ['name' => 'Cliente Sin Doc A', 'phone' => '3704111111'],
+            ['name' => 'Cliente Sin Doc B', 'phone' => '3704222222', 'document_number' => null],
+            ['name' => 'Cliente Sin Doc C', 'phone' => '3704333333', 'document_number' => ''],
+            ['name' => 'Cliente Sin Doc D', 'phone' => '3704444444', 'document_number' => '   '],
+        ];
+
+        $createdIds = [];
+        foreach ($payloads as $p) {
+            $res = $this->postJson('/api/customers', $p);
+            $res->assertStatus(201)
+                ->assertJsonPath('document_number', null)
+                ->assertJsonPath('document_type', 99)
+                ->assertJsonPath('tax_condition', 'consumidor_final');
+            $createdIds[] = $res->json('id');
+        }
+
+        // 2. Búsqueda en mostrador encuentra cliente sin DNI por su teléfono
+        $searchRes = $this->getJson('/api/customers?search=3704333333');
+        $searchRes->assertStatus(200);
+        $matchedIds = collect($searchRes->json('data'))->pluck('id')->all();
+        $this->assertContains($createdIds[2], $matchedIds);
+
+        // 3. Cliente con DNI -> update parcial de teléfono/límite NO borra su DNI (Resguardo #1)
+        $conDniRes = $this->postJson('/api/customers', [
+            'name' => 'Con DNI Real',
+            'document_number' => '35111222',
+            'document_type' => 96,
+            'phone' => '3704000001',
+        ]);
+        $conDniRes->assertStatus(201);
+        $conDniId = $conDniRes->json('id');
+
+        $partialRes = $this->putJson("/api/customers/{$conDniId}", [
+            'phone' => '3704999999',
+            'credit_limit' => 25000,
+        ]);
+        $partialRes->assertStatus(200)
+            ->assertJsonPath('document_number', '35111222')
+            ->assertJsonPath('document_type', 96)
+            ->assertJsonPath('phone', '3704999999');
+
+        // 4. Editar cliente para limpiar un DNI falso previo a null + pasar a doc_type 99
+        $clearDocRes = $this->putJson("/api/customers/{$conDniId}", [
+            'document_number' => '',
+        ]);
+        $clearDocRes->assertStatus(200)
+            ->assertJsonPath('document_number', null)
+            ->assertJsonPath('document_type', 99);
+
+        // 5. Coherencia bidireccional (Resguardo #2): cliente en 99 al recibir DNI/CUIT (incluso mandando 99) infiere 96 / 80
+        $addDniRes = $this->putJson("/api/customers/{$createdIds[0]}", [
+            'document_number' => '38452190',
+            'document_type' => 99,
+        ]);
+        $addDniRes->assertStatus(200)
+            ->assertJsonPath('document_number', '38452190')
+            ->assertJsonPath('document_type', 96);
+
+        $addCuitRes = $this->putJson("/api/customers/{$createdIds[1]}", [
+            'document_number' => '20-38452190-4',
+            'document_type' => 99,
+        ]);
+        $addCuitRes->assertStatus(200)
+            ->assertJsonPath('document_number', '20384521904')
+            ->assertJsonPath('document_type', 80);
+
+        // 6. Bloqueo 422 si es RI/Monotributo/Exento o aplica IIBB sin CUIT válido
+        foreach (['responsable_inscripto', 'monotributo', 'exento'] as $fiscalCond) {
+            $this->postJson('/api/customers', [
+                'name' => "Sin CUIT {$fiscalCond}",
+                'tax_condition' => $fiscalCond,
+                'document_number' => null,
+            ])->assertStatus(422)->assertJsonValidationErrors(['document_number']);
+
+            // Update parcial cambiando condición IVA de cliente sin doc también debe fallar contra estado resultante
+            $this->putJson("/api/customers/{$createdIds[2]}", [
+                'tax_condition' => $fiscalCond,
+            ])->assertStatus(422)->assertJsonValidationErrors(['document_number']);
+        }
+
+        $this->postJson('/api/customers', [
+            'name' => 'Sin CUIT Con IIBB',
+            'tax_condition' => 'consumidor_final',
+            'applies_iibb_perception' => true,
+            'iibb_perception_rate' => 3.0,
+        ])->assertStatus(422)->assertJsonValidationErrors(['document_number']);
+
+        // 7. Flujo completo de Cuenta Corriente y cobro parcial sobre cliente sin DNI
+        $shift = $this->crearTurnoAbierto();
+        $cc = $this->crearMetodoCuentaCorriente();
+        $clienteFiado = Customer::findOrFail($createdIds[2]);
+        $clienteFiado->update(['balance' => 1500.00]);
+        $ticket = $this->crearTicketPendiente($clienteFiado, $shift, $cc, 1500.00);
+
+        $this->postJson("/api/customers/{$clienteFiado->id}/payments", [
+            'amount' => 500.00,
+            'payment_method' => 'cash',
+        ])->assertStatus(200);
+
+        $this->assertEquals(1000.00, (float) $clienteFiado->fresh()->balance);
+        $this->assertEquals(1000.00, (float) $ticket->fresh()->amount_due);
+    }
 }

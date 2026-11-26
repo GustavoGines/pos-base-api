@@ -2,6 +2,16 @@
 Todos los cambios notables del servidor base están documentados aquí.
 
 
+## [2.2.0] - 2026-11-25
+### Control Comercial OTA v2, Pruebas Gratuitas y Blindaje Anti-Rollback
+- Exposición de token OTA irreversible (`license_ota_token` SHA-256), enmascaramiento estricto de `license_key` en endpoints públicos y preservación integral de metadatos de licencia y estado demo al restaurar copias de seguridad.
+- Expiración exacta al cierre del día (`23:59:59 -03:00`), soporte nativo de Demos de 15 días (`license_is_trial`), backfill de sello de integridad para instalaciones heredadas y protección anti-rollback por marca de agua (`license_max_observed_at`) con re-anclaje seguro de IDs.
+### Modo Exploración con Datos de Ejemplo Dinámicos por Rubro
+- Nuevo `DemoEnvironmentService` con catálogos, clientes, proveedores y turnos realistas para 6 verticales comerciales, bloqueo preventivo de emisión CAE ante ARCA en modo demo y limpieza topológica transaccional con Cuádruple Candado.
+### Clientes sin DNI Obligatorio, Fiscalidad ARCA y Servicios en Segundo Plano
+- Soporte limpio para clientes Consumidor Final sin documento (`document_number = NULL`, `document_type = 99`), actualizaciones parciales seguras, búsqueda por teléfono en listado/papelera y normalización automática en WSFEv1 (`DocTipo = 99` / `DocNro = 0` bajo tope) con validaciones estrictas de CUIT e IIBB.
+- Protección `withoutOverlapping(10)` en tareas programadas (`license:sync` y `afip:retry-contingency`) y propagación exacta de códigos de salida en `instalar_tareas_bg.bat`.
+
 ## [2.1.2] - 2026-11-21
 ### Estabilidad OTA, Reinicio en Caliente de Servicios y Sincronización de Entorno
 - Nivelación de versión v2.1.2 con soporte completo de reinicio en caliente de workers de colas (`queue:restart`), WebSockets (`reverb:restart`) y tareas programadas tras actualizaciones OTA.

@@ -477,7 +477,7 @@ class ChallengerM1Gen3AdversarialTest extends TestCase
         // Notice: IIBB (2,000) and Internal Taxes (1,000) must NOT reduce VAT net_balance!
         $this->assertEquals(5500.00, $netBalance);
         $this->assertEquals('to_pay', $result);
-        $this->assertEquals('Saldo Estimado a Pagar a AFIP/ARCA', $posRes->json('balance.result_label'));
+        $this->assertEquals('Saldo Estimado a Pagar a ARCA', $posRes->json('balance.result_label'));
         $this->assertEquals(5500.00, (float) $posRes->json('balance.absolute_balance'));
     }
 

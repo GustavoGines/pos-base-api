@@ -33,6 +33,12 @@ class BlockTwoRegressionTest extends TestCase
         $this->admin = User::factory()->create(['role' => 'admin']);
         $this->actingAsAdmin($this->admin);
         $this->shift = $this->crearTurnoAbierto(1000.00, $this->admin);
+        EcommerceIntegration::create([
+            'platform' => 'tiendanube',
+            'name' => 'Tienda Test',
+            'is_active' => true,
+            'sync_stock_enabled' => true,
+        ]);
     }
 
     /**

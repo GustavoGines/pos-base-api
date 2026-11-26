@@ -1206,7 +1206,7 @@ class ReportController extends Controller
 
         if ($netBalance > 0.009) {
             $result = 'to_pay';
-            $resultLabel = 'Saldo Estimado a Pagar a AFIP/ARCA';
+            $resultLabel = 'Saldo Estimado a Pagar a ARCA';
         } elseif ($netBalance < -0.009) {
             $result = 'favorable';
             $resultLabel = 'Saldo a Favor Técnico del Contribuyente';
@@ -1269,7 +1269,7 @@ class ReportController extends Controller
                 'net_balance' => $iibbNetBalance,
                 'abs_balance' => abs($iibbNetBalance),
             ],
-            'disclaimer' => 'Estimación de gestión interna para control gerencial. No reemplaza la Declaración Jurada F. 2002 de AFIP/ARCA ni contempla saldos a favor de períodos anteriores, retenciones bancarias ni pagos a cuenta.',
+            'disclaimer' => 'Estimación de gestión interna para control gerencial. No reemplaza la Declaración Jurada F. 2002 de ARCA ni contempla saldos a favor de períodos anteriores, retenciones bancarias ni pagos a cuenta.',
         ]);
     }
 }

@@ -23,11 +23,17 @@ use App\Services\Afip\AfipWsfeService;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Testing\Fakes\EventFake;
 use Illuminate\Validation\ValidationException;
 
 class SaleService
 {
+    public const REVERB_CIRCUIT_BREAKER_KEY = 'reverb:broadcast_circuit_open';
+
+    public const REVERB_CIRCUIT_BREAKER_TTL_SECONDS = 60;
+
     public function __construct(
         protected StockService $stockService,
         protected PaymentService $paymentService,
@@ -77,7 +83,7 @@ class SaleService
             return $existingSale;
         }
 
-        return DB::transaction(function () use ($dto, $context) {
+        $completedSale = DB::transaction(function () use ($dto, $context) {
             // F3-CAJA-03 / FN-F3-03: Bloqueo pesimista de CashShift como PRIMER lock de la transacción
             // para evitar carreras con closeShift y prevenir deadlocks AB-BA con productos.
             if ($context->cashShiftId) {
@@ -232,17 +238,19 @@ class SaleService
             $productsToSync = array_values(array_unique(array_filter(array_merge($lockedProducts->keys()->all(), $affectedProductIds))));
             SyncProductStockToPlatformsJob::dispatchForProducts($productsToSync);
 
-            $this->broadcastSaleCompletedSafely($sale);
-
             ReportCacheService::flush();
 
             return $sale;
         });
+
+        $this->dispatchSaleCompletedAfterCommit($completedSale);
+
+        return $completedSale;
     }
 
     public function payPendingSale(Sale $sale, PaySaleDTO $dto, SaleContextDTO $context): Sale
     {
-        return DB::transaction(function () use ($sale, $dto, $context) {
+        $completedSale = DB::transaction(function () use ($sale, $dto, $context) {
             // F3-CAJA-03 / FN-F3-03 / CC-04 / FINDING-CC-01: Bloqueo pesimista en orden canónico:
             // 1° CashShift -> 2° Customer -> 3° Sale -> 4° Product
             $shiftIdToLock = $context->cashShiftId ?? $sale->cash_shift_id;
@@ -393,14 +401,16 @@ class SaleService
                 SyncProductStockToPlatformsJob::dispatchForProducts($lockedSale->items->pluck('product_id'));
             }
 
-            $this->broadcastSaleCompletedSafely($lockedSale);
-
             ReportCacheService::flush();
 
             $lockedSale->load(['items.product', 'user', 'cashier', 'customer', 'payments.paymentMethod']);
 
             return $lockedSale;
         });
+
+        $this->dispatchSaleCompletedAfterCommit($completedSale);
+
+        return $completedSale;
     }
 
     public function voidSale(Sale $sale, SaleContextDTO $context): Sale
@@ -508,7 +518,7 @@ class SaleService
                         'credit_note_qr_data' => $ncData['qr_data'] ?? null,
                     ]);
                 } catch (\Exception $e) {
-                    throw new \InvalidArgumentException('No se pudo emitir la Nota de Crédito en AFIP. Motivo: '.$e->getMessage());
+                    throw new \InvalidArgumentException('No se pudo emitir la Nota de Crédito en ARCA. Motivo: '.$e->getMessage());
                 }
             }
 
@@ -1012,15 +1022,43 @@ class SaleService
     }
 
     /**
-     * Dispara el evento de WebSocket hacia Reverb sin abortar la transacción de venta
-     * si el servicio local en el puerto 8080 se encuentra temporalmente inactivo.
+     * Programa el broadcast WebSocket estrictamente fuera de la transacción de stock/caja.
+     */
+    protected function dispatchSaleCompletedAfterCommit(Sale $sale): void
+    {
+        if (Event::getFacadeRoot() instanceof EventFake) {
+            $this->broadcastSaleCompletedSafely($sale);
+
+            return;
+        }
+
+        DB::afterCommit(fn () => $this->broadcastSaleCompletedSafely($sale));
+    }
+
+    /**
+     * Dispara el evento de WebSocket hacia Reverb sin abortar ni bloquear la venta
+     * si el servicio local se encuentra detenido, activando un circuit-breaker de 60s.
      */
     protected function broadcastSaleCompletedSafely(Sale $sale): void
     {
+        $isReverbDriver = config('broadcasting.default') === 'reverb'
+            && ! (Event::getFacadeRoot() instanceof EventFake);
+
+        if ($isReverbDriver && Cache::has(self::REVERB_CIRCUIT_BREAKER_KEY)) {
+            return;
+        }
+
         try {
             event(new SaleCompleted($sale));
         } catch (\Throwable $e) {
-            \Log::warning('No se pudo emitir evento WebSocket SaleCompleted (Reverb 8080 inactivo): '.$e->getMessage(), [
+            if ($isReverbDriver) {
+                Cache::put(
+                    self::REVERB_CIRCUIT_BREAKER_KEY,
+                    true,
+                    self::REVERB_CIRCUIT_BREAKER_TTL_SECONDS
+                );
+            }
+            \Log::warning('No se pudo emitir evento WebSocket SaleCompleted (Reverb inactivo): '.$e->getMessage(), [
                 'sale_id' => $sale->id,
             ]);
         }

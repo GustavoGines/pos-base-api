@@ -131,7 +131,7 @@
         <table class="header-table">
             <tr>
                 <td>
-                    <div class="brand-name">LIBRO IVA VENTAS — SUBDIARIO FISCAL ARCA / AFIP</div>
+                    <div class="brand-name">LIBRO IVA VENTAS — SUBDIARIO FISCAL ARCA</div>
                     <div class="brand-subtitle">
                         {{ $companyName ?: 'Comercio Responsable Inscripto' }}
                         @if(!empty($companyCuit)) · CUIT: {{ $companyCuit }} @endif
@@ -245,7 +245,7 @@
         </table>
 
         <div class="footer">
-            Subdiario de IVA Ventas generado por Sistema POS · Datos extraídos de comprobantes electrónicos autorizados por ARCA / AFIP (WSFEv1).
+            Subdiario de IVA Ventas generado por Sistema POS · Datos extraídos de comprobantes electrónicos autorizados por ARCA (WSFEv1).
         </div>
     </div>
 </body>

@@ -201,7 +201,7 @@ class SystemController extends Controller
      * Escribe un dump SQL completo (CREATE TABLE + INSERT por lotes) usando solo PDO.
      * Soporta MySQL y SQLite; escapa valores con PDO::quote para máxima portabilidad.
      */
-    private function writeSqlDump(string $targetPath): void
+    public function writeSqlDump(string $targetPath): void
     {
         $pdo = DB::connection()->getPdo();
         $driver = $pdo->getAttribute(\PDO::ATTR_DRIVER_NAME);
@@ -478,6 +478,7 @@ class SystemController extends Controller
                 $localLicense = [];
                 $localLicenseFields = [
                     'license_key',
+                    'license_api_key',
                     'license_status',
                     'installation_hash',
                     'installation_id',
@@ -490,6 +491,14 @@ class SystemController extends Controller
                     'license_server_time',
                     'license_integrity_hash',
                     'license_is_lifetime',
+                    'license_is_trial',
+                    'license_block_reason',
+                    'license_max_observed_at',
+                    'license_clock_anchor_sale_id',
+                    'license_clock_anchor_shift_id',
+                    'license_allow_ota_updates',
+                    'license_ota_unlocked_until',
+                    'license_max_unlocked_version',
                     'license_business_type',
                     'license_secondary_business_types',
                 ];
@@ -592,14 +601,43 @@ class SystemController extends Controller
                     \App\Services\BatchStockService::flushSchemaCache();
                 }
 
-                // Restaurar licencia local si existía
+                // Restaurar licencia local si existía (eliminando claves cuyo valor previo era null y limpiando legado license_plan)
                 if (! empty(array_filter($localLicense, fn ($v) => $v !== null && $v !== ''))) {
                     foreach ($localLicense as $key => $value) {
                         if ($value !== null) {
                             BusinessSetting::updateOrCreate(['key' => $key], ['value' => $value]);
+                        } else {
+                            BusinessSetting::where('key', $key)->delete();
                         }
                     }
                 }
+                BusinessSetting::where('key', 'license_plan')->delete();
+
+                // B-03: Impedir que un backup generado en modo demo deje atrapado a un comercio real pago
+                // o a una base con comprobantes fiscales autorizados (bloqueo cruzado ARCA + hasFiscalBlock).
+                $effectiveIsTrial = (BusinessSetting::where('key', 'license_is_trial')->value('value') ?? '0') === '1';
+                $hasAuthorizedFiscalData = \Illuminate\Support\Facades\Schema::hasTable('electronic_invoices')
+                    && DB::table('electronic_invoices')->whereNotNull('cae')->where('cae', '!=', '')->exists();
+
+                if (! $effectiveIsTrial || $hasAuthorizedFiscalData) {
+                    BusinessSetting::updateOrCreate(['key' => 'demo_mode_active'], ['value' => '0']);
+                    BusinessSetting::whereIn('key', [
+                        'demo_seeded_at',
+                        'demo_max_seeded_product_id',
+                        'demo_prev_enable_advanced_price_tiers',
+                    ])->delete();
+                }
+
+                BusinessSetting::updateOrCreate(
+                    ['key' => 'license_clock_anchor_sale_id'],
+                    ['value' => (string) ((int) DB::table('sales')->max('id'))]
+                );
+                BusinessSetting::updateOrCreate(
+                    ['key' => 'license_clock_anchor_shift_id'],
+                    ['value' => (string) ((int) DB::table('cash_shifts')->max('id'))]
+                );
+                \Illuminate\Support\Facades\Cache::forget(\App\Services\LicenseSyncService::DB_ACTIVITY_CACHE_KEY);
+                \App\Services\ReportCacheService::flush();
 
                 // Preservar el session_token del usuario actual para no desconectar su sesión activa
                 if ($currentUserId !== null && ! empty($currentSessionToken)) {

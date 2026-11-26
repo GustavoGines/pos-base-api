@@ -29,7 +29,8 @@ class CustomerController extends Controller
             $searchTerm = '%'.$request->input('search').'%';
             $query->where(function ($q) use ($searchTerm) {
                 $q->where('name', 'like', $searchTerm)
-                    ->orWhere('document_number', 'like', $searchTerm);
+                    ->orWhere('document_number', 'like', $searchTerm)
+                    ->orWhere('phone', 'like', $searchTerm);
             });
         }
 

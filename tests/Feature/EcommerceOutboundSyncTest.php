@@ -214,6 +214,13 @@ class EcommerceOutboundSyncTest extends TestCase
     {
         Queue::fake();
 
+        \App\Models\EcommerceIntegration::create([
+            'platform' => 'tiendanube',
+            'name' => 'Tienda Test',
+            'is_active' => true,
+            'sync_stock_enabled' => true,
+        ]);
+
         $user = User::factory()->create(['role' => 'admin']);
         $shift = $this->crearTurnoAbierto(user: $user);
 

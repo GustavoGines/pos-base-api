@@ -20,6 +20,10 @@ class SyncProductStockToPlatformsJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
+    public const ACTIVE_INTEGRATIONS_CACHE_KEY = 'ecommerce:has_active_stock_integrations';
+
+    public const ACTIVE_INTEGRATIONS_CACHE_TTL_SECONDS = 300;
+
     /**
      * The number of times the job may be attempted.
      */
@@ -43,6 +47,23 @@ class SyncProductStockToPlatformsJob implements ShouldQueue
         $this->onQueue('ecommerce-sync');
     }
 
+    public static function clearActiveIntegrationsCache(): void
+    {
+        Cache::forget(self::ACTIVE_INTEGRATIONS_CACHE_KEY);
+    }
+
+    public static function hasActiveStockIntegrations(): bool
+    {
+        return (bool) Cache::remember(
+            self::ACTIVE_INTEGRATIONS_CACHE_KEY,
+            self::ACTIVE_INTEGRATIONS_CACHE_TTL_SECONDS,
+            fn (): bool => \App\Models\EcommerceIntegration::query()
+                ->where('is_active', true)
+                ->where('sync_stock_enabled', true)
+                ->exists()
+        );
+    }
+
     /**
      * Despacha la sincronización asíncrona post-commit para un conjunto de IDs de productos,
      * propagando automáticamente la actualización a cualquier Combo padre que los utilice como ingrediente.
@@ -58,6 +79,10 @@ class SyncProductStockToPlatformsJob implements ShouldQueue
         $ids = array_values(array_unique($ids));
 
         if (empty($ids)) {
+            return;
+        }
+
+        if (! self::hasActiveStockIntegrations()) {
             return;
         }
 

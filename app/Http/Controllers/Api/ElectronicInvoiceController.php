@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\BusinessSetting;
 use App\Models\Customer;
 use App\Models\CustomerTransaction;
 use App\Models\ElectronicInvoice;
@@ -48,6 +49,15 @@ class ElectronicInvoiceController extends Controller
      */
     public function issueInvoice(Request $request, Sale $sale): JsonResponse
     {
+        if (BusinessSetting::isDemoModeActive()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Estás en Modo Datos de Ejemplo. Para emitir comprobantes fiscales ante ARCA (en Homologación o Producción), primero debés limpiar los datos de ejemplo y comenzar con tu negocio real.',
+                'error_code' => 'DEMO_MODE_ARCA_BLOCKED',
+                'invoice_status' => 'none',
+            ], 403);
+        }
+
         $validated = $request->validate([
             'customer_id' => 'nullable|integer|exists:customers,id',
             'voucher_type' => 'nullable|integer|in:1,6,11',
@@ -150,7 +160,7 @@ class ElectronicInvoiceController extends Controller
                                     'type' => 'charge',
                                     'amount' => $tributeAmount,
                                     'balance_after' => $customerToUpdate->balance,
-                                    'description' => "Percepción IIBB AFIP Factura {$invoice->voucher_letter}-{$invoice->formatted_number} - Ticket #{$lockedSale->id}",
+                                    'description' => "Percepción IIBB ARCA Factura {$invoice->voucher_letter}-{$invoice->formatted_number} - Ticket #{$lockedSale->id}",
                                 ]);
                             }
                         }
@@ -192,7 +202,7 @@ class ElectronicInvoiceController extends Controller
 
                         return response()->json([
                             'success' => false,
-                            'message' => 'Servicio de AFIP no disponible. Venta registrada en contingencia.',
+                            'message' => 'Servicio de ARCA no disponible. Venta registrada en contingencia.',
                             'invoice_status' => 'pending',
                             'error' => $errorMessage,
                         ], 504);

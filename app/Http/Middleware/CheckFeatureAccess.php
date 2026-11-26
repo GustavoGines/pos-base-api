@@ -21,7 +21,10 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class CheckFeatureAccess
 {
-    public function handle(Request $request, Closure $next, string $feature): Response
+    /**
+     * @param  string  ...$requiredFeatures  Uno o más features aceptados en condición OR (ej. `feature:expenses,suppliers`)
+     */
+    public function handle(Request $request, Closure $next, string ...$requiredFeatures): Response
     {
         // L-09: Verificar integridad criptográfica local si existe sello
         if (! LicenseSyncService::verifyLocalIntegrity()) {
@@ -53,6 +56,39 @@ class CheckFeatureAccess
             }
         }
 
+        $candidates = [];
+        foreach ($requiredFeatures as $raw) {
+            foreach (explode(',', $raw) as $part) {
+                $clean = trim($part);
+                if ($clean !== '') {
+                    $candidates[] = $clean;
+                }
+            }
+        }
+
+        $isEnabled = false;
+        foreach ($candidates as $candidate) {
+            if ($this->isSingleFeatureEnabled($candidate, $features, $appPlan)) {
+                $isEnabled = true;
+                break;
+            }
+        }
+
+        $primaryFeature = $candidates[0] ?? '';
+
+        if (! $isEnabled) {
+            return response()->json([
+                'message' => "La licencia activa no incluye el módulo requerido: '{$primaryFeature}'. Actualice su plan.",
+                'error_code' => 'FEATURE_NOT_LICENSED',
+                'required' => $primaryFeature,
+            ], 403);
+        }
+
+        return $next($request);
+    }
+
+    private function isSingleFeatureEnabled(string $feature, array $features, string $appPlan): bool
+    {
         $isEnabled = isset($features[$feature]) && ($features[$feature] === true || $features[$feature] === 1);
 
         // Opción 1A: si el diccionario no trae aún `batch_expiration` (pre-heartbeat / tests legados),
@@ -94,14 +130,6 @@ class CheckFeatureAccess
             }
         }
 
-        if (! $isEnabled) {
-            return response()->json([
-                'message' => "La licencia activa no incluye el módulo requerido: '{$feature}'. Actualice su plan.",
-                'error_code' => 'FEATURE_NOT_LICENSED',
-                'required' => $feature,
-            ], 403);
-        }
-
-        return $next($request);
+        return $isEnabled;
     }
 }

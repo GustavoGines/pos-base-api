@@ -15,6 +15,17 @@ class EcommerceIntegration extends Model
 {
     use HasFactory;
 
+    protected static function booted(): void
+    {
+        static::saved(function (): void {
+            \App\Jobs\SyncProductStockToPlatformsJob::clearActiveIntegrationsCache();
+        });
+
+        static::deleted(function (): void {
+            \App\Jobs\SyncProductStockToPlatformsJob::clearActiveIntegrationsCache();
+        });
+    }
+
     public const PLATFORM_MERCADOLIBRE = 'mercadolibre';
 
     public const PLATFORM_TIENDANUBE = 'tiendanube';

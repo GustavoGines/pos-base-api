@@ -12,6 +12,7 @@ use App\Services\Afip\AfipCertificateService;
 use App\Services\LicenseSyncService;
 use DomainException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Throwable;
@@ -47,6 +48,9 @@ class SettingController extends Controller
         $settings['pos_popularity_days'] = $settings['pos_popularity_days'] ?? '30';
         $settings['pos_popularity_metric'] = $settings['pos_popularity_metric'] ?? 'tickets';
         $settings['pos_demote_out_of_stock'] = $settings['pos_demote_out_of_stock'] ?? '0';
+
+        $settings = $this->appendDemoRuntimeFlags($settings);
+        $settings = $this->sanitizeLicenseExposure($settings);
 
         return response()->json($settings);
     }
@@ -91,15 +95,17 @@ class SettingController extends Controller
                 continue;
             }
 
-            // Proteger claves críticas de licencia y sistema contra modificación no autorizada vía update general
+            // Proteger claves críticas de licencia, demo y sistema contra modificación no autorizada vía update general
             if (
                 str_starts_with($key, 'license_') ||
+                str_starts_with($key, 'demo_') ||
                 in_array($key, [
                     'app_plan',
                     'installation_id',
                     'last_license_check',
                     'business_type',
                     'secondary_business_types',
+                    'is_fresh_empty_store',
                 ], true)
             ) {
                 continue;
@@ -139,6 +145,18 @@ class SettingController extends Controller
                 continue;
             }
 
+            if ($key === 'tax_condition' && $value !== null && trim((string) $value) !== '') {
+                $canonicalTaxCondition = BusinessSetting::normalizeIssuerTaxCondition($value);
+                if ($canonicalTaxCondition !== null) {
+                    BusinessSetting::updateOrCreate(
+                        ['key' => $key],
+                        ['value' => $canonicalTaxCondition]
+                    );
+                }
+
+                continue;
+            }
+
             // Si el valor es un array u objeto (ej: custom_price_tiers), serializar a JSON string
             $storedValue = is_array($value) ? json_encode($value) : $value;
 
@@ -148,9 +166,29 @@ class SettingController extends Controller
             );
         }
 
-        $sanitizedSettings = BusinessSetting::whereNotIn('key', BusinessSetting::SENSITIVE_KEYS)
+        // Seguridad fiscal: solo un comercio IVA Responsable Inscripto puede ser Agente de Percepción IIBB
+        $currentTaxCond = BusinessSetting::where('key', 'tax_condition')->value('value');
+        if (! BusinessSetting::isIssuerEligibleForIibb($currentTaxCond)) {
+            BusinessSetting::updateOrCreate(
+                ['key' => 'is_iibb_perception_agent'],
+                ['value' => '0']
+            );
+        }
+
+        $sanitizedSettings = BusinessSetting::whereIn('key', BusinessSetting::PUBLIC_KEYS)
             ->pluck('value', 'key')
             ->toArray();
+
+        foreach (BusinessSetting::SENSITIVE_KEYS as $sensitiveKey) {
+            unset($sanitizedSettings[$sensitiveKey]);
+        }
+
+        if (! empty($sanitizedSettings['logo_path'])) {
+            $sanitizedSettings['logo_url'] = asset('storage/'.$sanitizedSettings['logo_path']);
+        }
+
+        $sanitizedSettings = $this->appendDemoRuntimeFlags($sanitizedSettings);
+        $sanitizedSettings = $this->sanitizeLicenseExposure($sanitizedSettings);
 
         return response()->json([
             'message' => 'Configuración actualizada correctamente.',
@@ -460,7 +498,7 @@ class SettingController extends Controller
             );
 
             return response()->json(array_merge([
-                'message' => 'Certificados de AFIP guardados y validados correctamente.',
+                'message' => 'Certificados de ARCA guardados y validados correctamente.',
             ], $result));
         } catch (DomainException $e) {
             [$code, $message] = explode(':', $e->getMessage(), 2);
@@ -565,15 +603,74 @@ class SettingController extends Controller
         try {
             $licenseService->syncManualForce();
 
+            $settings = BusinessSetting::whereIn('key', BusinessSetting::PUBLIC_KEYS)
+                ->pluck('value', 'key')
+                ->toArray();
+
+            foreach (BusinessSetting::SENSITIVE_KEYS as $sensitiveKey) {
+                unset($settings[$sensitiveKey]);
+            }
+
+            if (! empty($settings['logo_path'])) {
+                $settings['logo_url'] = asset('storage/'.$settings['logo_path']);
+            }
+
+            $settings = $this->appendDemoRuntimeFlags($settings);
+            $settings = $this->sanitizeLicenseExposure($settings);
+
             return response()->json([
                 'message' => 'Permisos de licencia sincronizados correctamente.',
-                'settings' => BusinessSetting::whereNotIn('key', BusinessSetting::SENSITIVE_KEYS)->pluck('value', 'key'),
+                'settings' => $settings,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'error' => $e->getMessage(),
             ], 400); // 400 Bad Request
         }
+    }
+
+    /**
+     * Anexa banderas de estado del Modo Exploración Demo evaluando `is_fresh_empty_store`
+     * exclusivamente en licencias Trial sin modo demo activo (0 queries extra en comercios reales).
+     */
+    private function appendDemoRuntimeFlags(array $settings): array
+    {
+        $isDemoActive = ($settings['demo_mode_active'] ?? '0') === '1';
+        $settings['demo_mode_active'] = $isDemoActive ? '1' : '0';
+        $settings['demo_onboarding_dismissed'] = ($settings['demo_onboarding_dismissed'] ?? '0') === '1' ? '1' : '0';
+
+        $isTrialActive = ($settings['license_is_trial'] ?? '0') === '1';
+        $isFreshEmpty = false;
+        if ($isTrialActive && ! $isDemoActive) {
+            $isFreshEmpty = ! DB::table('products')->exists()
+                && ! DB::table('sales')->exists()
+                && ! DB::table('customers')->exists()
+                && ! DB::table('suppliers')->exists()
+                && ! DB::table('electronic_invoices')->exists();
+        }
+        $settings['is_fresh_empty_store'] = $isFreshEmpty ? '1' : '0';
+
+        return $settings;
+    }
+
+    /**
+     * Enmascara license_key y entrega un token OTA irreversible (SHA-256)
+     * para evitar exponer la clave de licencia real en respuestas JSON públicas.
+     */
+    private function sanitizeLicenseExposure(array $settings): array
+    {
+        $rawLicenseKey = BusinessSetting::where('key', 'license_key')->value('value')
+            ?: BusinessSetting::where('key', 'license_api_key')->value('value');
+
+        $settings['license_ota_token'] = BusinessSetting::computeOtaToken($rawLicenseKey);
+
+        if (array_key_exists('license_key', $settings) || ($rawLicenseKey !== null && trim((string) $rawLicenseKey) !== '')) {
+            $settings['license_key'] = $this->maskToken($rawLicenseKey !== null ? (string) $rawLicenseKey : null);
+        }
+
+        unset($settings['license_api_key']);
+
+        return $settings;
     }
 
     /**

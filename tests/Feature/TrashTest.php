@@ -70,4 +70,25 @@ class TrashTest extends TestCase
 
         $this->assertNotSoftDeleted('customers', ['id' => $customer->id]);
     }
+
+    public function test_tr05_restore_customer_allows_multiple_null_documents_but_blocks_active_duplicate_dni()
+    {
+        Customer::create(['name' => 'Activo Sin Doc', 'document_number' => null]);
+
+        $trashedSinDoc = Customer::create(['name' => 'Borrado Sin Doc', 'document_number' => null]);
+        $trashedSinDoc->delete();
+
+        $this->postJson("/api/trash/customers/{$trashedSinDoc->id}/restore")
+            ->assertStatus(200);
+        $this->assertNotSoftDeleted('customers', ['id' => $trashedSinDoc->id]);
+
+        $activeWithDni = Customer::create(['name' => 'Activo Con DNI', 'document_number' => '38452190']);
+        $trashedSameDni = Customer::create(['name' => 'Duplicado Borrado', 'document_number' => '38452190']);
+        $trashedSameDni->delete();
+
+        $this->postJson("/api/trash/customers/{$trashedSameDni->id}/restore")
+            ->assertStatus(422);
+        $this->assertSoftDeleted('customers', ['id' => $trashedSameDni->id]);
+        $this->assertNotSoftDeleted('customers', ['id' => $activeWithDni->id]);
+    }
 }

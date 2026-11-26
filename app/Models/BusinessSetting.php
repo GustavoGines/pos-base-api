@@ -57,6 +57,11 @@ class BusinessSetting extends Model
         'license_next_payment_at',
         'license_manage_url',
         'license_is_lifetime',
+        'license_is_trial',
+        'license_block_reason',
+        'license_allow_ota_updates',
+        'license_ota_unlocked_until',
+        'license_max_unlocked_version',
         'license_business_type',
         'license_secondary_business_types',
         'afip_enabled',
@@ -75,7 +80,20 @@ class BusinessSetting extends Model
         'pos_demote_out_of_stock',
         'pos_popularity_reset_at',
         'bank_transfer_accounts',
+        'demo_mode_active',
+        'demo_seeded_at',
+        'demo_onboarding_dismissed',
     ];
+
+    /**
+     * Indica si el comercio se encuentra operando en Modo Exploración con datos de ejemplo.
+     */
+    public static function isDemoModeActive(): bool
+    {
+        $raw = static::where('key', 'demo_mode_active')->value('value');
+
+        return $raw === '1' || $raw === 'true' || $raw === true || $raw === 1;
+    }
 
     public const IIBB_BASE_NET_WITHOUT_VAT = 'net_without_vat';
 
@@ -86,6 +104,96 @@ class BusinessSetting extends Model
         'monotributo',
         'exento',
     ];
+
+    public const ISSUER_TAX_RESPONSABLE_INSCRIPTO = 'IVA Responsable Inscripto';
+
+    public const ISSUER_TAX_MONOTRIBUTO = 'Responsable Monotributo';
+
+    public const ISSUER_TAX_EXENTO = 'IVA Exento';
+
+    /**
+     * Token OTA irreversible (SHA-256) derivado de la clave de licencia.
+     * Permite consultar /api/check-update sin exponer la clave real en claro.
+     */
+    public static function computeOtaToken(?string $rawLicenseKey): ?string
+    {
+        $trimmed = trim((string) ($rawLicenseKey ?? ''));
+        if ($trimmed === '') {
+            return null;
+        }
+
+        return hash('sha256', 'caja4u-ota-v2:'.$trimmed);
+    }
+
+    public static function isLegacyInvalidIssuerTaxCondition(mixed $raw): bool
+    {
+        if ($raw === null) {
+            return false;
+        }
+        $trimmed = trim((string) $raw);
+        if ($trimmed === '') {
+            return false;
+        }
+
+        $norm = strtolower(str_replace(['_', '-'], ' ', $trimmed));
+        if (str_contains($norm, 'consumidor')) {
+            return true;
+        }
+
+        return ! str_contains($norm, 'inscripto')
+            && ! str_contains($norm, 'monotributo')
+            && ! str_contains($norm, 'exento');
+    }
+
+    public static function normalizeIssuerTaxCondition(mixed $raw): ?string
+    {
+        if ($raw === null) {
+            return null;
+        }
+        $trimmed = trim((string) $raw);
+        if ($trimmed === '') {
+            return null;
+        }
+
+        $norm = strtolower(str_replace(['_', '-'], ' ', $trimmed));
+        if (str_contains($norm, 'monotributo')) {
+            return self::ISSUER_TAX_MONOTRIBUTO;
+        }
+        if (str_contains($norm, 'exento')) {
+            return self::ISSUER_TAX_EXENTO;
+        }
+        if (str_contains($norm, 'inscripto')) {
+            return self::ISSUER_TAX_RESPONSABLE_INSCRIPTO;
+        }
+
+        return null;
+    }
+
+    public static function isIssuerEligibleForIibb(mixed $rawTaxCondition = null): bool
+    {
+        if (func_num_args() === 0) {
+            $rawTaxCondition = static::where('key', 'tax_condition')->value('value');
+        }
+
+        if ($rawTaxCondition === null || trim((string) $rawTaxCondition) === '') {
+            return true;
+        }
+
+        return static::normalizeIssuerTaxCondition($rawTaxCondition) === self::ISSUER_TAX_RESPONSABLE_INSCRIPTO;
+    }
+
+    public static function isEffectiveIibbPerceptionAgent(?string $rawTaxCondition = null): bool
+    {
+        $isAgentRaw = static::where('key', 'is_iibb_perception_agent')->value('value');
+        $isAgent = $isAgentRaw === '1' || $isAgentRaw === 'true' || $isAgentRaw === true || $isAgentRaw === 1;
+        if (! $isAgent) {
+            return false;
+        }
+
+        return func_num_args() > 0
+            ? static::isIssuerEligibleForIibb($rawTaxCondition)
+            : static::isIssuerEligibleForIibb();
+    }
 
     public static function sanitizeIibbCalculationBase(mixed $raw): string
     {

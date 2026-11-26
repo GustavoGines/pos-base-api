@@ -138,16 +138,21 @@ class AfipWsaaService
      *
      * @return array{token: string, sign: string, expiration_time: string|null}
      */
-    public function getAccessTicket(string $service = 'wsfe'): array
-    {
-        $cuit = BusinessSetting::where('key', 'afip_cuit')->value('value');
+    public function getAccessTicket(
+        string $service = 'wsfe',
+        ?string $preloadedCuit = null,
+        ?string $preloadedEnvironment = null
+    ): array {
+        $cuit = $preloadedCuit ?? BusinessSetting::where('key', 'afip_cuit')->value('value');
         $cuit = preg_replace('/\D/', '', (string) $cuit);
 
         if (empty($cuit)) {
-            throw new RuntimeException('No se ha configurado el CUIT comercial para AFIP en ajustes.');
+            throw new RuntimeException('No se ha configurado el CUIT comercial para ARCA en ajustes.');
         }
 
-        $environment = BusinessSetting::where('key', 'afip_environment')->value('value') ?? 'testing';
+        $environment = $preloadedEnvironment
+            ?? BusinessSetting::where('key', 'afip_environment')->value('value')
+            ?? 'testing';
         $cacheKey = "afip_ta_{$cuit}_{$service}_{$environment}";
 
         // 1. Revisar caché existente (Fast Path)
